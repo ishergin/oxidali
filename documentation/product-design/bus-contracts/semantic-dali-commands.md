@@ -153,7 +153,7 @@ min/max — только когда ответы так и не устоялис
 | `Dali103FeedbackDriveCommand` | `ACTIVATE` / `STOP` / `SELECT FEEDBACK` одним кадром; REST-двери нет | по кадру |
 | `Dali103InstanceActionCommand` | Part 303 `CANCEL HOLD TIMER` / `CATCH MOVEMENT` одним кадром на адрес инстанса; инстанс, который реестр не знает как датчик присутствия, отвергается `input_instance_not_occupancy`; REST-двери нет | по кадру |
 | `Dali103ArbitrationProbeCommand` | Широковещательный `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7) на приоритете 5; проходит гейт пассивного контроллера | никогда |
-| `Dali103HandoverCommand` | Пара `ENABLE APPLICATION CONTROLLER` пиру, затем собственный уход в пассив; направление одно (103 §9.9.1) | никогда |
+| `Dali103HandoverCommand` | Пара `ENABLE APPLICATION CONTROLLER` пиру и `QUERY APPLICATION CONTROLLER ENABLED` по его адресу одной единицей, затем собственный уход в пассив, только после `YES`; коллизия повторяет единицу целиком; направление одно (103 §9.9.1) | никогда |
 | `Dali103TestFrameCommand` | `SEND TESTFRAME` чужого контроллера (103 §11.10.21): кадр из DTR0–DTR2 на приоритете `PPP`, повторы `RR`, при `T` — в транзакции; проходит гейт пассивного контроллера, не проходит quiescent; REST-двери нет | никогда |
 | `Dali103PowerNotificationCommand` | `POWER NOTIFICATION` после загрузки ([ADR-030](../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)): несёт адрес и группы блока, кадр по Табл. 7 строит `DaliWorker`; проходит гейт пассивного контроллера, не проходит quiescent; REST-двери нет | никогда |
 

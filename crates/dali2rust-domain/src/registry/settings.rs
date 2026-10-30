@@ -58,6 +58,7 @@ pub enum BusUnitSetter {
     Unrecorded,
     Operator,
     Wire,
+    Redundancy,
 }
 
 impl BusUnitSetter {
@@ -65,7 +66,7 @@ impl BusUnitSetter {
     pub const fn mover(self) -> ApplicationActiveMover {
         match self {
             Self::Unrecorded => ApplicationActiveMover::Unmoved,
-            Self::Operator => ApplicationActiveMover::Command,
+            Self::Operator | Self::Redundancy => ApplicationActiveMover::Command,
             Self::Wire => ApplicationActiveMover::Wire,
         }
     }

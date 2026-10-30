@@ -108,6 +108,9 @@ Feature: Redundancy — state and the planned handover
     Then the JSON boolean field "active" should be false
     And the JSON pointer "/transitions/0/now_active" should be false
     And the JSON pointer "/transitions/1/reason" should be "boot"
+    When I send a GET request to "/api/v1/settings/dali"
+    Then the JSON boolean field "application_active" should be false
+    And the JSON pointer "/set_by/application_active" should be "redundancy"
 
   @id:RED-035
   Scenario: A switchover the peer does not confirm leaves the bus with this controller

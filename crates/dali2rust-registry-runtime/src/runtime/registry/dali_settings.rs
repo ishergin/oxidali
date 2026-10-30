@@ -171,10 +171,11 @@ impl DaliSettingsRecord {
         if now_unit != was_unit {
             self.bus_unit_revision = self.bus_unit_revision.wrapping_add(1);
         }
+        let setter = if body.by_redundancy { BusUnitSetter::Redundancy } else { BusUnitSetter::Operator };
         for field in EVERY_UNIT_FIELD {
             if differs(&now_unit, &was_unit, field) {
                 self.operator_moved_at[field as usize] = Some(self.bus_unit_revision);
-                *setter_of(&mut self.set_by, field) = BusUnitSetter::Operator;
+                *setter_of(&mut self.set_by, field) = setter;
             }
         }
     }
@@ -238,9 +239,11 @@ impl RegistryStore {
 
     // IEC 62386-103 §9.2.3
     pub(crate) fn claims_the_peer_address(&self, body: &DaliSettingsUpdateCommand) -> bool {
-        let peer = self.read_inner().redundancy_settings.peer_device_short_address;
+        let inner = self.read_inner();
+        let wanted = Some(body.device_short_address);
         body.patch_mask & DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS != 0
-            && peer == Some(body.device_short_address)
+            && inner.redundancy_settings.peer_device_short_address == wanted
+            && inner.dali_settings.device_short_address != wanted
     }
 
     pub fn install_bus_unit_sink(&self, sink: std::sync::Arc<AnswerInputs>) {
@@ -545,6 +548,7 @@ mod bus_unit_evidence_tests {
             application_active: true,
             device_short_address: 9,
             power_cycle_notification: false,
+            by_redundancy: false,
         };
         store.apply_dali_settings_from_command(&patch);
         assert_eq!(published(&sink), row(&store).bus_unit_snapshot(), "before the command is answered");
@@ -614,6 +618,7 @@ mod bus_unit_evidence_tests {
             application_active: false,
             device_short_address: 9,
             power_cycle_notification: false,
+            by_redundancy: false,
         });
         let grouped = BusUnitNvmRow { short_address: Some(9), device_groups: 1 << 3, ..FACTORY };
         store.apply_bus_unit_evidence(&adopted_at(1, at(9), grouped, 1)).expect("newer");
@@ -622,6 +627,45 @@ mod bus_unit_evidence_tests {
         let untouched = [set_by.random_address, set_by.operating_mode, set_by.power_cycle_notification, set_by.application_active];
         assert_eq!(untouched, [BusUnitSetter::Unrecorded; 4]);
         assert_eq!(store.dali_settings_view().set_by, set_by);
+    }
+
+    fn short_address_patch(patch_mask: u8, device_short_address: u8) -> DaliSettingsUpdateCommand {
+        DaliSettingsUpdateCommand {
+            patch_mask,
+            dt8_auto_activation_repair: false,
+            dt8_rgbwaf_control_assert: false,
+            application_active: false,
+            device_short_address,
+            power_cycle_notification: false,
+            by_redundancy: false,
+        }
+    }
+
+    // IEC 62386-103 §9.2.3
+    #[test]
+    fn the_redundancy_arbitration_is_named_for_the_role_it_moves() {
+        let store = RegistryStore::with_adapter_count(1);
+        let mut stand_down = short_address_patch(DaliSettingsUpdateCommand::PATCH_APPLICATION_ACTIVE, u8::MAX);
+        stand_down.by_redundancy = true;
+        store.apply_dali_settings_from_command(&stand_down);
+        let setter = row(&store).set_by.application_active;
+        assert_eq!(setter, BusUnitSetter::Redundancy);
+        assert_eq!(setter.mover(), ApplicationActiveMover::Command, "the arbitration reads its own move as a command");
+    }
+
+    // IEC 62386-103 §9.2.3
+    #[test]
+    fn only_a_patch_that_moves_the_address_onto_the_peer_s_is_refused() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.write_inner().redundancy_settings.peer_device_short_address = Some(0);
+        let untouched = short_address_patch(DaliSettingsUpdateCommand::PATCH_DT8_AUTO_ACTIVATION_REPAIR, 0);
+        assert!(!store.claims_the_peer_address(&untouched), "a patch that leaves the address alone");
+        let elsewhere = short_address_patch(DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS, 7);
+        assert!(!store.claims_the_peer_address(&elsewhere), "an address the peer does not hold");
+        let onto_the_peer = short_address_patch(DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS, 0);
+        assert!(store.claims_the_peer_address(&onto_the_peer));
+        store.write_inner().dali_settings.device_short_address = Some(0);
+        assert!(!store.claims_the_peer_address(&onto_the_peer), "a clash this patch did not make");
     }
 
     #[test]
@@ -791,6 +835,7 @@ mod bus_unit_evidence_tests {
             application_active: true,
             device_short_address: 9,
             power_cycle_notification: false,
+            by_redundancy: false,
         };
         store.apply_dali_settings_from_command(&patch);
         assert_eq!(row(&store).bus_unit_revision, 1);
@@ -808,6 +853,7 @@ mod bus_unit_evidence_tests {
             application_active: true,
             device_short_address: short_address,
             power_cycle_notification: false,
+            by_redundancy: false,
         });
         row(store).bus_unit_revision
     }

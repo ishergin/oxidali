@@ -501,6 +501,7 @@ fn stand_down_after_handover(
         application_active: false,
         device_short_address: u8::MAX,
         power_cycle_notification: false,
+        by_redundancy: true,
     };
     let ce = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,

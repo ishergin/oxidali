@@ -341,6 +341,32 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <div class="fc"><span class="mono">0</span></div>
     </div>
   </div>
+
+  <div class="state-label"><span>Stood down — by this controller's redundancy, or by another controller's DISABLE</span><span class="ln"></span></div>
+  <div class="card">
+    <header><h3>Application controller (R16-C)</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Active</label>
+        <p class="hint">103 §9.9.1 applicationActive: off = this controller puts no forward frame on the wire — the standard's standby state. Another controller's ENABLE/DISABLE pair flips it too.</p>
+      </div>
+      <div class="fc"><span class="chip muted">set by redundancy</span><span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></div>
+    </div>
+  </div>
+  <div class="card">
+    <header><h3>Application controller (R16-C)</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Active</label>
+        <p class="hint">103 §9.9.1 applicationActive: off = this controller puts no forward frame on the wire — the standard's standby state. Another controller's ENABLE/DISABLE pair flips it too.</p>
+      </div>
+      <div class="fc"><span class="chip info">set by the wire</span><span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></div>
+    </div>
+  </div>
+  <p class="warnbar">
+    Passive: every wire command is refused as controller_passive — buttons,
+    schedules and the poller all stop moving light until this is on again.
+  </p>
 </div>
 
 </body>

@@ -104,8 +104,10 @@ and for the length of a scan.
 - **Planned switchover** hands the bus over by enabling the peer first and standing down
   second, in one direction only: 103 §9.9.1 leaves a passive controller no legal way to
   send the `DISABLE`. The active unit stands down only after the peer, asked at its
-  configured short address, answers that its application controller is enabled; a peer
-  that does not answer leaves the bus where it was. The lights do not move.
+  configured short address in the same unit as the `ENABLE` pair, answers that its
+  application controller is enabled; a collision reruns the whole unit. Without that
+  answer the unit stays active, and if the peer was enabled all the same, the standby's
+  probe settles it: the primary keeps the bus. The lights do not move.
 - **Every transition is recorded** with its reason and counted.
 - **Gear fallback policies** (`systemFailureLevel`, `powerOnLevel`) are a product
   resource written by the apply orchestrator. Unset means unmanaged, which is the

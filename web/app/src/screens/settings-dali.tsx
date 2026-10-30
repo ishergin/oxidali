@@ -1,16 +1,33 @@
 import { api } from '../api/client'
-import type { BusUnitSetter } from '../api/types'
+import type { BusUnitSetter, DaliSettings } from '../api/types'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
 import { hex6 } from '../format'
 import { useSettingsDraft } from '../hooks'
 
+const EDITABLE: (keyof DaliSettings)[] = [
+  'dt8_auto_activation_repair',
+  'dt8_rgbwaf_control_assert',
+  'application_active',
+  'device_short_address',
+  'power_cycle_notification',
+]
+
+function changedFields(next: DaliSettings, base: DaliSettings): Partial<DaliSettings> {
+  const body: Partial<DaliSettings> = {}
+  for (const k of EDITABLE) if (next[k] !== base[k]) Object.assign(body, { [k]: next[k] })
+  return body
+}
+
+const SET_BY: Record<BusUnitSetter, { chip: string; text: string }> = {
+  wire: { chip: 'chip info', text: 'set by the wire' },
+  operator: { chip: 'chip muted', text: 'set by an operator' },
+  redundancy: { chip: 'chip muted', text: 'set by redundancy' },
+}
+
 function SetBy({ by }: { by: BusUnitSetter | null }) {
   if (by === null) return null
-  return by === 'wire' ? (
-    <span class="chip info">set by the wire</span>
-  ) : (
-    <span class="chip muted">set by an operator</span>
-  )
+  const { chip, text } = SET_BY[by]
+  return <span class={chip}>{text}</span>
 }
 
 export function SettingsDali() {
@@ -20,23 +37,10 @@ export function SettingsDali() {
 
   if (!data) return <div class="empty">Loading DALI settings…</div>
   const s = current ?? data
-  const dirty =
-    s.dt8_auto_activation_repair !== data.dt8_auto_activation_repair ||
-    s.dt8_rgbwaf_control_assert !== data.dt8_rgbwaf_control_assert ||
-    s.application_active !== data.application_active ||
-    s.device_short_address !== data.device_short_address ||
-    s.power_cycle_notification !== data.power_cycle_notification
+  const changed = changedFields(s, data)
+  const dirty = Object.keys(changed).length > 0
 
-  const apply = () =>
-    void save('DALI settings', () =>
-      api.patchDaliSettings({
-        dt8_auto_activation_repair: s.dt8_auto_activation_repair,
-        dt8_rgbwaf_control_assert: s.dt8_rgbwaf_control_assert,
-        application_active: s.application_active,
-        device_short_address: s.device_short_address,
-        power_cycle_notification: s.power_cycle_notification,
-      }),
-    )
+  const apply = () => void save('DALI settings', () => api.patchDaliSettings(changed))
 
   return (
     <div>

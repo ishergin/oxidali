@@ -124,7 +124,7 @@ fn drain_empty(rig: &Rig) -> bool {
 fn payload_name(payload: &BusCommandPayload) -> String {
     match payload {
         BusCommandPayload::Dali103ArbitrationProbeCommand(_) => "probe".to_string(),
-        BusCommandPayload::DaliSettingsUpdateCommand(c) => {
+        BusCommandPayload::DaliSettingsUpdateCommand(c) if c.by_redundancy => {
             format!("role:{}", c.application_active)
         }
         other => format!("{other:?}"),

@@ -180,8 +180,8 @@ Part 333 не читается, флаг и триггер инертны: ед�
 - `Dali103ArbitrationProbedEvent` (best-effort, воркер арбитража) — вердикт зонда
   ([`../runtime-modules/redundancy/README.md`](../runtime-modules/redundancy/README.md)
   §Обнаружение).
-- `Dali103HandoverSentEvent` (best-effort, воркер арбитража) — пара `ENABLE` пиру
-  отправлена, можно уходить в пассив.
+- `Dali103HandoverSentEvent` (best-effort, воркер арбитража) — пир включён и ответил
+  `YES` на `QUERY APPLICATION CONTROLLER ENABLED`, можно уходить в пассив.
 - `RedundancyTransitionEvent` (best-effort, правила: `controller becomes active`) —
   смена роли с причиной и метками; журнал переходов хранит сам воркер арбитража и
   отдаёт REST.

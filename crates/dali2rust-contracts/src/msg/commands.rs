@@ -747,6 +747,7 @@ declare_bus_payloads! {
         pub application_active: bool,
         pub device_short_address: u8,
         pub power_cycle_notification: bool,
+        pub by_redundancy: bool,
     }
     budget = DaliSettingsUpdateCommand {
         patch_mask: u8::MAX,
@@ -755,6 +756,7 @@ declare_bus_payloads! {
         application_active: true,
         device_short_address: u8::MAX,
         power_cycle_notification: true,
+        by_redundancy: true,
     };
 
     pub struct DaliBusHealthProbeCommand {

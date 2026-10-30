@@ -28,6 +28,7 @@ pub struct BusUnitSetByDto {
 
 pub const SET_BY_OPERATOR: &str = "operator";
 pub const SET_BY_WIRE: &str = "wire";
+pub const SET_BY_REDUNDANCY: &str = "redundancy";
 const DEVICE_GROUPS: u8 = 32;
 
 const fn setter_name(setter: BusUnitSetter) -> Option<&'static str> {
@@ -35,6 +36,7 @@ const fn setter_name(setter: BusUnitSetter) -> Option<&'static str> {
         BusUnitSetter::Unrecorded => None,
         BusUnitSetter::Operator => Some(SET_BY_OPERATOR),
         BusUnitSetter::Wire => Some(SET_BY_WIRE),
+        BusUnitSetter::Redundancy => Some(SET_BY_REDUNDANCY),
     }
 }
 
@@ -74,5 +76,39 @@ pub fn dali_settings_view_to_dto(view: DaliSettingsView) -> DaliSettingsDto {
             device_groups: setter_name(view.set_by.device_groups),
             operating_mode: setter_name(view.set_by.operating_mode),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dali2rust_domain::registry::BusUnitSetBy;
+
+    use super::*;
+
+    const RANDOM_ADDRESS: u32 = 0x00A5_5A3C;
+    const MANUFACTURER_MODE: u8 = 0x80;
+
+    #[test]
+    fn groups_are_listed_by_number_and_each_setter_by_name() {
+        let view = DaliSettingsView {
+            random_address: RANDOM_ADDRESS,
+            device_groups: 1 | 1 << 3 | 1 << 31,
+            operating_mode: MANUFACTURER_MODE,
+            set_by: BusUnitSetBy {
+                short_address: BusUnitSetter::Operator,
+                device_groups: BusUnitSetter::Wire,
+                application_active: BusUnitSetter::Redundancy,
+                ..BusUnitSetBy::default()
+            },
+            ..DaliSettingsView::default()
+        };
+
+        let dto = dali_settings_view_to_dto(view);
+
+        assert_eq!((dto.random_address, dto.operating_mode), (RANDOM_ADDRESS, MANUFACTURER_MODE));
+        assert_eq!(dto.device_groups, [0, 3, 31]);
+        let names = [dto.set_by.device_short_address, dto.set_by.device_groups, dto.set_by.application_active];
+        assert_eq!(names, [Some(SET_BY_OPERATOR), Some(SET_BY_WIRE), Some(SET_BY_REDUNDANCY)]);
+        assert_eq!(dto.set_by.random_address, None, "a variable nobody set names nobody");
     }
 }

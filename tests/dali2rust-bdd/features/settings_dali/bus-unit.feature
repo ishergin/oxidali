@@ -152,9 +152,10 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     And a 24-bit frame FF FE 14 is observed on the bus
     And a 24-bit frame FF FE 14 is observed on the bus
     Then the JSON pointer "/set_by/device_short_address" at "/api/v1/settings/dali" should eventually be "wire"
-    And the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
-    And the JSON pointer "/set_by/power_cycle_notification" at "/api/v1/settings/dali" should eventually be "operator"
-    And the JSON pointer "/set_by/random_address" at "/api/v1/settings/dali" should eventually be "null"
+    When I send a GET request to "/api/v1/settings/dali"
+    Then the JSON pointer "/device_short_address" should be 5
+    And the JSON pointer "/set_by/power_cycle_notification" should be "operator"
+    And the JSON pointer "/set_by/random_address" should be null
 
   @id:SET-DALI-020
   Scenario: Who set a bus-unit variable survives a restart
@@ -166,3 +167,31 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     When I restart the host stack
     Then the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
     And the JSON pointer "/set_by/device_short_address" at "/api/v1/settings/dali" should eventually be "wire"
+
+  @id:SET-DALI-021
+  Scenario: A clash another controller made does not refuse a save that leaves the address alone
+    When I PATCH JSON {"peer_device_short_address":5} to "/api/v1/settings/redundancy"
+    Then the response status should be 200
+    When a 24-bit frame C1 30 05 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    Then the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
+    When I PATCH JSON {"dt8_auto_activation_repair":true,"device_short_address":5} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    And the JSON boolean field "dt8_auto_activation_repair" should be true
+    And the JSON pointer "/set_by/device_short_address" should be "wire"
+
+  @id:SET-DALI-022
+  Scenario: Another controller's ADD TO DEVICE GROUPS lists the groups by number and names the wire
+    When a 24-bit frame C1 31 09 is observed on the bus
+    And a 24-bit frame C1 32 80 is observed on the bus
+    And a 24-bit frame FF FE 19 is observed on the bus
+    And a 24-bit frame FF FE 19 is observed on the bus
+    Then the JSON pointer "/set_by/device_groups" at "/api/v1/settings/dali" should eventually be "wire"
+    When I send a GET request to "/api/v1/settings/dali"
+    Then the JSON pointer "/device_groups/0" should be 0
+    And the JSON pointer "/device_groups/1" should be 3
+    And the JSON pointer "/device_groups/2" should be 15
+    And the JSON pointer "/device_groups/3" should be absent
+    And the JSON pointer "/operating_mode" should be 0
+    And the JSON pointer "/set_by/operating_mode" should be null

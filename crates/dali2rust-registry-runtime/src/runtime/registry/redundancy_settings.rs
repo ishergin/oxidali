@@ -100,9 +100,11 @@ impl RegistryStore {
 
     // IEC 62386-103 §9.2.3
     pub(crate) fn claims_our_own_address(&self, body: &RedundancySettingsUpdateCommand) -> bool {
-        let ours = self.read_inner().dali_settings.device_short_address;
+        let inner = self.read_inner();
+        let wanted = Some(body.peer_device_short_address);
         body.patch_mask & RedundancySettingsUpdateCommand::PATCH_PEER_SHORT_ADDRESS != 0
-            && ours == Some(body.peer_device_short_address)
+            && inner.dali_settings.device_short_address == wanted
+            && inner.redundancy_settings.peer_device_short_address != wanted
     }
 }
 
@@ -221,6 +223,21 @@ mod tests {
             |c| c.peer_device_short_address = 9,
         ));
         assert_eq!(set.peer_device_short_address, Some(9));
+    }
+
+    // IEC 62386-103 §9.2.3
+    #[test]
+    fn only_a_patch_that_moves_the_peer_onto_this_controller_s_address_is_refused() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.write_inner().dali_settings.device_short_address = Some(0);
+        let untouched = patch(RedundancySettingsUpdateCommand::PATCH_ENABLED, |c| c.peer_device_short_address = 0);
+        assert!(!store.claims_our_own_address(&untouched), "a patch that leaves the peer's address alone");
+        let elsewhere = patch(RedundancySettingsUpdateCommand::PATCH_PEER_SHORT_ADDRESS, |c| c.peer_device_short_address = 7);
+        assert!(!store.claims_our_own_address(&elsewhere), "an address this controller does not hold");
+        let onto_us = patch(RedundancySettingsUpdateCommand::PATCH_PEER_SHORT_ADDRESS, |c| c.peer_device_short_address = 0);
+        assert!(store.claims_our_own_address(&onto_us));
+        store.write_inner().redundancy_settings.peer_device_short_address = Some(0);
+        assert!(!store.claims_our_own_address(&onto_us), "a clash this patch did not make");
     }
 
     #[test]

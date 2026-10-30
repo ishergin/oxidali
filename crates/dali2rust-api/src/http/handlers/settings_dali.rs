@@ -136,6 +136,7 @@ impl crate::http::handlers::common::MutatingHandler for DaliSettingsPatchHandler
                 application_active: data.application_active,
                 device_short_address: data.device_short_address,
                 power_cycle_notification: data.power_cycle_notification,
+                by_redundancy: false,
             },
         );
         let watch = Arc::clone(&self.apply_watch);

@@ -8,6 +8,7 @@ use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
 use dali2rust_domain::dali::dev103::address::Device103Address;
 use dali2rust_domain::dali::dev103::command::Device103Command;
 use dali2rust_domain::dali::frame::HoldCause;
+use dali2rust_platform::dali::TransferOutcome;
 use dali2rust_test_support::StoppedClock;
 
 const PEER: u8 = 7;
@@ -47,6 +48,13 @@ fn hand_over(bus: &Arc<Mutex<MockDaliTransport>>, hold: Arc<dyn WireHold>) -> Re
     controller.with_wire_hold(hold, |c| enable_peer_controller(c, PEER))
 }
 
+fn first_pass_ends_with(bus: &Arc<Mutex<MockDaliTransport>>, query_outcome: TransferOutcome) {
+    let bus = bus.lock().expect("bus");
+    bus.script_frame24_outcome(TransferOutcome::NoAnswer);
+    bus.script_frame24_outcome(TransferOutcome::NoAnswer);
+    bus.script_frame24_outcome(query_outcome);
+}
+
 fn sent(bus: &Arc<Mutex<MockDaliTransport>>) -> Vec<[u8; 3]> {
     bus.lock().expect("bus").sent_frames24()
 }
@@ -80,5 +88,33 @@ fn a_silent_peer_is_named_and_the_bus_stays_here() {
 fn a_hold_that_starts_after_the_enable_still_asks_the_peer() {
     let bus = bus(Some(YES));
     assert_eq!(hand_over(&bus, Arc::new(QuiescentOnceEnabled(Arc::clone(&bus)))), Ok(()));
+    assert_eq!(sent(&bus), vec![enable(), enable(), query()]);
+}
+
+// IEC 62386-101 §9.1.4
+#[test]
+fn a_collided_query_goes_again_with_its_enable_pair() {
+    let bus = bus(Some(YES));
+    first_pass_ends_with(&bus, TransferOutcome::Collision);
+    assert_eq!(hand_over(&bus, Arc::new(Free)), Ok(()));
+    assert_eq!(sent(&bus), vec![enable(), enable(), query(), enable(), enable(), query()]);
+}
+
+// IEC 62386-101 §8.2.5
+#[test]
+fn a_garbled_answer_proves_no_peer_enabled() {
+    let bus = bus(Some(YES));
+    first_pass_ends_with(&bus, TransferOutcome::CorruptedInWindow);
+    assert_eq!(hand_over(&bus, Arc::new(Free)), Err(SemanticDaliError::Conflict("peer_answer_contended")));
+    assert_eq!(sent(&bus), vec![enable(), enable(), query()]);
+}
+
+// IEC 62386-103 §9.9.3
+#[test]
+fn a_hold_that_starts_in_a_collided_pass_refuses_the_rerun() {
+    let bus = bus(Some(YES));
+    first_pass_ends_with(&bus, TransferOutcome::Collision);
+    let outcome = hand_over(&bus, Arc::new(QuiescentOnceEnabled(Arc::clone(&bus))));
+    assert!(matches!(outcome, Err(error) if error.is_held()), "{outcome:?}");
     assert_eq!(sent(&bus), vec![enable(), enable(), query()]);
 }

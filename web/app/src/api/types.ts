@@ -403,7 +403,7 @@ export interface ConfigSliceRow {
   crc32: number
 }
 
-export type BusUnitSetter = 'operator' | 'wire'
+export type BusUnitSetter = 'operator' | 'wire' | 'redundancy'
 
 export interface BusUnitSetBy {
   application_active: BusUnitSetter | null

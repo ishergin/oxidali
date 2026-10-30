@@ -29,7 +29,7 @@ async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, 
     inject_forward24(world, [&b0, &b1, &b2]);
 }
 
-// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015 SET-DALI-019 SET-DALI-020
+// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022
 #[when(regex = r"^a 24-bit frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
     inject_forward24(world, [&b0, &b1, &b2]);
