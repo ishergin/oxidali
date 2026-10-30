@@ -1,6 +1,7 @@
 pub mod arbitration;
 pub mod attributes;
 pub mod bus_health;
+pub mod bus_unit;
 pub mod commissioning;
 pub mod dev103;
 pub mod dev103_feedback;

@@ -177,9 +177,9 @@ answer to any next one, and the slot no longer waits for a task.
   the deadline in RAM; the gate, the poller and the HCL scheduler read it, and it lapses
   at that deadline even if the report of a `STOP` is lost.
 - A write that needs the wire is refused with `409 controller_quiescent` and a
-  `Retry-After` from the remaining time; quiescence is shown on `/api/v1/health`, the
-  redundancy resource, the WebSocket and the OLED, because a master's commissioning run
-  silences the lights' controller for its whole length.
+  `Retry-After` from the remaining time; quiescence is shown on `/api/v1/health` and the
+  redundancy resource, because a master's commissioning run silences the lights'
+  controller for its whole length.
 
 ### Functional liveness is an application-controller error
 
@@ -205,6 +205,11 @@ yet test 12.3.16 sends `SEND TESTFRAME` after `DISABLE APPLICATION CONTROLLER`
 (§12.14.1, §12.14.3) and expects the frame. The test is followed: the frame is executed in
 both roles and refused in quiescent mode. The DALI worker's one gate admits it by command
 kind, beside the arbitration probe and the power notification.
+
+The model accepts the instruction and the sniffer translator carries it to the DALI worker
+as a command; a sniffed frame never becomes one. The frame is announced at the priority
+its `PPP` bits name, which replaces the command kind's class for that unit, so priority 1
+opens a frame only here: no command kind's class opens at it (101 Table 22).
 
 ### `RESET` keeps the initialisation
 

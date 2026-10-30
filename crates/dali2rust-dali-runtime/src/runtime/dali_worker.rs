@@ -28,9 +28,11 @@ use dali2rust_platform::dali::{WirePriority, YieldGranularity};
 
 use crate::runtime::config::DaliRuntimeConfig;
 use dali2rust_domain::dali::devices::dt8_color::gear_features_automatic_activation;
+use dali2rust_domain::dali::dev103::bus_unit::TestFrame;
 
 use crate::runtime::required_publish::Kind as PublishKind;
 use crate::runtime::executor::arbitration;
+use crate::runtime::executor::bus_unit;
 use crate::runtime::executor::bus_health::probe_bus_health;
 use crate::runtime::executor::{
     apply_broadcast_target_state, apply_group_target_state, apply_short_target_state,
@@ -342,6 +344,7 @@ dali2rust_contracts::dispatch_bus_commands! {
         probe,
         counters,
     ),
+    Dali103TestFrameCommand(test) => handle_test_frame(controller, publisher, correlation_id, test, counters),
     DaliBusHealthProbeCommand(probe) => handle_bus_health_probe(
         controller,
         publisher,
@@ -535,6 +538,22 @@ fn handle_arbitration_probe(
         },
     );
     publish_event_typed(publisher, ev);
+}
+
+fn handle_test_frame(
+    controller: &mut impl DaliApplicationController,
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    cmd: &dali2rust_contracts::msg::Dali103TestFrameCommand,
+    counters: &DaliWorkerCounters,
+) {
+    let request = TestFrame { data: cmd.data, dtr: cmd.dtr };
+    if bus_unit::send_test_frame(controller, request).is_err() {
+        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+        emit_execution_failed(publisher, correlation_id, counters);
+        return;
+    }
+    publish_confirmation_ok(publisher, correlation_id, counters);
 }
 
 #[cfg(test)]

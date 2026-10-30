@@ -56,8 +56,13 @@ fn refuse_every_frame(
 }
 
 // DiiA 351 §7
+// IEC 62386-103 §12.3.16
 fn passive_allowed(payload: &BusCommandPayload) -> bool {
-    matches!(payload, BusCommandPayload::Dali103ArbitrationProbeCommand(_))
+    matches!(
+        payload,
+        BusCommandPayload::Dali103ArbitrationProbeCommand(_)
+            | BusCommandPayload::Dali103TestFrameCommand(_)
+    )
 }
 
 pub(super) fn adapter_command_blocked(
@@ -133,6 +138,7 @@ fn blocked_refusal<'c>(
         | BusCommandPayload::Dali103InstanceActionCommand(_)
         | BusCommandPayload::Dali103HandoverCommand(_)
         | BusCommandPayload::Dali103ArbitrationProbeCommand(_)
+        | BusCommandPayload::Dali103TestFrameCommand(_)
         | BusCommandPayload::DaliBusHealthProbeCommand(_) => BlockedRefusal::Confirmation,
         _ => BlockedRefusal::NotGated,
     }
@@ -216,6 +222,7 @@ fn bus_unit_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::Dali103InstanceActionCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103ArbitrationProbeCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103HandoverCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::Dali103TestFrameCommand(cmd) => Some(cmd.registry_adapter_id),
         _ => None,
     }
 }

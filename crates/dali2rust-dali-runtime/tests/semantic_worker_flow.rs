@@ -410,6 +410,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::Dali103InstanceActionCommand { registry_adapter_id: 0, short_address: 5, instance_number: 2, action: m::Dali103InstanceAction::CancelHoldTimer }.into(),
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
         m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into(),
+        m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0000_0101, dtr: [0x07, 0xFE, 0x10] }.into(),
         m::DaliBusHealthProbeCommand { registry_adapter_id: 0, query_power_failure: false }.into(),
     ]
 }
@@ -495,9 +496,11 @@ fn another_controller_s_quiescent_mode_refuses_every_request_the_arbitration_pro
 fn quiescent_mode_is_refused_after_the_passive_gate_and_before_the_adapter_gate() {
     let raw = || m::DaliCommandPayload { wire_address: 0x01, command: 0xFE, repeat_count: 0, raw_mode: false, raw_expects_backward: false }.into();
     let probe = || m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into();
+    let test_frame = || m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0000_0101, dtr: [0x07, 0xFE, 0x10] }.into();
     let both = Arc::new(TestReadPort { passive: true, ..quiescent() });
     assert_eq!(request_refusal(both.clone(), 301, raw()), "controller_passive");
-    assert_eq!(request_refusal(both, 302, probe()), "controller_quiescent", "the probe a passive controller may send");
+    assert_eq!(request_refusal(both.clone(), 302, probe()), "controller_quiescent", "the probe a passive controller may send");
+    assert_eq!(request_refusal(both, 304, test_frame()), "controller_quiescent", "the test frame a passive controller may send");
     let disabled = TestReadPort { enabled: false, ..quiescent() };
     assert_eq!(request_refusal(Arc::new(disabled), 303, raw()), "controller_quiescent");
 }

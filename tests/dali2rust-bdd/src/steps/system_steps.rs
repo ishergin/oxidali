@@ -479,7 +479,7 @@ async fn forward_frames_priority_vector(world: &mut DaliWorld, spec: String) {
     );
 }
 
-// SYS-235
+// SYS-235 SET-DALI-014
 #[then(regex = r"^forward frame 0x([0-9a-fA-F]+) should be sent at priority (\d+)$")]
 async fn one_forward_frame_priority(world: &mut DaliWorld, frame_hex: String, expected: u8) {
     let frame = u16::from_str_radix(&frame_hex, 16).expect("hex frame");

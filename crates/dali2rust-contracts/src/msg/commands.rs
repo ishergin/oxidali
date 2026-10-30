@@ -1126,6 +1126,17 @@ declare_bus_payloads! {
             text: crate::msg::payload_test_samples::worst_text60(),
         }),
     };
+
+    pub struct Dali103TestFrameCommand {
+        pub registry_adapter_id: u8,
+        pub data: u8,
+        pub dtr: [u8; 3],
+    }
+    budget = Dali103TestFrameCommand {
+        registry_adapter_id: u8::MAX,
+        data: u8::MAX,
+        dtr: [u8::MAX; 3],
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

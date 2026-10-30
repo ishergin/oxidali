@@ -37,6 +37,7 @@ pub enum ObservedItem {
     Frame(ObservedRawFrame),
     BusUnit(crate::bus_unit::BusUnitEvidence),
     BusUnitQuiescence(crate::bus_unit::BusUnitQuiescence),
+    BusUnitTestFrame { data: u8, dtr: [u8; 3] },
 }
 
 pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedItem>;

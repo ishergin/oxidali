@@ -7,9 +7,9 @@ use dali2rust_bus::{
     publish_required, BusChannel, BusFrame, BusId, BusPublisher, PublishResult,
     REQUIRED_PUBLISH_BACKOFF_MS, REQUIRED_PUBLISH_UNCAPPED,
 };
-use dali2rust_contracts::bus::event_envelope;
+use dali2rust_contracts::bus::{command_envelope, event_envelope};
 use dali2rust_contracts::msg::{
-    BusUnitNvmObservedEvent, BusUnitNvmRow, BusUnitQuiescenceObservedEvent, ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
+    BusUnitNvmObservedEvent, BusUnitNvmRow, BusUnitQuiescenceObservedEvent, ColorMode, Dali103TestFrameCommand, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
     DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
     InputDeviceLifecycleKind,
     LevelTransition,
@@ -179,6 +179,17 @@ impl Translator {
             }
             ObservedItem::BusUnit(evidence) => self.report_bus_unit(evidence),
             ObservedItem::BusUnitQuiescence(quiescence) => self.report_quiescence(quiescence),
+            ObservedItem::BusUnitTestFrame { data, dtr } => self.send_test_frame(data, dtr),
+        }
+    }
+
+    // IEC 62386-103 §11.10.21
+    fn send_test_frame(&self, data: u8, dtr: [u8; 3]) {
+        let registry_adapter_id = self.registry_adapter_id;
+        let command = Dali103TestFrameCommand { registry_adapter_id, data, dtr };
+        let ce = command_envelope(SOURCE_ID_UNSPECIFIED, CORRELATION_NONE, self.bus_id.0, Some(Origin::Sniffer), command);
+        if self.publisher.try_publish(BusChannel::Commands, BusFrame::command(ce)) != PublishResult::Queued {
+            self.counters.publish_failed.fetch_add(1, Ordering::Relaxed);
         }
     }
 

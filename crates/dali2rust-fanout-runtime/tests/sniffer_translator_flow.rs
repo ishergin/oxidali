@@ -8,14 +8,16 @@ use dali2rust_bus::{BusConfig, BusHost, BusId, BusSubscriberRx};
 use std::sync::atomic::Ordering::Relaxed;
 
 use dali2rust_contracts::msg::{
-    BusEventPayload, BusUnitNvmRow, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
+    BusCommandPayload, BusEventPayload, BusUnitNvmRow, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
     DaliTargetScope, DecodeStatus, InputDeviceLifecycleKind, InputEventKind,
     LevelTransition, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence};
 use dali2rust_platform::dali::{ObservedItem, ObservedRawFrame, ObservedRawFrameKind};
-use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope, wait_until};
+use dali2rust_test_support::{
+    recv_command_matching, recv_event_matching, try_recv_event_matching_envelope, wait_until,
+};
 
 struct FrameTx(std::sync::mpsc::SyncSender<ObservedItem>);
 
@@ -650,7 +652,7 @@ fn input_events_publish_no_commands_snif046() {
     let _ = recv_input_event(&harness);
     assert!(
         harness.cmd_tap.try_recv().is_err(),
-        "the translator publishes facts, never commands (SNIF-030)"
+        "a sniffed frame is published as a fact, never as a command (SNIF-030)"
     );
 }
 
@@ -821,4 +823,32 @@ fn a_quiescence_report_is_published_as_the_registry_s_fact() {
     assert_eq!((body.sequence, body.remaining_ms), (6, Some(899_000)));
     assert_eq!(ev.meta.origin, Origin::Sniffer);
     assert_eq!(harness.counters.bus_unit_reports.load(Relaxed), 1);
+}
+
+#[test]
+fn a_testframe_the_bus_unit_accepted_goes_to_the_wire_owner_as_a_command() {
+    let harness = spawn_harness();
+    let item = ObservedItem::BusUnitTestFrame { data: 0b0101_0011, dtr: [0x07, 0xFE, 0x10] };
+    harness.tx.0.send(item).expect("send");
+    let ce = recv_command_matching(&harness.cmd_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusCommandPayload::Dali103TestFrameCommand(_))
+    });
+    let BusCommandPayload::Dali103TestFrameCommand(body) = &ce.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    assert_eq!((body.registry_adapter_id, body.data, body.dtr), (0, 0b0101_0011, [0x07, 0xFE, 0x10]));
+    assert_eq!(ce.meta.origin, Origin::Sniffer);
+}
+
+#[test]
+fn a_sniffed_send_testframe_is_no_command_of_its_own() {
+    let harness = spawn_harness();
+    harness.tx.send(forward24([0xC1, 0x33, 0b0000_0010])).expect("send");
+    harness.tx.send(forward16([17 << 1, 180])).expect("send");
+    let (_, body) = recv_observed(&harness);
+    assert_eq!(body.short_address, Some(17), "the frame after it was translated, so it was too");
+    assert!(
+        harness.cmd_tap.recv_timeout(Duration::from_millis(100)).is_err(),
+        "only the bus unit's model, never the sniffed bytes, asks for a test frame"
+    );
 }

@@ -128,6 +128,8 @@ queries from the interrupt, executes another controller's commissioning (`INITIA
 persists it beside the short address set in `/api/v1/settings/dali`. While another
 controller holds quiescent mode, no forward frame of ours leaves. A controller whose
 watched workers stop turning reports an application controller error in either role.
+Another controller's `SEND TESTFRAME` puts its frame on the wire at the priority it
+names, in either role.
 
 Two deviations are `ACCEPTED`, both decided in
 [ADR-018](../architecture/decisions/ADR-018-controller-redundancy.md): a passive standby
@@ -136,9 +138,10 @@ still sends the arbitration probe, which is how it finds an unowned bus, althoug
 answer lapses with the liveness lease, so a wedged controller stops holding the bus,
 although 103 §11.6.16 ties it to `applicationActive` alone.
 
-Not built for the controller as a bus unit: `POWER NOTIFICATION`;
-`SEND TESTFRAME`; the identification screen of `IDENTIFY DEVICE`; the settings surface
-naming who set each bus-unit variable; and the switchover's read-back of its peer.
+Not built for the controller as a bus unit: `POWER NOTIFICATION`; a proven latency
+for `SEND TESTFRAME`, which test 12.3.16 bounds by one settling time; the identification
+screen of `IDENTIFY DEVICE`; the settings surface naming who set each bus-unit variable;
+and the switchover's read-back of its peer.
 DiiA 351's bank 201 is omitted by decision, since 103:2014 §9.10.9 reserves banks
 200–255. DALI-2 certification is out of reach until the rest is built.
 

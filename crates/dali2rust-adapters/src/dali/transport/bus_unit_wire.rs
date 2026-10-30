@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use dali2rust_dali_codec::rx_decode::SniffedFrame;
 use dali2rust_dali_phy::PHY_TICK_US;
-use dali2rust_domain::dali::dev103::bus_unit::{Device103Unit, UnitFrame};
+use dali2rust_domain::dali::dev103::bus_unit::{Device103Unit, TestFrame, UnitFrame};
 use dali2rust_platform::answer_table::AnswerTableImage;
 use dali2rust_platform::arbitration::AnswerInputs;
 use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitIdentity, BusUnitNvm, BusUnitQuiescence};
@@ -21,12 +21,14 @@ const MAC_AT: usize = 2;
 pub struct UnitReports {
     pub nvm: Option<BusUnitEvidence>,
     pub quiescence: Option<BusUnitQuiescence>,
+    pub test_frame: Option<TestFrame>,
 }
 
 impl UnitReports {
     pub fn items(self) -> impl Iterator<Item = ObservedItem> {
         let nvm = self.nvm.map(ObservedItem::BusUnit);
-        nvm.into_iter().chain(self.quiescence.map(ObservedItem::BusUnitQuiescence))
+        let test_frame = self.test_frame.map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
+        nvm.into_iter().chain(self.quiescence.map(ObservedItem::BusUnitQuiescence)).chain(test_frame)
     }
 }
 
@@ -67,6 +69,7 @@ impl BusUnitWire {
         UnitReports {
             nvm: if effects.nvm_changed { self.report_nvm(at_ms) } else { None },
             quiescence: effects.quiescent.map(|_| self.report_quiescence(at_ms)),
+            test_frame: effects.test_frame,
         }
     }
 
@@ -78,6 +81,7 @@ impl BusUnitWire {
         UnitReports {
             nvm: self.resend_nvm(now_ms),
             quiescence: if lapsed { Some(self.report_quiescence(now_ms)) } else { self.resend_quiescence(now_ms) },
+            test_frame: None,
         }
     }
 
@@ -456,7 +460,7 @@ mod tests {
         let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
         let mut wire = hydrated(&inputs);
         let reported = send(&mut wire, Device103Command::StartQuiescentMode, START_MS);
-        assert_eq!(reported, UnitReports { nvm: None, quiescence: quiescence(1, Some(QUIESCENT_MS)) });
+        assert_eq!(reported, UnitReports { quiescence: quiescence(1, Some(QUIESCENT_MS)), ..UnitReports::default() });
         let started = START_MS + PAIR_GAP_MS;
         assert_eq!(wire.poll(Some(&inputs), started + BUS_UNIT_RESEND_MS - 1).quiescence, None);
         let left = QUIESCENT_MS - BUS_UNIT_RESEND_MS;
@@ -496,7 +500,7 @@ mod tests {
     #[test]
     fn reports_reach_the_channel_evidence_first() {
         let evidence = BusUnitEvidence { adopted: FACTORY_NVM, adopted_revision: 1, observed: FACTORY_NVM, wire_sequence: 1 };
-        let reports = UnitReports { nvm: Some(evidence), quiescence: quiescence(1, None) };
+        let reports = UnitReports { nvm: Some(evidence), quiescence: quiescence(1, None), test_frame: None };
         let items: Vec<_> = reports.items().collect();
         assert_eq!(items, [ObservedItem::BusUnit(evidence), ObservedItem::BusUnitQuiescence(quiescence(1, None).unwrap())]);
         assert_eq!(UnitReports::default().items().count(), 0);

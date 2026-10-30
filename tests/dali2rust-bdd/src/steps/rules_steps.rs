@@ -131,7 +131,7 @@ async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: S
     assert_eq!(outcome, Some(expected.as_str()), "{rule}");
 }
 
-// RULE-080 RULE-083
+// RULE-080 RULE-083 SET-DALI-014
 #[then(regex = r"^the DALI mock transport should eventually have sent forward frame 0x([0-9a-fA-F]+)$")]
 async fn then_forward_frame_eventually_sent(world: &mut DaliWorld, hex: String) {
     let wanted = u16::from_str_radix(&hex, 16).expect("hex frame");

@@ -55,6 +55,10 @@ const BANK0_PART_VERSIONS: usize = 0x15;
 const BANK0_LOGICAL_UNITS: usize = 0x18;
 // IEC 62386-103 §11.10.21
 const TESTFRAME_RESERVED: u8 = 0x80;
+const TESTFRAME_TRANSACTION: u8 = 0x40;
+const TESTFRAME_SIXTEEN_BIT: u8 = 0x20;
+const TESTFRAME_REPEATS_SHIFT: u8 = 3;
+const TESTFRAME_REPEATS: u8 = 0x03;
 const TESTFRAME_PRIORITY: u8 = 0x07;
 const TESTFRAME_PRIORITIES: core::ops::RangeInclusive<u8> = 1..=5;
 
@@ -85,6 +89,40 @@ pub enum UnitFrame {
 pub struct TestFrame {
     pub data: u8,
     pub dtr: [u8; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestFrameBits {
+    Forward16([u8; 2]),
+    Forward24([u8; 3]),
+}
+
+// IEC 62386-103 §11.10.21
+impl TestFrame {
+    #[must_use]
+    pub const fn priority(self) -> u8 {
+        self.data & TESTFRAME_PRIORITY
+    }
+
+    #[must_use]
+    pub const fn repeats(self) -> u8 {
+        (self.data >> TESTFRAME_REPEATS_SHIFT) & TESTFRAME_REPEATS
+    }
+
+    #[must_use]
+    pub const fn in_transaction(self) -> bool {
+        self.data & TESTFRAME_TRANSACTION != 0
+    }
+
+    #[must_use]
+    pub const fn bits(self) -> TestFrameBits {
+        let [dtr0, dtr1, dtr2] = self.dtr;
+        if self.data & TESTFRAME_SIXTEEN_BIT != 0 {
+            TestFrameBits::Forward16([dtr0, dtr1])
+        } else {
+            TestFrameBits::Forward24([dtr0, dtr1, dtr2])
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1425,6 +1463,21 @@ mod tests {
         bench.special(Special103Command::Dtr0, 1).special(Special103Command::Dtr1, 2).special(Special103Command::Dtr2, 3);
         bench.special(Special103Command::SendTestframe, 0x01);
         assert!(bench.effects.test_frame.is_some(), "priority 1 is in range");
+    }
+
+    #[test]
+    fn a_testframe_s_data_names_its_width_priority_repeats_and_transaction() {
+        let in_transaction = TestFrame { data: 0b0101_0011, dtr: [1, 2, 3] };
+        assert_eq!(in_transaction.priority(), 3);
+        assert_eq!(in_transaction.repeats(), 2);
+        assert!(in_transaction.in_transaction());
+        assert_eq!(in_transaction.bits(), TestFrameBits::Forward24([1, 2, 3]));
+
+        let sixteen = TestFrame { data: 0b0011_1101, dtr: [4, 5, 6] };
+        assert_eq!(sixteen.priority(), 5);
+        assert_eq!(sixteen.repeats(), 3);
+        assert!(!sixteen.in_transaction());
+        assert_eq!(sixteen.bits(), TestFrameBits::Forward16([4, 5]));
     }
 
     #[test]

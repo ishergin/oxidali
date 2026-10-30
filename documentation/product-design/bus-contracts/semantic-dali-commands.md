@@ -152,8 +152,9 @@ min/max — только когда ответы так и не устоялис
 | `Dali103FeedbackConfigureCommand` | NVM-переменные видимой индикации Part 332; каждое поле с readback'ом | по шагу |
 | `Dali103FeedbackDriveCommand` | `ACTIVATE` / `STOP` / `SELECT FEEDBACK` одним кадром; REST-двери нет | по кадру |
 | `Dali103InstanceActionCommand` | Part 303 `CANCEL HOLD TIMER` / `CATCH MOVEMENT` одним кадром на адрес инстанса; инстанс, который реестр не знает как датчик присутствия, отвергается `input_instance_not_occupancy`; REST-двери нет | по кадру |
-| `Dali103ArbitrationProbeCommand` | Широковещательный `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7) на приоритете 5; единственный вид, проходящий гейт пассивного контроллера | никогда |
+| `Dali103ArbitrationProbeCommand` | Широковещательный `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7) на приоритете 5; проходит гейт пассивного контроллера | никогда |
 | `Dali103HandoverCommand` | Пара `ENABLE APPLICATION CONTROLLER` пиру, затем собственный уход в пассив; направление одно (103 §9.9.1) | никогда |
+| `Dali103TestFrameCommand` | `SEND TESTFRAME` чужого контроллера (103 §11.10.21): кадр из DTR0–DTR2 на приоритете `PPP`, повторы `RR`, при `T` — в транзакции; проходит гейт пассивного контроллера, не проходит quiescent; REST-двери нет | никогда |
 
 Какие исходы 24-битного кадра повторяются —
 [`ADR-027`](../../architecture/decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md).

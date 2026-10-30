@@ -29,7 +29,7 @@ async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, 
     inject_forward24(world, [&b0, &b1, &b2]);
 }
 
-// SET-DALI-007 SET-DALI-008 SET-DALI-009
+// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014
 #[when(regex = r"^a 24-bit frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
     inject_forward24(world, [&b0, &b1, &b2]);
@@ -229,7 +229,7 @@ async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     );
 }
 
-// RULE-065 RULE-066
+// RULE-065 RULE-066 SET-DALI-012 SET-DALI-013
 #[then(regex = r#"^the mock transport 24-bit trace should eventually be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_eventually_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);
@@ -316,7 +316,7 @@ async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();
 }
 
-// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094 INP-098
+// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094 INP-098 SET-DALI-014
 #[then("the mock transport should have sent no 24-bit frames")]
 async fn then_no_frames24(world: &mut DaliWorld) {
     let mock = world.dali_mock();
@@ -345,7 +345,7 @@ async fn first_frame24_priority(world: &mut DaliWorld, expected: u8) {
     );
 }
 
-// INP-084 RULE-065
+// INP-084 RULE-065 SET-DALI-012 SET-DALI-013
 #[then(regex = r"^24-bit forward frame (\d+) should be sent at priority (\d+)$")]
 async fn frame24_priority(world: &mut DaliWorld, ordinal: usize, expected: u8) {
     let settle_us = world.dali_mock().lock().expect("mock lock").sent_frame24_settle_us();

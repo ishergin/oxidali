@@ -510,6 +510,9 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - Commands execute inside `DaliWorker`; events are decoded by the sniffer translator
   ([ADR-016](decisions/ADR-016-input-devices-and-rule-engine.md)). Control devices and
   control gear have independent address spaces.
+- The translator publishes facts; the one command it carries is a frame the controller's
+  own bus-unit model was told to send, never a sniffed frame
+  ([ADR-030](decisions/ADR-030-controller-as-a-part-103-bus-unit.md)).
 - Encodings differ where they look alike: `PROGRAM`/`VERIFY`/`QUERY SHORT ADDRESS` take a
   raw `00AAAAAA` operand (103 §11.10.10) against 102's `0AAAAAA1`, `INITIALISE` is
   inverted (`0x7F` unaddressed, `0xFF` all), and control devices have 32 device groups,
