@@ -84,7 +84,7 @@ use memory_bank::{
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
-    answer_each_failed, answer_each_ok, answer_each_refused, count_lost_fact, Answer, emit_execution_failed,
+    answer_each_failed, answer_each_ok, answer_each_refused, count_failure, count_lost_fact, Answer, emit_execution_failed,
     emit_execution_failed_with_product_error, fail_operation_over_lost_fact, EXECUTION_FAILED,
     publish_closing_fact_or_fail, publish_confirmation_ok, publish_confirmation_typed,
     publish_event_required, publish_event_typed, publish_operation_worker_signal,
@@ -464,7 +464,7 @@ fn handle_handover(
     counters: &DaliWorkerCounters,
 ) {
     if let Err(error) = arbitration::enable_peer_controller(controller, cmd.peer_short_address) {
-        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+        count_failure(counters, error);
         emit_execution_failed_with_product_error(
             publisher,
             correlation_id,

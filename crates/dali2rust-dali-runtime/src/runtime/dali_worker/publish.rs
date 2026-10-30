@@ -99,6 +99,21 @@ impl Answer<'_> {
         answer_each_refused(publisher, &[self.correlation_id], counters, error);
         answer_each_refused(publisher, self.riders, counters, error);
     }
+
+    pub(super) fn ended_by(self, publisher: &BusPublisher, counters: &DaliWorkerCounters, error: SemanticDaliError) {
+        let named = (error.code(), error.message());
+        if error.is_held() {
+            self.refused(publisher, counters, named);
+        } else {
+            self.failed(publisher, counters, named);
+        }
+    }
+}
+
+pub(super) fn count_failure(counters: &DaliWorkerCounters, error: SemanticDaliError) {
+    if !error.is_held() {
+        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 pub(super) fn answer_each_ok(publisher: &BusPublisher, correlations: &[u64], counters: &DaliWorkerCounters) {

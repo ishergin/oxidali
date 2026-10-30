@@ -586,7 +586,7 @@ fn commission_body(
         let Some(short_address) = next_short else {
             break;
         };
-        controller.transaction_exempt(|c| {
+        controller.unit_exempt(|c| {
             set_search_address(c, random)?;
             program_short_address(c, random, short_address)
         })?;
@@ -621,7 +621,7 @@ fn probe_search_address(
     controller: &mut impl DaliApplicationController,
     address: u32,
 ) -> Result<bool, SemanticDaliError> {
-    controller.transaction_exempt(|c| {
+    controller.unit_exempt(|c| {
         set_search_address(c, address)?;
         Ok(send(c, Special103Command::Compare.frame(0x00), true)?.is_yes())
     })

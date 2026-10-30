@@ -454,26 +454,33 @@ impl WireHold for QuiescentOnceUnlocked {
     }
 }
 
-struct AlwaysQuiescent;
+fn select_bank1() -> u16 {
+    special(SpecialCommand::Dtr1(PROFILE_BANK))
+}
 
-impl WireHold for AlwaysQuiescent {
+struct QuiescentOnceBank1Selected(Arc<Mutex<SimDaliTransport>>);
+
+impl WireHold for QuiescentOnceBank1Selected {
     fn held(&self) -> Option<HoldCause> {
-        Some(HoldCause::Quiescent)
+        let sent = self.0.lock().expect("bus").sent_frames();
+        sent.contains(&select_bank1()).then_some(HoldCause::Quiescent)
     }
 }
 
 // IEC 62386-103 §9.9.3
 #[test]
-fn a_hold_before_the_header_is_read_names_the_hold_and_not_the_header() {
+fn a_hold_once_the_header_read_is_armed_names_the_hold_and_not_the_header() {
     let sim = luminaire_gear(FOUND_LOCK, false);
     let identity = identity_of(&sim);
     let bus = Arc::new(Mutex::new(sim));
     let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
-    let hold: Arc<dyn WireHold> = Arc::new(AlwaysQuiescent);
+    let hold: Arc<dyn WireHold> = Arc::new(QuiescentOnceBank1Selected(Arc::clone(&bus)));
     let outcome = controller.with_wire_hold(hold, |c| run_write(c, identity, &year(YEAR)));
 
     assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, "controller_quiescent"));
-    assert!(bus.lock().expect("bus").sent_frames().is_empty());
+    let sent = bus.lock().expect("bus").sent_frames();
+    let armed = sent.iter().position(|&frame| frame == select_bank1()).expect("the header read was armed");
+    assert!(!sent[armed..].contains(&read_location()), "no byte of bank 1 is read");
 }
 
 // IEC 62386-103 §9.9.3

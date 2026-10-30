@@ -6,8 +6,8 @@ use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
 use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::arbitration::probe_application_controller;
 use dali2rust_dali_runtime::runtime::executor::dev103::{
-    identify_device, scan_control_devices, set_event_filter_verified, set_event_scheme_verified,
-    ScannedDevice, FRAME24_CONTENDED,
+    commission_control_devices, identify_device, scan_control_devices, set_event_filter_verified,
+    set_event_scheme_verified, ScannedDevice, FRAME24_CONTENDED,
 };
 use dali2rust_dali_runtime::runtime::executor::helpers::{
     VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE, VERIFY_UNANSWERED_MESSAGE,
@@ -28,6 +28,30 @@ fn controller() -> (DaliController<MockDaliTransport>, Arc<Mutex<MockDaliTranspo
 
 fn frames24(transport: &Arc<Mutex<MockDaliTransport>>) -> Vec<[u8; 3]> {
     transport.lock().expect("mock lock").sent_frames24()
+}
+
+const FRAMES_TO_THE_FIRST_COMPARE: usize = 10;
+const SEARCH_ADDRESS_FRAMES: usize = 3;
+
+// IEC 62386-101 §9.1.4
+// IEC 62386-103 §11.10.6
+#[test]
+fn a_collided_compare_goes_again_with_its_search_address() {
+    let (mut controller, transport) = controller();
+    {
+        let guard = transport.lock().expect("mock lock");
+        for _ in 0..FRAMES_TO_THE_FIRST_COMPARE {
+            guard.script_frame24_outcome(TransferOutcome::NoAnswer);
+        }
+        guard.script_frame24_outcome(TransferOutcome::Collision);
+    }
+
+    commission_control_devices(&mut controller, false, &mut |_, _| {}).expect("no device answers");
+
+    let frames = frames24(&transport);
+    let probe = &frames[FRAMES_TO_THE_FIRST_COMPARE - SEARCH_ADDRESS_FRAMES..=FRAMES_TO_THE_FIRST_COMPARE];
+    let again = &frames[FRAMES_TO_THE_FIRST_COMPARE + 1..=FRAMES_TO_THE_FIRST_COMPARE + probe.len()];
+    assert_eq!(again, probe, "the search address goes again before the COMPARE it stages");
 }
 
 #[test]

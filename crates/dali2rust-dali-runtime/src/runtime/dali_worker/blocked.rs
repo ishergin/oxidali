@@ -1,5 +1,7 @@
 use super::*;
 
+use std::sync::atomic::AtomicBool;
+
 use dali2rust_contracts::msg::{Dali103PowerNotificationCommand, Dali103TestFrameCommand};
 use dali2rust_domain::dali::dev103::bus_unit::{TestFrame, TestFrameBits};
 
@@ -56,7 +58,24 @@ impl WireHold for GateHold {
     }
 }
 
+struct OnceStarted {
+    read_port: Arc<dyn RegistryReadPort>,
+    started: AtomicBool,
+}
+
+// IEC 62386-103 §9.9.1, §9.9.3
+impl WireHold for OnceStarted {
+    fn held(&self) -> Option<HoldCause> {
+        let cause = hold_cause(self.read_port.as_ref(), self.started.load(Ordering::Relaxed));
+        if cause.is_none() {
+            self.started.store(true, Ordering::Relaxed);
+        }
+        cause
+    }
+}
+
 pub(super) struct GateHolds {
+    read_port: Arc<dyn RegistryReadPort>,
     strict: Arc<dyn WireHold>,
     passive_allowed: Arc<dyn WireHold>,
 }
@@ -66,12 +85,18 @@ impl GateHolds {
         let hold = |passive_allowed| -> Arc<dyn WireHold> {
             Arc::new(GateHold { read_port: Arc::clone(read_port), passive_allowed })
         };
-        Self { strict: hold(false), passive_allowed: hold(true) }
+        Self { read_port: Arc::clone(read_port), strict: hold(false), passive_allowed: hold(true) }
     }
 
     pub(super) fn for_frame(&self, frame: &BusFrame) -> Arc<dyn WireHold> {
-        let admitted = matches!(frame, BusFrame::Command(ce) if passive_admitted_once_started(&ce.payload));
-        Arc::clone(if admitted { &self.passive_allowed } else { &self.strict })
+        let BusFrame::Command(ce) = frame else {
+            return Arc::clone(&self.strict);
+        };
+        if matches!(ce.payload, BusCommandPayload::Dali103CommissionCommand(_)) {
+            let read_port = Arc::clone(&self.read_port);
+            return Arc::new(OnceStarted { read_port, started: AtomicBool::new(false) });
+        }
+        Arc::clone(if passive_allowed(&ce.payload) { &self.passive_allowed } else { &self.strict })
     }
 }
 
@@ -93,7 +118,7 @@ fn refuse_every_frame(
             true
         }
         BlockedRefusal::Confirmation | BlockedRefusal::NotGated => {
-            answer.failed(publisher, counters, (ErrorCode::Conflict, cause));
+            answer.refused(publisher, counters, (ErrorCode::Conflict, cause));
             true
         }
     }
@@ -101,11 +126,6 @@ fn refuse_every_frame(
 
 // DiiA 351 §7
 // IEC 62386-103 §9.9.1, §9.12.2, §12.3.16
-// IEC 62386-103 §9.9.1, §9.9.3
-fn passive_admitted_once_started(payload: &BusCommandPayload) -> bool {
-    passive_allowed(payload) || matches!(payload, BusCommandPayload::Dali103CommissionCommand(_))
-}
-
 fn passive_allowed(payload: &BusCommandPayload) -> bool {
     match payload {
         BusCommandPayload::Dali103ArbitrationProbeCommand(_)

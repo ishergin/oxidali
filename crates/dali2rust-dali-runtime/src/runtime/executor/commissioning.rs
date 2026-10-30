@@ -129,6 +129,7 @@ fn detect_programmed_device(
         match detect_device(controller, short_address) {
             Ok(Some(device)) => return Ok(device),
             Ok(None) => continue,
+            Err(error) if error.is_held() => return Err(error),
             Err(error) => last = error,
         }
     }

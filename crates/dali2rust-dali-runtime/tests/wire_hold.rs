@@ -8,11 +8,12 @@ use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, BusSubscriberRx, CorrelationIdAllocator};
 use dali2rust_contracts::msg::{
     BusCommandPayload, Dali103ArbitrationProbeCommand, Dali103CommissionCommand, Dali103PowerNotificationCommand, Dali103TestFrameCommand, Dali103ScanCommand, DaliBusHealthProbeCommand, DaliCommandPayload, DaliProgramGroupMembershipCommand, DaliProgramTarget, ErrorCode,
-    GroupMembershipAction, OperationWorkerSignal, Origin,
+    DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope, DaliWriteAttributesCommand, GroupMembershipAction,
+    LightSetpoint, OperationWorkerSignal, Origin, PowerState,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::runtime::executor::PROGRAM_VERIFY_REPAIRS;
-use dali2rust_domain::dali::dev103::{Device103Address, Device103Command};
+use dali2rust_domain::dali::dev103::{Device103Address, Device103Command, Special103Command};
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock, DALI_WORKER_HANDLED_COMMANDS,
 };
@@ -41,6 +42,11 @@ const FIRST_PROBE_QUERY: usize = 1;
 const READ_BACK_QUERY: usize = 3;
 const TESTFRAME_24_BIT_REPEATED_TWICE: u8 = 0b0001_0101;
 const TESTFRAME: [u8; 3] = [0x07, 0xFE, 0x10];
+const HELD_AT_THE_GATE: usize = 0;
+const FRAMES_TO_THE_FIRST_SEARCH_BYTE: usize = 8;
+const REST_OF_THE_PROBE: usize = 3;
+const TARGET_LEVEL: u8 = 128;
+const FADE_RATE: u8 = 7;
 
 #[derive(Clone, Copy)]
 enum Answer {
@@ -263,6 +269,103 @@ fn a_held_arbitration_probe_is_not_a_failed_probe() {
     assert_eq!(counters.commands_handled.load(Ordering::SeqCst), 1, "the probe passed the gates, the next did not");
     assert!(transport.lock().expect("mock lock").sent_frames24().is_empty());
     assert_eq!(counters.arbitration_probe_failed.load(Ordering::SeqCst), 0);
+    assert_eq!(counters.execution_failed.load(Ordering::SeqCst), 0, "nor is the command the gate held back");
+}
+
+// IEC 62386-103 §9.9.3, §11.10.21
+#[test]
+fn a_frame_held_at_the_gate_is_refused_with_its_cause_and_is_not_an_execution_failure() {
+    let test_frame =
+        Dali103TestFrameCommand { registry_adapter_id: 0, data: TESTFRAME_24_BIT_REPEATED_TWICE, dtr: TESTFRAME };
+    let held = SentFrames::AfterQueries(HELD_AT_THE_GATE);
+    let (transport, cause, counters) = held_after_each(vec![test_frame.into()], Answer::Confirmation, held, false);
+    assert_eq!(cause, quiescent_cause());
+    assert_eq!(counters.commands_handled.load(Ordering::SeqCst), 0, "the gate held it back");
+    assert!(transport.lock().expect("mock lock").sent_frames24().is_empty());
+    assert_eq!(counters.execution_failed.load(Ordering::SeqCst), 0);
+}
+
+// IEC 62386-103 §9.9.1
+#[test]
+fn a_controller_made_passive_before_its_commissioning_s_first_frame_sends_nothing() {
+    let commission = Dali103CommissionCommand { registry_adapter_id: 0, include_addressed: false };
+    let passive_after_the_gate = SentFrames::AfterQueries(GATE_QUERIES);
+    let (transport, outcome, _) = held_after(commission.into(), Answer::Operation, passive_after_the_gate, true);
+    assert_eq!(outcome, Err((ErrorCode::Conflict, "controller_passive".to_owned())));
+    assert!(transport.lock().expect("mock lock").sent_frames24().is_empty());
+}
+
+// IEC 62386-103 §9.9.3, §11.10.6
+#[test]
+fn a_hold_inside_a_compare_probe_lets_the_probe_finish() {
+    let commission = Dali103CommissionCommand { registry_adapter_id: 0, include_addressed: false };
+    let inside_the_probe = SentFrames::Of24(FRAMES_TO_THE_FIRST_SEARCH_BYTE);
+    let (transport, outcome, _) = held_after(commission.into(), Answer::Operation, inside_the_probe, false);
+    assert_eq!(outcome, quiescent_cause());
+    let sent = transport.lock().expect("mock lock").sent_frames24();
+    let compare = Special103Command::Compare.frame(0x00).as_bytes();
+    assert_eq!(sent.len(), FRAMES_TO_THE_FIRST_SEARCH_BYTE + REST_OF_THE_PROBE);
+    assert_eq!(sent.last(), Some(&compare), "the started probe ends with its COMPARE, and nothing follows");
+}
+
+#[test]
+fn a_held_target_state_is_refused_with_its_cause_and_is_not_an_execution_failure() {
+    let target = DaliSetTargetStateCommand {
+        scope: DaliTargetScope::Short,
+        virtual_lamp_id: 0,
+        short_address: SHORT,
+        group_id: 0,
+        setpoint: LightSetpoint { power: PowerState::On, level: Some(TARGET_LEVEL), color: None },
+        registry_adapter_id: 0,
+        hold_hcl: false,
+    };
+    let held = SentFrames::AfterQueries(GATE_QUERIES);
+    let (transport, cause, counters) = held_after(target.into(), Answer::Confirmation, held, false);
+    assert_eq!(cause, quiescent_cause());
+    assert!(transport.lock().expect("mock lock").sent_frames().is_empty());
+    assert_eq!(counters.execution_failed.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_held_stop_fade_is_refused_with_its_cause_and_is_not_an_execution_failure() {
+    let stop = DaliStopFadeCommand {
+        registry_adapter_id: 0,
+        scope: DaliTargetScope::Short,
+        virtual_lamp_id: 0,
+        short_address: SHORT,
+        group_id: 0,
+    };
+    let held = SentFrames::AfterQueries(GATE_QUERIES);
+    let (transport, cause, counters) = held_after(stop.into(), Answer::Confirmation, held, false);
+    assert_eq!(cause, quiescent_cause());
+    assert!(transport.lock().expect("mock lock").sent_frames().is_empty());
+    assert_eq!(counters.execution_failed.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_held_attribute_write_ends_with_its_cause_and_is_not_an_execution_failure() {
+    let write = DaliWriteAttributesCommand {
+        short_address: SHORT,
+        fade_time_ms: None,
+        fade_rate: Some(FADE_RATE),
+        power_on_level: None,
+        system_failure_level: None,
+        extended_fade_time_ms: None,
+        registry_adapter_id: 0,
+        tc_coolest_mirek: None,
+        tc_warmest_mirek: None,
+        min_level: None,
+        max_level: None,
+        dimming_curve: None,
+        signals_operation: true,
+        known_device_types: None,
+        refusal_fails: false,
+    };
+    let held = SentFrames::AfterQueries(GATE_QUERIES);
+    let (transport, cause, counters) = held_after(write.into(), Answer::Operation, held, false);
+    assert_eq!(cause, quiescent_cause());
+    assert!(transport.lock().expect("mock lock").sent_frames().is_empty());
+    assert_eq!(counters.execution_failed.load(Ordering::SeqCst), 0);
 }
 
 // IEC 62386-103 §9.9.3, §11.10.21
