@@ -30,6 +30,7 @@ pub fn probe_application_controller(
     Ok(read_verdict(response))
 }
 
+// IEC 62386-103 §11.6.16
 pub fn enable_peer_controller(
     controller: &mut impl DaliApplicationController,
     peer: u8,
@@ -37,13 +38,19 @@ pub fn enable_peer_controller(
     let Some(address) = short_address(peer) else {
         return Err(SemanticDaliError::Conflict(PEER_ADDRESS_INVALID));
     };
-    super::dev103::send_twice(
-        controller,
-        Device103Command::EnableApplicationController.frame(address),
-    )
+    controller.transaction_exempt(|c| {
+        super::dev103::send_twice(c, Device103Command::EnableApplicationController.frame(address))?;
+        let answer = send_once(c, Device103Command::QueryApplicationControlEnabled.frame(address), true)?;
+        if answer.is_yes() {
+            Ok(())
+        } else {
+            Err(SemanticDaliError::Conflict(PEER_NOT_ENABLED))
+        }
+    })
 }
 
 const PEER_ADDRESS_INVALID: &str = "peer_address_invalid";
+const PEER_NOT_ENABLED: &str = "peer_not_enabled";
 
 fn short_address(value: u8) -> Option<Device103Address> {
     (value <= dali2rust_domain::dali::dev103::address::MAX_SHORT_ADDRESS)

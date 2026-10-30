@@ -4,7 +4,9 @@ use dali2rust_contracts::msg::{
 use std::time::{Duration, Instant};
 
 use dali2rust_domain::dali::dev103::bus_unit::{is_newer, FACTORY_RANDOM_ADDRESS, STANDARD_OPERATING_MODE};
-use dali2rust_domain::registry::{ApplicationActiveMover, DaliSettingsReadPort, DaliSettingsView};
+use dali2rust_domain::registry::{
+    ApplicationActiveMover, BusUnitSetBy, BusUnitSetter, DaliSettingsReadPort, DaliSettingsView,
+};
 use dali2rust_platform::arbitration::AnswerInputs;
 use dali2rust_platform::bus_unit::{BusUnitNvm, BusUnitSnapshot};
 
@@ -24,7 +26,7 @@ pub(crate) struct DaliSettingsRecord {
     pub device_groups: u32,
     pub operating_mode: u8,
     pub power_cycle_notification: bool,
-    pub application_active_moved_by: ApplicationActiveMover,
+    pub set_by: BusUnitSetBy,
     pub bus_unit_revision: u32,
     pub wire_acknowledged: u32,
     wire_applied: Option<(u32, BusUnitNvmRow)>,
@@ -44,6 +46,17 @@ enum UnitField {
 }
 
 const UNIT_FIELDS: usize = UnitField::ApplicationActive as usize + 1;
+
+fn setter_of(set_by: &mut BusUnitSetBy, field: UnitField) -> &mut BusUnitSetter {
+    match field {
+        UnitField::ShortAddress => &mut set_by.short_address,
+        UnitField::RandomAddress => &mut set_by.random_address,
+        UnitField::DeviceGroups => &mut set_by.device_groups,
+        UnitField::OperatingMode => &mut set_by.operating_mode,
+        UnitField::PowerCycleNotification => &mut set_by.power_cycle_notification,
+        UnitField::ApplicationActive => &mut set_by.application_active,
+    }
+}
 
 fn differs(a: &BusUnitNvmRow, b: &BusUnitNvmRow, field: UnitField) -> bool {
     match field {
@@ -77,7 +90,7 @@ impl Default for DaliSettingsRecord {
             device_groups: 0,
             operating_mode: STANDARD_OPERATING_MODE,
             power_cycle_notification: false,
-            application_active_moved_by: ApplicationActiveMover::Unmoved,
+            set_by: BusUnitSetBy::default(),
             bus_unit_revision: 0,
             wire_acknowledged: 0,
             wire_applied: None,
@@ -96,6 +109,10 @@ impl DaliSettingsRecord {
             application_active: self.application_active,
             device_short_address: self.device_short_address,
             power_cycle_notification: self.power_cycle_notification,
+            random_address: self.random_address,
+            device_groups: self.device_groups,
+            operating_mode: self.operating_mode,
+            set_by: self.set_by,
         }
     }
 
@@ -133,7 +150,6 @@ impl DaliSettingsRecord {
     }
 
     fn apply_patch(&mut self, body: &DaliSettingsUpdateCommand) {
-        let was_active = self.application_active;
         let was_unit = self.bus_unit_nvm();
         if body.patch_mask & DaliSettingsUpdateCommand::PATCH_DT8_AUTO_ACTIVATION_REPAIR != 0 {
             self.dt8_auto_activation_repair = body.dt8_auto_activation_repair;
@@ -151,9 +167,6 @@ impl DaliSettingsRecord {
         if body.patch_mask & DaliSettingsUpdateCommand::PATCH_POWER_CYCLE_NOTIFICATION != 0 {
             self.power_cycle_notification = body.power_cycle_notification;
         }
-        if self.application_active != was_active {
-            self.application_active_moved_by = ApplicationActiveMover::Command;
-        }
         let now_unit = self.bus_unit_nvm();
         if now_unit != was_unit {
             self.bus_unit_revision = self.bus_unit_revision.wrapping_add(1);
@@ -161,6 +174,7 @@ impl DaliSettingsRecord {
         for field in EVERY_UNIT_FIELD {
             if differs(&now_unit, &was_unit, field) {
                 self.operator_moved_at[field as usize] = Some(self.bus_unit_revision);
+                *setter_of(&mut self.set_by, field) = BusUnitSetter::Operator;
             }
         }
     }
@@ -181,11 +195,9 @@ impl DaliSettingsRecord {
             UnitField::PowerCycleNotification => {
                 self.power_cycle_notification = observed.power_cycle_notification;
             }
-            UnitField::ApplicationActive => {
-                self.application_active = observed.application_active;
-                self.application_active_moved_by = ApplicationActiveMover::Wire;
-            }
+            UnitField::ApplicationActive => self.application_active = observed.application_active,
         }
+        *setter_of(&mut self.set_by, field) = BusUnitSetter::Wire;
     }
 
     fn apply_wire(&mut self, body: &BusUnitNvmObservedEvent) -> bool {
@@ -222,6 +234,13 @@ impl RegistryStore {
 
     pub(crate) fn dali_settings_row(&self) -> DaliSettingsRecord {
         self.read_inner().dali_settings
+    }
+
+    // IEC 62386-103 §9.2.3
+    pub(crate) fn claims_the_peer_address(&self, body: &DaliSettingsUpdateCommand) -> bool {
+        let peer = self.read_inner().redundancy_settings.peer_device_short_address;
+        body.patch_mask & DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS != 0
+            && peer == Some(body.device_short_address)
     }
 
     pub fn install_bus_unit_sink(&self, sink: std::sync::Arc<AnswerInputs>) {
@@ -270,7 +289,7 @@ impl DaliSettingsReadPort for RegistryStore {
 
     fn application_active_moved_by(&self) -> (bool, ApplicationActiveMover) {
         let row = self.dali_settings_row();
-        (row.application_active, row.application_active_moved_by)
+        (row.application_active, row.set_by.application_active.mover())
     }
 }
 
@@ -284,6 +303,7 @@ pub(crate) fn persistable_snapshot(inner: &Inner) -> PersistableDaliSettingsSlic
         device_groups: inner.dali_settings.device_groups,
         operating_mode: inner.dali_settings.operating_mode,
         power_cycle_notification: inner.dali_settings.power_cycle_notification,
+        set_by: inner.dali_settings.set_by,
     }
 }
 
@@ -308,6 +328,7 @@ fn with_factory_bus_unit(before: DaliSettingsBeforeBusUnitSlice) -> PersistableD
         device_groups: factory.device_groups,
         operating_mode: factory.operating_mode,
         power_cycle_notification: factory.power_cycle_notification,
+        set_by: factory.set_by,
     }
 }
 
@@ -325,13 +346,13 @@ pub(crate) fn hydrate_dali_settings_inner(
         device_groups: slice.device_groups,
         operating_mode: slice.operating_mode,
         power_cycle_notification: slice.power_cycle_notification,
+        set_by: slice.set_by,
         bus_unit_revision: current.bus_unit_revision.wrapping_add(1),
         wire_acknowledged: current.wire_acknowledged,
         wire_applied: current.wire_applied,
         operator_moved_at: current.operator_moved_at,
         quiescent_until: current.quiescent_until,
         quiescence_acknowledged: current.quiescence_acknowledged,
-        ..DaliSettingsRecord::default()
     };
 }
 
@@ -459,7 +480,7 @@ mod bus_unit_evidence_tests {
         store.apply_bus_unit_evidence(&evidence(FACTORY, passive, 3)).expect("disable");
         store.apply_bus_unit_evidence(&evidence(FACTORY, FACTORY, 4)).expect("enable");
         assert!(row(&store).application_active, "DISABLE then ENABLE leaves the unit active");
-        assert_eq!(row(&store).application_active_moved_by, ApplicationActiveMover::Wire);
+        assert_eq!(row(&store).set_by.application_active, BusUnitSetter::Wire);
     }
 
     #[test]
@@ -492,7 +513,7 @@ mod bus_unit_evidence_tests {
         let applied = store.apply_bus_unit_evidence(&evidence(FACTORY, passive, 1)).expect("newer");
         assert!(applied.application_active_moved);
         assert!(!row(&store).application_active);
-        assert_eq!(row(&store).application_active_moved_by, ApplicationActiveMover::Wire);
+        assert_eq!(row(&store).set_by.application_active, BusUnitSetter::Wire);
     }
 
     #[test]
@@ -577,8 +598,47 @@ mod bus_unit_evidence_tests {
             (after.random_address, after.device_groups, after.operating_mode, after.power_cycle_notification),
             (factory.random_address, factory.device_groups, factory.operating_mode, factory.power_cycle_notification)
         );
+        assert_eq!(after.set_by, BusUnitSetBy::default(), "nobody is named for a value stored without its setter");
         let validated = validate_registry_slice(SliceKey::DaliSettings, &bytes);
         assert!(matches!(validated, Some(Ok(()))), "{validated:?}");
+    }
+
+    // IEC 62386-103 §9.2.3
+    #[test]
+    fn each_variable_names_the_last_to_set_it_the_operator_or_the_wire() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.apply_dali_settings_from_command(&DaliSettingsUpdateCommand {
+            patch_mask: DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS,
+            dt8_auto_activation_repair: false,
+            dt8_rgbwaf_control_assert: false,
+            application_active: false,
+            device_short_address: 9,
+            power_cycle_notification: false,
+        });
+        let grouped = BusUnitNvmRow { short_address: Some(9), device_groups: 1 << 3, ..FACTORY };
+        store.apply_bus_unit_evidence(&adopted_at(1, at(9), grouped, 1)).expect("newer");
+        let set_by = row(&store).set_by;
+        assert_eq!((set_by.short_address, set_by.device_groups), (BusUnitSetter::Operator, BusUnitSetter::Wire));
+        let untouched = [set_by.random_address, set_by.operating_mode, set_by.power_cycle_notification, set_by.application_active];
+        assert_eq!(untouched, [BusUnitSetter::Unrecorded; 4]);
+        assert_eq!(store.dali_settings_view().set_by, set_by);
+    }
+
+    #[test]
+    fn who_set_each_variable_survives_a_restart() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.apply_bus_unit_evidence(&evidence(FACTORY, at(5), 1)).expect("newer");
+        let snapshot = persistable_snapshot(&store.read_inner());
+        let envelope = PersistenceEnvelope::new(DALI_SETTINGS_SLICE_VERSION, snapshot);
+        let bytes = encode_persistence_blob(&envelope).expect("encodes");
+        let slices = InMemorySliceStore::default();
+        let mut session = slices.begin_write(SliceKey::DaliSettings).expect("writable");
+        session.append(&bytes).expect("appends");
+        session.commit().expect("commits");
+        let restarted = RegistryStore::with_adapter_count(1);
+        restarted.hydrate_from_store(&slices, 1);
+        assert_eq!(row(&restarted).set_by.short_address, BusUnitSetter::Wire);
+        assert_eq!(row(&restarted).device_short_address, Some(5));
     }
 
     const NOW_MS: u32 = 5_000;

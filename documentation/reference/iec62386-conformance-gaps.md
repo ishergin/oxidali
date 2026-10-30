@@ -145,9 +145,8 @@ until the 15-minute timer lapses.
 Not built for the controller as a bus unit: a proven latency
 for `SEND TESTFRAME`, which test 12.3.16 bounds by one settling time; a bench measurement
 of the `POWER NOTIFICATION` time against test 12.4.16, whose window this design counts
-from hydration; the identification
-screen of `IDENTIFY DEVICE`; the settings surface naming who set each bus-unit variable;
-and the switchover's read-back of its peer.
+from hydration; and the identification
+screen of `IDENTIFY DEVICE`.
 DiiA 351's bank 201 is omitted by decision, since 103:2014 §9.10.9 reserves banks
 200–255. DALI-2 certification is out of reach until the rest is built.
 

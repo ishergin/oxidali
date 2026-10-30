@@ -17,8 +17,11 @@ Controller-global поведение на шине (`#/settings/dali`), рядо
 - **Colour**: «Restore DT8 auto activation» и «Assert RGBWAF channel control» —
   переключатели с подписью следствия, а не механики («без этого запись принимается, а
   цвет не двигается»).
-- **Application controller**: «Active» (`application_active`) и собственный адрес
-  control device (пусто — адреса нет).
+- **Application controller**: «Active» (`application_active`), собственный адрес
+  control device (пусто — адреса нет) и `power_cycle_notification` — переключатели;
+  random address, группы и operating mode — только показ. У каждого значения, которое
+  кто-то выставил, чип: «set by the wire» в тоне info (контроллер ввёл в эксплуатацию
+  другой мастер) или приглушённый «set by an operator».
 - `warnbar` висит на **необычном** выборе, а не на обычном: на выключенном
   восстановлении auto activation, на выключенном утверждении RGBWAF control и на
   пассивном контроллере. Чем грозит каждый из них —

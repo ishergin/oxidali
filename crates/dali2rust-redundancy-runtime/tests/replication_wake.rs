@@ -51,13 +51,7 @@ impl RedundancySettingsReadPort for Role {
 
 impl DaliSettingsReadPort for Role {
     fn dali_settings_view(&self) -> DaliSettingsView {
-        DaliSettingsView {
-            dt8_auto_activation_repair: false,
-            dt8_rgbwaf_control_assert: false,
-            application_active: self.active.load(Ordering::Relaxed),
-            device_short_address: None,
-            power_cycle_notification: false,
-        }
+        DaliSettingsView { application_active: self.active.load(Ordering::Relaxed), ..DaliSettingsView::default() }
     }
 }
 

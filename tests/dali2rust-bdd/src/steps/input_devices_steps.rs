@@ -29,7 +29,7 @@ async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, 
     inject_forward24(world, [&b0, &b1, &b2]);
 }
 
-// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015
+// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015 SET-DALI-019 SET-DALI-020
 #[when(regex = r"^a 24-bit frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
     inject_forward24(world, [&b0, &b1, &b2]);
@@ -175,7 +175,7 @@ async fn given_scan_with_ed1_feedback(world: &mut DaliWorld, types: String, capa
     seed_scan_with_feedback(world, &types, 0x2F, parse_hex_byte(&capability), None);
 }
 
-// INP-019 INP-070 INP-071 INP-073 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097 INP-084 INP-085
+// INP-019 INP-070 INP-071 INP-073 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097 INP-084 INP-085 RED-027
 #[when(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 #[given(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 async fn given_frame24_answer(
@@ -218,7 +218,7 @@ fn detail_path_of(patch_path: &str) -> String {
     }
 }
 
-// INP-019 INP-070 INP-073 INP-076 INP-095 INP-096 INP-097 INP-084
+// INP-019 INP-070 INP-073 INP-076 INP-095 INP-096 INP-097 INP-084 RED-027 RED-035
 #[then(regex = r#"^the mock transport 24-bit trace should be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);

@@ -139,6 +139,7 @@ pub struct PersistableDaliSettingsSlice {
     pub device_groups: u32,
     pub operating_mode: u8,
     pub power_cycle_notification: bool,
+    pub set_by: dali2rust_domain::registry::BusUnitSetBy,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]

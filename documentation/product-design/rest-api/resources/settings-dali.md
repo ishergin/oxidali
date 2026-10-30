@@ -21,7 +21,10 @@ BDD — [`settings_dali`](../../../../tests/dali2rust-bdd/features/settings_dali
 | `PATCH` | `/api/v1/settings/dali` | `200` — применённые настройки |
 
 `PATCH` — merge-patch с read-after-write. Не-boolean в булевом поле или адрес вне
-диапазона — `422 invalid_value`, неизвестный ключ — `400 unknown_field`.
+диапазона — `422 invalid_value`, неизвестный ключ — `400 unknown_field`, адрес, который
+назначен пиру redundancy (`peer_device_short_address`), — `409 conflict` с `message`
+`short_address_taken_by_peer`: два блока на одном адресе накладывают каждый адресный
+ответ.
 
 ## Поля
 
@@ -50,7 +53,8 @@ BDD — [`settings_dali`](../../../../tests/dali2rust-bdd/features/settings_dali
 Другой контроллер на шине может ввести этот в эксплуатацию (IEC 62386-103 §9.2.3): его
 `SET SHORT ADDRESS`, `ENABLE` / `DISABLE APPLICATION CONTROLLER` и остальные команды
 конфигурации меняют те же переменные через реестр, и `GET` показывает значение, которое
-записали последним — оператор или шина. Изменение с шины, которое модель блока сделала до
+записали последним, а `set_by` называет, кто: `operator` или `wire`; `null` — никто с
+тех пор, как запись это помнит. Изменение с шины, которое модель блока сделала до
 того, как приняла значение оператора, это значение не перезаписывает
 ([`ADR-030`](../../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)).
 

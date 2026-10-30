@@ -492,6 +492,7 @@ impl dali2rust_domain::registry::DaliSettingsReadPort for ActiveRole {
             application_active: true,
             device_short_address: None,
             power_cycle_notification: false,
+            ..dali2rust_domain::registry::DaliSettingsView::default()
         }
     }
 }

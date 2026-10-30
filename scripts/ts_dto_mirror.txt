@@ -3,6 +3,7 @@ ApplyOrchestratorDto ApplyOrchestratorCounters
 BankReading BankReading
 BusCountersDto BusCounters
 BusUnitConfigurationDto BusUnitConfiguration
+BusUnitSetByDto BusUnitSetBy
 CapabilityFlagsDto CapabilityFlags
 ChannelCountersDto ChannelCounters
 ColorTemperatureRangeDto ColorTemperatureRange

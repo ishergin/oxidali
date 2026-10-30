@@ -72,3 +72,14 @@ Feature: Redundancy — settings
     When I PATCH JSON {"peer_url":""} to "/api/v1/settings/redundancy"
     Then the response status should be 200
     And the JSON field "peer_url" should be ""
+
+  @id:RED-036
+  Scenario: An operator cannot name this controller's own short address as its peer's
+    When I PATCH JSON {"device_short_address":5} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    When I PATCH JSON {"peer_device_short_address":5} to "/api/v1/settings/redundancy"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON field "message" should be "peer_address_is_this_controller"
+    When I send a GET request to "/api/v1/settings/redundancy"
+    Then the JSON field "peer_device_short_address" should equal null

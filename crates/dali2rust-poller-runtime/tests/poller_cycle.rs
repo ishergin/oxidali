@@ -1808,6 +1808,7 @@ impl dali2rust_domain::registry::DaliSettingsReadPort for SwitchableRole {
             application_active: self.active.load(Ordering::Relaxed),
             device_short_address: None,
             power_cycle_notification: false,
+            ..dali2rust_domain::registry::DaliSettingsView::default()
         }
     }
 }

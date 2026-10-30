@@ -108,6 +108,13 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
   font-size: 12px; line-height: 1.5; color: var(--warn); max-width: 78ch; }
 * + .warnbar { margin-top: 14px; }
+
+/* Who set a bus-unit variable last, beside its value: the wire is the notable case. */
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; }
+.chip.muted { color: var(--text-faint); background: var(--raised); }
+.chip.info { color: var(--info); background: var(--info-soft); }
+.mono { font-family: var(--mono); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -158,9 +165,37 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <div class="fieldrow">
       <div class="fl">
         <label>Device short address</label>
-        <p class="hint">Our own control-device address (0–63, empty = none). Without one, only broadcast ENABLE/DISABLE reaches us.</p>
+        <p class="hint">Our own control-device address (0–63, empty = none). Without one, only broadcast ENABLE/DISABLE reaches us. It may not be the redundancy peer's.</p>
       </div>
       <div class="fc"><input class="inp" value="" placeholder="—"></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Power cycle notification</label>
+        <p class="hint">103 §9.12.2: after each boot, announce this controller with POWER NOTIFICATION. Off by default; another controller's ENABLE turns it on too.</p>
+      </div>
+      <div class="fc"><span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Random address</label>
+        <p class="hint">Drawn when another controller sends RANDOMISE; its address search finds this controller by it.</p>
+      </div>
+      <div class="fc"><span class="mono">0xFFFFFF</span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Device groups</label>
+        <p class="hint">The control-device groups another controller added this one to (0–31).</p>
+      </div>
+      <div class="fc"><span class="mono">none</span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Operating mode</label>
+        <p class="hint">0 is the standard's own mode; only another controller changes it.</p>
+      </div>
+      <div class="fc"><span class="mono">0</span></div>
     </div>
   </div>
 
@@ -210,9 +245,37 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <div class="fieldrow">
       <div class="fl">
         <label>Device short address</label>
-        <p class="hint">Our own control-device address (0–63, empty = none). Without one, only broadcast ENABLE/DISABLE reaches us.</p>
+        <p class="hint">Our own control-device address (0–63, empty = none). Without one, only broadcast ENABLE/DISABLE reaches us. It may not be the redundancy peer's.</p>
       </div>
       <div class="fc"><input class="inp" value="12" placeholder="—"></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Power cycle notification</label>
+        <p class="hint">103 §9.12.2: after each boot, announce this controller with POWER NOTIFICATION. Off by default; another controller's ENABLE turns it on too.</p>
+      </div>
+      <div class="fc"><span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Random address</label>
+        <p class="hint">Drawn when another controller sends RANDOMISE; its address search finds this controller by it.</p>
+      </div>
+      <div class="fc"><span class="mono">0xFFFFFF</span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Device groups</label>
+        <p class="hint">The control-device groups another controller added this one to (0–31).</p>
+      </div>
+      <div class="fc"><span class="mono">none</span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Operating mode</label>
+        <p class="hint">0 is the standard's own mode; only another controller changes it.</p>
+      </div>
+      <div class="fc"><span class="mono">0</span></div>
     </div>
   </div>
 
@@ -231,6 +294,53 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     write stages — the standard's own power-up state. Turn this off only for an
     installation whose RGBWAF linkage someone configured deliberately.
   </p>
+
+  <div class="state-label"><span>Commissioned by another controller — each value the wire set says so</span><span class="ln"></span></div>
+  <div class="card">
+    <header><h3>Application controller (R16-C)</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Active</label>
+        <p class="hint">103 §9.9.1 applicationActive: off = this controller puts no forward frame on the wire — the standard's standby state. Another controller's ENABLE/DISABLE pair flips it too.</p>
+      </div>
+      <div class="fc"><span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Device short address</label>
+        <p class="hint">Our own control-device address (0–63, empty = none). Without one, only broadcast ENABLE/DISABLE reaches us. It may not be the redundancy peer's.</p>
+      </div>
+      <div class="fc"><span class="chip info">set by the wire</span><input class="inp" value="5" placeholder="—"></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Power cycle notification</label>
+        <p class="hint">103 §9.12.2: after each boot, announce this controller with POWER NOTIFICATION. Off by default; another controller's ENABLE turns it on too.</p>
+      </div>
+      <div class="fc"><span class="chip muted">set by an operator</span><span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Random address</label>
+        <p class="hint">Drawn when another controller sends RANDOMISE; its address search finds this controller by it.</p>
+      </div>
+      <div class="fc"><span class="chip info">set by the wire</span><span class="mono">0x4A21C7</span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Device groups</label>
+        <p class="hint">The control-device groups another controller added this one to (0–31).</p>
+      </div>
+      <div class="fc"><span class="chip info">set by the wire</span><span class="mono">3, 17</span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Operating mode</label>
+        <p class="hint">0 is the standard's own mode; only another controller changes it.</p>
+      </div>
+      <div class="fc"><span class="mono">0</span></div>
+    </div>
+  </div>
 </div>
 
 </body>

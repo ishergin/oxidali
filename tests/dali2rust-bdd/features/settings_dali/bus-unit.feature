@@ -130,3 +130,39 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     When I restart the host stack
     Then the mock transport 24-bit trace should be exactly "FE E0 45" within 6000 ms
     And 24-bit forward frame 1 should be sent at priority 2
+
+  @id:SET-DALI-018
+  Scenario: An operator cannot give this controller its peer's short address
+    When I PATCH JSON {"peer_device_short_address":61} to "/api/v1/settings/redundancy"
+    Then the response status should be 200
+    When I PATCH JSON {"device_short_address":61} to "/api/v1/settings/dali"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON field "message" should be "short_address_taken_by_peer"
+    When I send a GET request to "/api/v1/settings/dali"
+    Then the JSON field "device_short_address" should equal null
+
+  @id:SET-DALI-019
+  Scenario: Each bus-unit variable names who set it last, the operator or the wire
+    When I PATCH JSON {"power_cycle_notification":true} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    And the JSON pointer "/set_by/power_cycle_notification" should be "operator"
+    And the JSON pointer "/set_by/device_short_address" should be null
+    When a 24-bit frame C1 30 05 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    Then the JSON pointer "/set_by/device_short_address" at "/api/v1/settings/dali" should eventually be "wire"
+    And the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
+    And the JSON pointer "/set_by/power_cycle_notification" at "/api/v1/settings/dali" should eventually be "operator"
+    And the JSON pointer "/set_by/random_address" at "/api/v1/settings/dali" should eventually be "null"
+
+  @id:SET-DALI-020
+  Scenario: Who set a bus-unit variable survives a restart
+    Given in-memory slice persistence is enabled for the host stack
+    When a 24-bit frame C1 30 05 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    Then the JSON pointer "/set_by/device_short_address" at "/api/v1/settings/dali" should eventually be "wire"
+    When I restart the host stack
+    Then the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
+    And the JSON pointer "/set_by/device_short_address" at "/api/v1/settings/dali" should eventually be "wire"

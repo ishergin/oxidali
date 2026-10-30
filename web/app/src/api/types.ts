@@ -403,12 +403,27 @@ export interface ConfigSliceRow {
   crc32: number
 }
 
+export type BusUnitSetter = 'operator' | 'wire'
+
+export interface BusUnitSetBy {
+  application_active: BusUnitSetter | null
+  device_short_address: BusUnitSetter | null
+  power_cycle_notification: BusUnitSetter | null
+  random_address: BusUnitSetter | null
+  device_groups: BusUnitSetter | null
+  operating_mode: BusUnitSetter | null
+}
+
 export interface DaliSettings {
   dt8_auto_activation_repair: boolean
   dt8_rgbwaf_control_assert: boolean
   application_active: boolean
   device_short_address: number | null
   power_cycle_notification: boolean
+  random_address: number
+  device_groups: number[]
+  operating_mode: number
+  set_by: BusUnitSetBy
 }
 
 export interface PhysicalDevicePatch {

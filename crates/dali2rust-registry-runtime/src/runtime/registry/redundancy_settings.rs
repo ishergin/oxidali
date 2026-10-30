@@ -97,6 +97,13 @@ impl RegistryStore {
     pub(crate) fn redundancy_settings_row(&self) -> RedundancySettingsRecord {
         self.read_inner().redundancy_settings.clone()
     }
+
+    // IEC 62386-103 §9.2.3
+    pub(crate) fn claims_our_own_address(&self, body: &RedundancySettingsUpdateCommand) -> bool {
+        let ours = self.read_inner().dali_settings.device_short_address;
+        body.patch_mask & RedundancySettingsUpdateCommand::PATCH_PEER_SHORT_ADDRESS != 0
+            && ours == Some(body.peer_device_short_address)
+    }
 }
 
 impl RedundancySettingsReadPort for RegistryStore {
