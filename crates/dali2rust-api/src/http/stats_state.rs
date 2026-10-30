@@ -195,7 +195,6 @@ pub struct StatsNetworkDto {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct StatsReportDto {
-    pub sample_ms: u64,
     pub controller: StatsControllerDto,
     pub bus: StatsBusDto,
     pub dali: StatsDaliDto,
@@ -288,7 +287,7 @@ declare_widest_dtos! {
         rx_ring_overruns_total, rx_fifo_overflows_total, link_up_events_total,
     }
     StatsReportDto {
-        sample_ms = u64::MAX, controller = StatsControllerDto::widest(),
+        controller = StatsControllerDto::widest(),
         bus = StatsBusDto::widest(), dali = StatsDaliDto::widest(),
         operations = StatsOperationsDto::widest(), websocket = StatsWebSocketDto::widest(),
         mqtt = StatsMqttDto::widest(), input = StatsInputDto::widest(),

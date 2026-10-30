@@ -31,7 +31,7 @@ fn bus_publish_totals(world: &mut DaliWorld) -> (u64, u64) {
 #[then("the JSON response should have the stats blocks")]
 async fn stats_blocks_present(world: &mut DaliWorld) {
     let json = last_json(world);
-    for block in ["sample_ms", "controller", "bus", "dali", "operations"] {
+    for block in ["controller", "bus", "dali", "operations"] {
         assert!(json.get(block).is_some(), "missing stats block {block}");
     }
     for field in [
@@ -153,7 +153,6 @@ async fn stats_uptime_above_zero(world: &mut DaliWorld) {
         || {
             let json = stats_snapshot(world);
             pointer_u64(&json, "/controller/uptime_ms") > 0
-                && pointer_u64(&json, "/sample_ms") > 0
         },
         STATS_TIMEOUT,
     );

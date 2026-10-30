@@ -143,7 +143,7 @@ export function StatsScreen() {
     onEvent: snapshot.consume,
   })
   const data = snapshot.latest ?? polled
-  const deltas = useDeltas(data, data?.sample_ms ?? null, deltaView)
+  const deltas = useDeltas(data, data?.controller.uptime_ms ?? null, deltaView)
 
   if (error) return <div class="empty">Stats unavailable — {error}</div>
   if (!data) return <div class="empty">Loading stats…</div>

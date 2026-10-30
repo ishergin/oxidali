@@ -1128,7 +1128,6 @@ export type StatsNetwork = {
 }
 
 export interface StatsReportPayload {
-  sample_ms: number
   controller: StatsController
   bus: StatsBus
   dali: StatsDali

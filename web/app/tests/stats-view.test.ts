@@ -5,7 +5,7 @@ import { deltaOf, flatten } from '../src/counter-delta.js'
 import { deltaView } from '../src/screens/stats-view.js'
 
 function sample(stats: { name: string; count: number }[]) {
-  return flatten(deltaView({ sample_ms: 0, rules: { effects_emitted: 0, stats } }), '', {})
+  return flatten(deltaView({ controller: { uptime_ms: 0 }, rules: { effects_emitted: 0, stats } }), '', {})
 }
 
 test('a named count keeps its delta when a new name sorts in before it', () => {
@@ -22,7 +22,7 @@ test('a named count keeps its delta when a new name sorts in before it', () => {
 test('the rest of the sample keeps its paths', () => {
   const flat = sample([{ name: 'presses', count: 5 }])
 
-  assert.equal(flat['sample_ms'], 0)
+  assert.equal(flat['controller.uptime_ms'], 0)
   assert.equal(flat['rules.effects_emitted'], 0)
   assert.equal(flat['rules.stats.presses'], 5)
 })

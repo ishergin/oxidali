@@ -687,7 +687,6 @@ impl StatsHttpState for StatsBridge {
 
     fn stats_dto_into(&self, out: &mut StatsReportDto) {
         let uptime_ms = self.uptime.elapsed_ms();
-        out.sample_ms = uptime_ms;
         out.controller = stats_controller_dto(uptime_ms, self.heap.as_ref().map(|h| h.snapshot()));
         out.bus = stats_bus_dto(
             &self.publisher.counters_snapshot(),
