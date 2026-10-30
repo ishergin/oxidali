@@ -51,8 +51,8 @@ this reaches it.
   interrupt answers the next query from that table on its own. The arbitration table of
   ADR-018 becomes part of it. A capture is still routed by its length.
 - **A lost capture invalidates the state it would have changed.** A dropped ring entry
-  (`take_sniff_dropped`) clears the `DTR`s and the search state, and answers that depend
-  on them stay silent until they are set again.
+  (`take_sniff_dropped`) clears the `DTR`s, the search address and write enable and ends
+  initialisation, and answers that depend on them stay silent until they are set again.
 
 ### An answer starts in its slot, whatever else is on the line
 
@@ -133,6 +133,7 @@ answer to any next one, and the slot no longer waits for a task.
 - The model answers from its own copy at once (101 §9.8.5 executes a command before the
   next frame) and publishes each NVM change as evidence for the registry, so the registry
   stays the single writer; the model hydrates from the DALI settings slice.
+  `SAVE PERSISTENT VARIABLES` adds nothing: every change is already on its way to flash.
 - The bus-unit variables live in the DALI settings slice, which is not transferable: a
   standby never clones the active unit's short address, random address or groups.
 - `RANDOMISE` draws from the hardware random number generator. Both units run one image,
@@ -184,6 +185,12 @@ yet test 12.3.16 sends `SEND TESTFRAME` after `DISABLE APPLICATION CONTROLLER`
 (§12.14.1, §12.14.3) and expects the frame. The test is followed: the frame is executed in
 both roles and refused in quiescent mode. The DALI worker's one gate admits it by command
 kind, beside the arbitration probe and the power notification.
+
+### `RESET` keeps the initialisation
+
+103 Table 17 resets `initialisationState` to DISABLED, yet test 12.7.1 runs `RANDOMISE`
+after `RESET` and expects it executed, and 102 marks the same variable "no change". The
+test is followed: `RESET` leaves `initialisationState` and its timer as they were.
 
 ### Every boot is a power cycle
 

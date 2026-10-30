@@ -6,6 +6,8 @@ pub struct ForwardFrame24 {
 }
 
 impl ForwardFrame24 {
+    pub const DATA_BITS: u8 = dali2rust_dali_phy::FORWARD24_BITS;
+
     #[must_use]
     pub const fn command(address: Device103Address, instance: InstanceAddress, opcode: u8) -> Self {
         Self {

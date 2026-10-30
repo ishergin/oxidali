@@ -25,6 +25,7 @@ use dali2rust_domain::registry::InputInstanceTypeReadPort;
 use dali2rust_domain::dali::devices::dt8_color::{dim_level_to_srgb_channel, Dt8Command};
 use dali2rust_domain::dali::devices::DeviceType;
 use dali2rust_domain::dali::net::address::{decode_wire_address, DaliAddress};
+use dali2rust_domain::dali::frame::{send_twice_span_ms, ForwardFrame};
 use dali2rust_domain::dali::pres::codec::dali_command_from_wire;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
@@ -282,7 +283,7 @@ fn track_scene_write(
     (kind, scene): (ObservedKind, u8),
 ) {
     let paired = held.is_some_and(|(first, at)| {
-        first == raw.bytes && raw.observed_at_mono_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS
+        first == raw.bytes && raw.observed_at_mono_ms.wrapping_sub(at) < SCENE_PAIR_SPAN_MS
     });
     if !paired {
         state.pending_scene_write = Some((raw.bytes, raw.observed_at_mono_ms));
@@ -634,8 +635,8 @@ fn color_fact(address: DaliAddress, color: ColorValue) -> Dt8Outcome {
     })
 }
 
-// IEC 62386-101 Table 20
-const SEND_TWICE_WINDOW_MS: u32 = 105;
+const SCENE_PAIR_SPAN_MS: u32 = send_twice_span_ms(ForwardFrame::DATA_BITS);
+const APPLICATION_CONTROL_PAIR_SPAN_MS: u32 = send_twice_span_ms(ForwardFrame24::DATA_BITS);
 
 // IEC 62386-103 §9.5.1
 fn application_control(bytes: [u8; 3]) -> Option<(DeviceCommandScope, bool)> {
@@ -669,7 +670,7 @@ fn track_device_command_pair(
     }
     match pending {
         Some((first, at)) if first == raw.bytes
-            && raw.observed_at_mono_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS =>
+            && raw.observed_at_mono_ms.wrapping_sub(at) < APPLICATION_CONTROL_PAIR_SPAN_MS =>
         {
             let Some((scope, enable)) = application_control(raw.bytes) else {
                 return;

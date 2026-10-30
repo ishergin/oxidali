@@ -685,6 +685,19 @@ fn an_application_control_pair_is_published_only_when_confirmed() {
 }
 
 #[test]
+fn an_application_control_pair_is_judged_by_its_settling_not_its_stamps() {
+    let harness = spawn_harness();
+    harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_000)).expect("send");
+    harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_115)).expect("send");
+    let _ = recv_app_control(&harness);
+    assert_eq!(
+        harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "94 ms of settling and a 20,8 ms frame put the stamps 115 ms apart"
+    );
+}
+
+#[test]
 fn a_pair_split_past_the_window_is_two_singles() {
     let harness = spawn_harness();
     harness.tx.send(forward24_at([0xFF, 0xFE, 0x16], 1_000)).expect("send");
@@ -817,6 +830,15 @@ fn a_remove_from_scene_pair_is_one_scene_removal() {
     let (_, body) = recv_observed(&harness);
     assert_eq!(body.observed_kind, ObservedKind::SceneRemovalObserved);
     assert_eq!(body.scene_id, Some(5));
+}
+
+#[test]
+fn a_set_scene_pair_is_judged_by_its_settling_not_its_stamps() {
+    let harness = spawn_harness();
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_000)).expect("send");
+    harness.tx.send(forward16_at(SET_SCENE_5_TO_SHORT_3, 1_119)).expect("send");
+    let _ = recv_observed(&harness);
+    assert_eq!(scene_writes(&harness), 1, "104 ms of settling and a 14,2 ms frame are still a pair");
 }
 
 #[test]

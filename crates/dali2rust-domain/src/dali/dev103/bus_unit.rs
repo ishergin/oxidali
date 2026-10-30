@@ -6,6 +6,8 @@ use dali2rust_platform::answer_table::{
 
 use crate::dali::dev103::address::{Device103Address, MAX_SHORT_ADDRESS};
 use crate::dali::dev103::command::{Device103Command, Special103Command};
+use crate::dali::dev103::frame::ForwardFrame24;
+use crate::dali::frame::send_twice_span_ms;
 
 pub const ANSWER_YES: u8 = 0xFF;
 pub const ANSWER_MASK: u8 = 0xFF;
@@ -16,8 +18,7 @@ pub const INITIALISATION_MS: u32 = 15 * 60 * 1_000;
 pub const QUIESCENT_MS: u32 = 15 * 60 * 1_000;
 // IEC 62386-103 §11.4.2
 pub const IDENTIFY_MS: u32 = 10_000;
-// IEC 62386-101 Table 20
-pub const SEND_TWICE_WINDOW_MS: u32 = 105;
+pub const SEND_TWICE_SPAN_MS: u32 = send_twice_span_ms(ForwardFrame24::DATA_BITS);
 // IEC 62386-101 §4.2
 pub const VERSION_2_0: u8 = 0x08;
 pub const VERSION_NOT_IMPLEMENTED: u8 = 0xFF;
@@ -44,13 +45,17 @@ const STATUS_CONTROLLER_ERROR: u8 = 1 << 4;
 const STATUS_POWER_CYCLE_SEEN: u8 = 1 << 5;
 const STATUS_RESET_STATE: u8 = 1 << 6;
 // IEC 62386-103 Table 12
-const BANK0_LOCATIONS: usize = 0x1B;
-const BANK0_LAST_LOCATION: u8 = 0x7F;
+const BANK0_LAST_LOCATION: u8 = 0x1A;
+const BANK0_LOCATIONS: usize = BANK0_LAST_LOCATION as usize + 1;
 const BANK0_FIRMWARE: usize = 0x09;
 const BANK0_IDENTIFICATION: usize = 0x0B;
 const BANK0_HARDWARE: usize = 0x13;
 const BANK0_PART_VERSIONS: usize = 0x15;
 const BANK0_LOGICAL_UNITS: usize = 0x18;
+// IEC 62386-103 §11.10.21
+const TESTFRAME_RESERVED: u8 = 0x80;
+const TESTFRAME_PRIORITY: u8 = 0x07;
+const TESTFRAME_PRIORITIES: core::ops::RangeInclusive<u8> = 1..=5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BusUnitNvm {
@@ -191,13 +196,18 @@ impl Device103Unit {
             return false;
         }
         self.revision = Some(snapshot.revision);
-        self.nvm = snapshot.nvm;
+        self.nvm = BusUnitNvm {
+            short_address: snapshot.nvm.short_address.filter(|address| *address <= MAX_SHORT_ADDRESS),
+            ..snapshot.nvm
+        };
         true
     }
 
     pub fn lost_capture(&mut self) {
         self.dtr = [None; 3];
         self.search = [None; 3];
+        self.initialisation = InitialisationState::Disabled;
+        self.write_enabled = false;
         self.pending_twice = None;
     }
 
@@ -240,7 +250,7 @@ impl Device103Unit {
     fn second_of_pair(&mut self, bytes: [u8; 3], now_ms: u32) -> bool {
         let pair = matches!(
             self.pending_twice,
-            Some((first, at)) if first == bytes && now_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS
+            Some((first, at)) if first == bytes && now_ms.wrapping_sub(at) < SEND_TWICE_SPAN_MS
         );
         self.pending_twice = if pair { None } else { Some((bytes, now_ms)) };
         pair
@@ -260,7 +270,8 @@ impl Device103Unit {
             }
         }
         image.entries[COMPARE_ENTRY] = yes_if(self.compare());
-        image.entries[VERIFY_SHORT_ADDRESS_ENTRY] = yes_if(self.initialising());
+        image.entries[VERIFY_SHORT_ADDRESS_ENTRY] =
+            yes_if(self.initialising() && self.nvm.short_address.is_some());
         image.entries[QUERY_SHORT_ADDRESS_ENTRY] = if self.initialising() && self.selected() {
             byte(self.nvm.short_address.unwrap_or(ANSWER_MASK))
         } else {
@@ -277,7 +288,7 @@ impl Device103Unit {
             .unwrap_or(AnswerEntry::SILENT)
     }
 
-    // IEC 62386-103 §11.6.3–§11.6.9
+    // IEC 62386-103 §11.6
     fn status_entry(&self, command: Device103Command) -> Option<AnswerEntry> {
         let status = self.status_byte();
         Some(match command {
@@ -294,7 +305,7 @@ impl Device103Unit {
         })
     }
 
-    // IEC 62386-103 §11.6.8–§11.6.14
+    // IEC 62386-103 §11.6
     fn register_entry(&self, command: Device103Command) -> Option<AnswerEntry> {
         let random = self.nvm.random_address.to_be_bytes();
         let known = match command {
@@ -309,7 +320,7 @@ impl Device103Unit {
         Some(known.map_or(AnswerEntry::SILENT, byte))
     }
 
-    // IEC 62386-103 §11.6.15–§11.6.19
+    // IEC 62386-103 §11.6
     fn mode_entry(&self, command: Device103Command) -> Option<AnswerEntry> {
         let mode = self.nvm.operating_mode;
         Some(match command {
@@ -328,7 +339,7 @@ impl Device103Unit {
         })
     }
 
-    // IEC 62386-103 §11.6.20–§11.6.26
+    // IEC 62386-103 §11.6
     fn membership_entry(&self, command: Device103Command) -> Option<AnswerEntry> {
         let groups = self.nvm.device_groups.to_le_bytes();
         Some(match command {
@@ -466,12 +477,17 @@ impl Step<'_> {
 
     // IEC 62386-103 §11.6.15
     fn query(&mut self, command: Device103Command) {
-        if command == Device103Command::ReadMemoryLocation && self.unit.dtr[1] == Some(0) {
-            self.unit.dtr[0] = self.unit.dtr[0].map(step_location);
+        if command != Device103Command::ReadMemoryLocation {
+            return;
         }
+        self.unit.dtr[0] = match self.unit.dtr[1] {
+            Some(0) => self.unit.dtr[0].map(step_location),
+            Some(_) => self.unit.dtr[0],
+            None => None,
+        };
     }
 
-    // IEC 62386-103 §11.4, §11.5.2–§11.5.8
+    // IEC 62386-103 §11.4, §11.5
     fn control(&mut self, command: Device103Command) -> bool {
         match command {
             Device103Command::IdentifyDevice => {
@@ -492,7 +508,7 @@ impl Step<'_> {
         true
     }
 
-    // IEC 62386-103 §11.5.6–§11.5.16
+    // IEC 62386-103 §11.5
     fn configure(&mut self, command: Device103Command) {
         match command {
             Device103Command::EnableApplicationController => {
@@ -520,7 +536,6 @@ impl Step<'_> {
             nvm.random_address = FACTORY_RANDOM_ADDRESS;
         });
         self.unit.search = [Some(0xFF); 3];
-        self.unit.initialisation = InitialisationState::Disabled;
         self.unit.write_enabled = false;
         self.unit.power_cycle_seen = false;
         self.quiescent(false);
@@ -533,7 +548,7 @@ impl Step<'_> {
         }
     }
 
-    // IEC 62386-103 §11.5.9–§11.5.12
+    // IEC 62386-103 §11.5
     fn groups(&mut self, command: Device103Command) {
         let (shift, add) = match command {
             Device103Command::AddToDeviceGroups0To15 => (0, true),
@@ -616,7 +631,7 @@ impl Step<'_> {
         self.set_nvm(|nvm| nvm.random_address = random);
     }
 
-    // IEC 62386-103 §11.10.6–§11.10.10
+    // IEC 62386-103 §11.10
     fn search(&mut self, command: Special103Command, data: u8) {
         if !self.unit.initialising() {
             return;
@@ -658,6 +673,9 @@ impl Step<'_> {
 
     // IEC 62386-103 §11.10.21
     fn test_frame(&mut self, data: u8) {
+        if data & TESTFRAME_RESERVED != 0 || !TESTFRAME_PRIORITIES.contains(&(data & TESTFRAME_PRIORITY)) {
+            return;
+        }
         let [Some(dtr0), Some(dtr1), Some(dtr2)] = self.unit.dtr else {
             return;
         };
@@ -766,12 +784,11 @@ fn bank0(identity: &BusUnitIdentity) -> [Option<u8>; BANK0_LOCATIONS] {
 mod tests {
     use super::*;
     use crate::dali::dev103::address::InstanceAddress;
-    use crate::dali::dev103::frame::ForwardFrame24;
     use crate::dali::dev103::unit::answer_table;
     use dali2rust_dali_phy::{AnswerTableCell, TableLookup};
 
     const NOW: u32 = 1_000;
-    const GAP_MS: u32 = 20;
+    const GAP_MS: u32 = 25;
     const ENTROPY: u32 = 0x0012_3456;
     const IDENTITY: BusUnitIdentity = BusUnitIdentity {
         firmware_version: [1, 4],
@@ -907,7 +924,7 @@ mod tests {
             Device103Address::Short(63),
         ];
         for active in [true, false] {
-            for short in [None, Some(0), Some(7), Some(63)] {
+            for short in [None, Some(0), Some(7), Some(63), Some(200)] {
                 let nvm = BusUnitNvm { short_address: short, application_active: active, ..BusUnitNvm::FACTORY };
                 let model = Bench::hydrated(nvm).unit.answer_table();
                 let old = answer_table(active, short);
@@ -949,24 +966,31 @@ mod tests {
     }
 
     #[test]
-    fn a_second_half_later_than_the_window_is_a_new_first_half() {
-        let mut bench = Bench::hydrated(at(7));
+    fn a_pair_is_judged_by_its_settling_time_not_by_the_distance_of_its_stamps() {
         let set = Device103Command::SetShortAddress.frame(Device103Address::Short(7)).as_bytes();
-        bench.special(Special103Command::Dtr0, 9).send(set);
-        bench.now_ms += SEND_TWICE_WINDOW_MS;
-        bench.send(set);
-        assert_eq!(bench.unit.nvm().short_address, Some(7));
+        for (apart_ms, paired) in [(115, true), (SEND_TWICE_SPAN_MS - 1, true), (SEND_TWICE_SPAN_MS, false)] {
+            let mut bench = Bench::hydrated(at(7));
+            bench.special(Special103Command::Dtr0, 9).send(set);
+            bench.now_ms += apart_ms - GAP_MS;
+            bench.send(set);
+            let expected = if paired { Some(9) } else { Some(7) };
+            assert_eq!(bench.unit.nvm().short_address, expected, "{apart_ms} ms from stamp to stamp");
+        }
     }
 
     #[test]
     fn three_identical_frames_execute_once() {
-        let mut bench = Bench::hydrated(at(7));
-        bench.special(Special103Command::Dtr1, 0b11).special(Special103Command::Dtr2, 0);
-        let add = Device103Command::AddToDeviceGroups0To15.frame(Device103Address::Short(7)).as_bytes();
-        bench.send(add).send(add);
-        bench.special(Special103Command::Dtr1, 0b100);
-        bench.send(add).send(add).send(add);
-        assert_eq!(bench.unit.nvm().device_groups, 0b111);
+        let mut bench = commissioned();
+        let randomise = Special103Command::Randomise.frame(0).as_bytes();
+        let mut draws = 0;
+        for _ in 0..3 {
+            bench.now_ms += GAP_MS;
+            bench.unit.feed(UnitFrame::Forward24(randomise), bench.now_ms, &mut || {
+                draws += 1;
+                ENTROPY
+            });
+        }
+        assert_eq!(draws, 1, "the third frame opens a new pair and draws nothing");
     }
 
     #[test]
@@ -1081,7 +1105,7 @@ mod tests {
     #[test]
     fn memory_bank_0_reads_with_auto_increment_and_answers_no_for_holes() {
         let mut bench = Bench::hydrated(at(1));
-        assert_eq!(bench.read_bank0(0x00), TableLookup::Answer(BANK0_LAST_LOCATION));
+        assert_eq!(bench.read_bank0(0x00), TableLookup::Answer(0x1A), "test 12.6.1 takes 0x1A or 0x80–0xFE");
         assert_eq!(bench.read_bank0(0x01), TableLookup::Silent, "location 1 is not implemented");
         for (offset, expected) in [(0x09, 1), (0x0A, 4), (0x0D, 0x30), (0x12, 0x56), (0x15, VERSION_2_0), (0x16, VERSION_NOT_IMPLEMENTED), (0x17, VERSION_2_0), (0x18, 1)] {
             assert_eq!(bench.read_bank0(offset), TableLookup::Answer(expected), "{offset:#04x}");
@@ -1090,7 +1114,7 @@ mod tests {
         bench.read_bank0(0x09);
         bench.send(read);
         assert_eq!(bench.ask(read), TableLookup::Answer(4), "DTR0 moved on after the read");
-        assert_eq!(bench.read_bank0(0x1B), TableLookup::Silent, "reserved up to 0x7F");
+        assert_eq!(bench.read_bank0(0x1B), TableLookup::Silent, "reserved from 0x1B");
         bench.send(read);
         assert_eq!(bench.broadcast(Device103Command::QueryContentDtr0), TableLookup::Answer(0x1C));
         bench.special(Special103Command::Dtr0, LAST_MEMORY_LOCATION).send(read);
@@ -1179,8 +1203,84 @@ mod tests {
         assert_eq!(bench.ask(Special103Command::Compare.frame(0).as_bytes()), TableLookup::Silent);
         bench.device(Device103Address::Broadcast, Device103Command::SetShortAddress);
         assert_eq!(bench.unit.nvm().short_address, None, "an unknown DTR0 is not an operand");
+        assert_eq!(bench.unit.initialisation(), InitialisationState::Disabled, "the lost frame may have been TERMINATE");
+        bench.special(Special103Command::Initialise, INITIALISE_ALL);
         select(&mut bench, ENTROPY);
         assert_eq!(bench.ask(Special103Command::Compare.frame(0).as_bytes()), yes());
+    }
+
+    #[test]
+    fn a_lost_capture_drops_write_enable() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.device(Device103Address::Short(2), Device103Command::EnableWriteMemory);
+        bench.unit.lost_capture();
+        bench.special(Special103Command::Dtr1, 0).special(Special103Command::Dtr0, 0x10);
+        bench.special(Special103Command::WriteMemoryLocation, 0xAA);
+        assert_eq!(bench.broadcast(Device103Command::QueryContentDtr0), TableLookup::Answer(0x10));
+    }
+
+    #[test]
+    fn a_read_with_an_unknown_bank_leaves_dtr0_unknown() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.special(Special103Command::Dtr0, 5);
+        bench.unit.lost_capture();
+        bench.special(Special103Command::Dtr0, 5);
+        bench.send(Device103Command::ReadMemoryLocation.frame(Device103Address::Broadcast).as_bytes());
+        assert_eq!(
+            bench.broadcast(Device103Command::QueryContentDtr0),
+            TableLookup::Silent,
+            "DTR1 may have been 0, so DTR0 may have moved on"
+        );
+    }
+
+    #[test]
+    fn verify_short_address_is_answered_only_by_an_addressed_unit() {
+        let verify_mask = Special103Command::VerifyShortAddress.frame(ANSWER_MASK).as_bytes();
+        let unaddressed = commissioned();
+        assert_eq!(unaddressed.ask(verify_mask), TableLookup::Silent, "test 12.7.9 step 7");
+        let mut addressed = Bench::hydrated(at(5));
+        addressed.special(Special103Command::Initialise, INITIALISE_ALL);
+        let verify_own = Special103Command::VerifyShortAddress.frame(5).as_bytes();
+        assert_eq!(addressed.ask(verify_own), yes());
+    }
+
+    #[test]
+    fn a_first_hydration_needs_the_sequence_of_a_fresh_unit() {
+        let mut unit = Device103Unit::new(&IDENTITY);
+        assert!(!unit.hydrate(&snapshot(at(3), 1, 1)), "the acknowledged sequence is per boot");
+        assert!(unit.hydrate(&snapshot(at(3), 1, 0)));
+    }
+
+    #[test]
+    fn a_short_address_out_of_range_in_a_snapshot_is_no_address() {
+        let bench = Bench::hydrated(at(200));
+        assert_eq!(bench.unit.nvm().short_address, None);
+        assert_eq!(bench.broadcast(Device103Command::QueryMissingShortAddress), yes());
+    }
+
+    #[test]
+    fn set_short_address_ignores_an_operand_out_of_range() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.special(Special103Command::Dtr0, 64);
+        bench.device(Device103Address::Short(2), Device103Command::SetShortAddress);
+        bench.special(Special103Command::Dtr0, 254);
+        bench.device(Device103Address::Short(2), Device103Command::SetShortAddress);
+        assert_eq!(bench.unit.nvm().short_address, Some(2));
+    }
+
+    #[test]
+    fn the_dtr_pair_frames_and_direct_write_keep_write_enable() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.device(Device103Address::Short(2), Device103Command::EnableWriteMemory);
+        for (frame, dtr0) in [
+            ([DTR1_DTR0, 0, 0x30], 0x31),
+            ([DTR2_DTR1, 0, 0], 0x32),
+            ([DIRECT_WRITE_MEMORY, 0x40, 0xAA], 0x42),
+        ] {
+            bench.send(frame);
+            bench.special(Special103Command::WriteMemoryLocation, 0xAA);
+            assert_eq!(bench.broadcast(Device103Command::QueryContentDtr0), TableLookup::Answer(dtr0), "{frame:02X?}");
+        }
     }
 
     #[test]
@@ -1264,6 +1364,20 @@ mod tests {
     }
 
     #[test]
+    fn send_testframe_refuses_a_reserved_bit_or_a_priority_outside_1_to_5() {
+        for data in [0x85, 0x00, 0x06, 0x07] {
+            let mut bench = Bench::hydrated(at(2));
+            bench.special(Special103Command::Dtr0, 1).special(Special103Command::Dtr1, 2).special(Special103Command::Dtr2, 3);
+            bench.special(Special103Command::SendTestframe, data);
+            assert_eq!(bench.effects.test_frame, None, "{data:#04x}");
+        }
+        let mut bench = Bench::hydrated(at(2));
+        bench.special(Special103Command::Dtr0, 1).special(Special103Command::Dtr1, 2).special(Special103Command::Dtr2, 3);
+        bench.special(Special103Command::SendTestframe, 0x01);
+        assert!(bench.effects.test_frame.is_some(), "priority 1 is in range");
+    }
+
+    #[test]
     fn only_the_standard_operating_mode_is_accepted() {
         let mut bench = Bench::hydrated(at(2));
         bench.special(Special103Command::Dtr0, MANUFACTURER_MODES_FROM);
@@ -1273,7 +1387,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_restores_table_17_and_leaves_what_it_marks_no_change() {
+    fn reset_restores_table_17_and_keeps_the_initialisation_as_test_12_7_1_expects() {
         let mut bench = commissioned();
         let to = Device103Address::Broadcast;
         bench.special(Special103Command::Dtr1, 1).special(Special103Command::Dtr2, 0);
@@ -1302,7 +1416,7 @@ mod tests {
                 application_active: false,
             }
         );
-        assert_eq!(bench.unit.initialisation(), InitialisationState::Disabled);
+        assert_eq!(bench.unit.initialisation(), InitialisationState::Enabled);
         assert!(!bench.unit.quiescent());
         assert_eq!(bench.broadcast(Device103Command::QueryResetState), yes());
         assert_eq!(bench.broadcast(Device103Command::QueryContentDtr2), TableLookup::Answer(7), "DTRs: no change");
@@ -1311,6 +1425,8 @@ mod tests {
         bench.special(Special103Command::Dtr1, 0).special(Special103Command::Dtr0, 0x10);
         bench.special(Special103Command::WriteMemoryLocation, 0xAA);
         assert_eq!(bench.broadcast(Device103Command::QueryContentDtr0), TableLookup::Answer(0x10), "writeEnableState: DISABLED");
+        bench.special(Special103Command::Randomise, 0);
+        assert_eq!(bench.unit.nvm().random_address, ENTROPY % RANDOM_ADDRESS_SPAN, "RANDOMISE still runs after RESET");
     }
 
     #[test]
