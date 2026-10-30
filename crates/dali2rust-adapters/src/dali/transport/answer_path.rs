@@ -142,7 +142,11 @@ mod tests {
         }
 
         fn publish(&self, publisher: &mut AnswerPublisher, isr: &PhyIsrCore) -> Option<u32> {
-            publisher.publish(isr, Some(&self.inputs), self.wire.answer_table().as_ref(), NOW_MS)
+            self.publish_at(publisher, isr, NOW_MS)
+        }
+
+        fn publish_at(&self, publisher: &mut AnswerPublisher, isr: &PhyIsrCore, now_ms: u32) -> Option<u32> {
+            publisher.publish(isr, Some(&self.inputs), self.wire.answer_table().as_ref(), now_ms)
         }
     }
 
@@ -269,14 +273,13 @@ mod tests {
     }
 
     #[test]
-    fn a_revoked_lease_reaches_the_interrupt_at_the_next_poll() {
+    fn a_lapsed_lease_reaches_the_interrupt_at_the_next_poll() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
         let mut publisher = AnswerPublisher::default();
         let named = Named::new(true);
         named.publish(&mut publisher, &isr);
-        named.inputs.revoke_lease(NOW_MS);
-        named.publish(&mut publisher, &isr);
+        named.publish_at(&mut publisher, &isr, NOW_MS + LEASE_MS);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 0), TableLookup::LeaseLapsed);
     }
 

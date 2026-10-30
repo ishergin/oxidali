@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 
-use dali2rust_domain::registry::DaliSettingsReadPort;
 use dali2rust_platform::arbitration::AnswerInputs;
 use dali2rust_platform::liveness::LivenessWatch;
 
@@ -13,29 +12,9 @@ pub const SUPERVISOR_PERIOD_MS: u64 = 1_000;
 pub const WORKER_STALE_AFTER_MS: u32 = 3_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StandDownReason {
-    Passive,
-    WorkerStale(&'static str),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupervisorTurn {
     Defend,
-    StandDown(StandDownReason),
-}
-
-#[must_use]
-pub fn supervisor_turn(
-    application_active: bool,
-    stale_worker: Option<&'static str>,
-) -> SupervisorTurn {
-    if !application_active {
-        return SupervisorTurn::StandDown(StandDownReason::Passive);
-    }
-    match stale_worker {
-        Some(name) => SupervisorTurn::StandDown(StandDownReason::WorkerStale(name)),
-        None => SupervisorTurn::Defend,
-    }
+    WorkerStale(&'static str),
 }
 
 #[derive(Debug, Default)]
@@ -48,10 +27,7 @@ impl ArbitrationSupervisorCounters {
     fn record(&self, turn: SupervisorTurn) {
         let counter = match turn {
             SupervisorTurn::Defend => &self.defended,
-            SupervisorTurn::StandDown(StandDownReason::Passive) => return,
-            SupervisorTurn::StandDown(StandDownReason::WorkerStale(_)) => {
-                &self.stood_down_worker_stale
-            }
+            SupervisorTurn::WorkerStale(_) => &self.stood_down_worker_stale,
         };
         counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -75,41 +51,39 @@ impl Default for ArbitrationSupervisorConfig {
 pub struct SupervisorInputs {
     pub answer_inputs: Arc<AnswerInputs>,
     pub watch: LivenessWatch,
-    pub settings: Arc<dyn DaliSettingsReadPort>,
     pub counters: Arc<ArbitrationSupervisorCounters>,
     pub config: ArbitrationSupervisorConfig,
 }
 
+// IEC 62386-103 §9.15
 pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> SupervisorTurn {
-    let stale_worker = inputs.watch.stale(now_ms);
-    let settings = inputs.settings.dali_settings_view();
-    let turn = supervisor_turn(settings.application_active, stale_worker);
+    let turn = match inputs.watch.stale(now_ms) {
+        Some(name) => SupervisorTurn::WorkerStale(name),
+        None => SupervisorTurn::Defend,
+    };
     match turn {
         SupervisorTurn::Defend => {
             inputs.answer_inputs.extend_lease(now_ms, inputs.config.lease_ttl_ms);
         }
-        SupervisorTurn::StandDown(StandDownReason::Passive) => {
-            inputs.answer_inputs.revoke_lease(now_ms);
-        }
-        SupervisorTurn::StandDown(StandDownReason::WorkerStale(name)) => {
-            match inputs.watch.stale_age(now_ms) {
-                Some((_, None)) => log::info!(
-                    "arbitration: {name} has not turned yet — the lease waits for it"
-                ),
-                Some((_, Some(age))) => log::warn!(
-                    "arbitration: {name} last turned {age} ms ago (stale after {} ms) — the answer table is not renewed, the lease lapses in at most {} ms",
-                    WORKER_STALE_AFTER_MS,
-                    inputs.config.lease_ttl_ms.min(LEASE_TTL_MS)
-                ),
-                None => {}
-            }
-        }
+        SupervisorTurn::WorkerStale(name) => log_stale_worker(inputs, name, now_ms),
     }
     inputs.counters.record(turn);
     turn
 }
 
-pub const SUPERVISOR_HANDLED_EVENTS: &[&str] = &["DaliSettingsChangedEvent"];
+fn log_stale_worker(inputs: &SupervisorInputs, name: &str, now_ms: u32) {
+    match inputs.watch.stale_age(now_ms) {
+        Some((_, None)) => log::info!("arbitration: {name} has not turned yet — the lease waits for it"),
+        Some((_, Some(age))) => log::warn!(
+            "arbitration: {name} last turned {age} ms ago (stale after {} ms) — the lease is not renewed and lapses in at most {} ms, which reports an application controller error",
+            WORKER_STALE_AFTER_MS,
+            inputs.config.lease_ttl_ms.min(LEASE_TTL_MS)
+        ),
+        None => {}
+    }
+}
+
+pub const SUPERVISOR_HANDLED_EVENTS: &[&str] = &[];
 
 pub fn spawn_arbitration_supervisor(
     ev_rx: dali2rust_bus::BusSubscriberRx,
@@ -136,41 +110,14 @@ fn supervisor_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, inputs: &SupervisorIn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_domain::registry::DaliSettingsView;
     use dali2rust_platform::liveness::LivenessBeat;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Mutex;
-
-    struct FakeSettings {
-        active: AtomicBool,
-        beat_while_read: Mutex<Option<(Arc<LivenessBeat>, u32)>>,
-    }
-
-    impl DaliSettingsReadPort for FakeSettings {
-        fn dali_settings_view(&self) -> DaliSettingsView {
-            if let Some((beat, at_ms)) = self.beat_while_read.lock().expect("beat").as_ref() {
-                beat.beat(*at_ms);
-            }
-            DaliSettingsView {
-                dt8_auto_activation_repair: false,
-                dt8_rgbwaf_control_assert: false,
-                application_active: self.active.load(Ordering::Relaxed),
-                device_short_address: Some(7),
-            }
-        }
-    }
 
     struct Rig {
         inputs: SupervisorInputs,
-        settings: Arc<FakeSettings>,
         registry: Arc<LivenessBeat>,
     }
 
-    fn rig(active: bool) -> Rig {
-        let settings = Arc::new(FakeSettings {
-            active: AtomicBool::new(active),
-            beat_while_read: Mutex::new(None),
-        });
+    fn rig() -> Rig {
         let registry = Arc::new(LivenessBeat::new("registry", WORKER_STALE_AFTER_MS));
         registry.beat(1_000);
         let mut watch = LivenessWatch::new();
@@ -179,11 +126,9 @@ mod tests {
             inputs: SupervisorInputs {
                 answer_inputs: Arc::new(AnswerInputs::new()),
                 watch,
-                settings: Arc::clone(&settings) as Arc<dyn DaliSettingsReadPort>,
                 counters: Arc::new(ArbitrationSupervisorCounters::default()),
                 config: ArbitrationSupervisorConfig::default(),
             },
-            settings,
             registry,
         }
     }
@@ -191,8 +136,8 @@ mod tests {
     const NOW: u32 = 1_000;
 
     #[test]
-    fn an_active_controller_with_healthy_workers_renews_the_lease() {
-        let r = rig(true);
+    fn healthy_workers_renew_the_lease() {
+        let r = rig();
         assert_eq!(run_supervisor_tick(&r.inputs, NOW), SupervisorTurn::Defend);
         assert!(r.inputs.answer_inputs.lease_alive(NOW));
         assert_eq!(r.inputs.counters.defended.load(Ordering::Relaxed), 1);
@@ -200,13 +145,13 @@ mod tests {
 
     #[test]
     fn a_wedged_worker_stops_the_renewal_and_the_lease_runs_out() {
-        let r = rig(true);
+        let r = rig();
         run_supervisor_tick(&r.inputs, NOW);
         assert!(r.inputs.answer_inputs.lease_alive(1_000));
 
         assert_eq!(
             run_supervisor_tick(&r.inputs, 5_000),
-            SupervisorTurn::StandDown(StandDownReason::WorkerStale("registry"))
+            SupervisorTurn::WorkerStale("registry")
         );
         assert!(!r.inputs.answer_inputs.lease_alive(5_000));
         assert_eq!(
@@ -220,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_worker_that_recovers_takes_the_bus_back_with_no_reset() {
-        let r = rig(true);
+        let r = rig();
         run_supervisor_tick(&r.inputs, 5_000);
         assert!(!r.inputs.answer_inputs.lease_alive(5_000));
 
@@ -230,48 +175,14 @@ mod tests {
     }
 
     #[test]
-    fn a_passive_controller_holds_no_lease_and_says_passive_not_stale() {
-        let r = rig(false);
-        assert_eq!(
-            run_supervisor_tick(&r.inputs, NOW),
-            SupervisorTurn::StandDown(StandDownReason::Passive)
-        );
-        assert!(!r.inputs.answer_inputs.lease_alive(NOW));
-        assert_eq!(
-            r.inputs
-                .counters
-                .stood_down_worker_stale
-                .load(Ordering::Relaxed),
-            0
-        );
-    }
-
-    #[test]
-    fn passivity_is_immediate_rather_than_waiting_out_the_lease() {
-        let r = rig(true);
-        run_supervisor_tick(&r.inputs, NOW);
-        r.settings.active.store(false, Ordering::Relaxed);
-        run_supervisor_tick(&r.inputs, NOW);
-        assert!(!r.inputs.answer_inputs.lease_alive(1_000));
-    }
-
-    #[test]
-    fn a_worker_that_turns_while_the_settings_read_waits_is_not_stale() {
-        let r = rig(true);
-        let late_beat = (Arc::clone(&r.registry), NOW + 500);
-        *r.settings.beat_while_read.lock().expect("beat") = Some(late_beat);
-        assert_eq!(run_supervisor_tick(&r.inputs, NOW), SupervisorTurn::Defend);
-    }
-
-    #[test]
     fn a_worker_that_never_started_is_never_defended_for() {
         let mut watch = LivenessWatch::new();
         watch.register(Arc::new(LivenessBeat::new("ghost", WORKER_STALE_AFTER_MS)));
-        let r = rig(true);
+        let r = rig();
         let inputs = SupervisorInputs { watch, ..r.inputs };
         assert_eq!(
             run_supervisor_tick(&inputs, NOW),
-            SupervisorTurn::StandDown(StandDownReason::WorkerStale("ghost"))
+            SupervisorTurn::WorkerStale("ghost")
         );
         assert_eq!(
             inputs.counters.stood_down_worker_stale.load(Ordering::Relaxed),
@@ -279,14 +190,5 @@ mod tests {
             "a boot tick before the worker first turns is counted as a stand-down"
         );
         assert_eq!(inputs.counters.defended.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn the_pure_turn_checks_passivity_before_health() {
-        assert_eq!(
-            supervisor_turn(false, Some("registry")),
-            SupervisorTurn::StandDown(StandDownReason::Passive)
-        );
-        assert_eq!(supervisor_turn(true, None), SupervisorTurn::Defend);
     }
 }

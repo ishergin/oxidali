@@ -175,7 +175,7 @@ function RedundancyState({
             {state.answering ? 'yes' : 'no'}
           </span>
         </FieldRow>
-        <FieldRow label="Lease left" hint="Renewed once a second while the watched workers turn.">
+        <FieldRow label="Lease left" hint="Renewed once a second while the watched workers turn, in both roles. Once it lapses the controller reports an application controller error (103 §9.15).">
           <span class="mono">{state.lease_remaining_ms} ms</span>
         </FieldRow>
         <FieldRow

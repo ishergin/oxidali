@@ -126,7 +126,8 @@ queries from the interrupt, executes another controller's commissioning (`INITIA
 `RANDOMISE`, address search, `COMPARE`, address programming) and its `ENABLE` /
 `DISABLE APPLICATION CONTROLLER`, and hands every NVM change to the registry, which
 persists it beside the short address set in `/api/v1/settings/dali`. While another
-controller holds quiescent mode, no forward frame of ours leaves.
+controller holds quiescent mode, no forward frame of ours leaves. A controller whose
+watched workers stop turning reports an application controller error in either role.
 
 Two deviations are `ACCEPTED`, both decided in
 [ADR-018](../architecture/decisions/ADR-018-controller-redundancy.md): a passive standby

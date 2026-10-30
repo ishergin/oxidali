@@ -67,10 +67,6 @@ impl AnswerInputs {
         }
     }
 
-    pub fn revoke_lease(&self, now_ms: u32) {
-        self.lease_until_ms.store(now_ms, Ordering::Release);
-    }
-
     pub fn lease_alive(&self, now_ms: u32) -> bool {
         self.lease_remaining_ms(now_ms) > 0
     }
@@ -158,20 +154,14 @@ mod tests {
     }
 
     #[test]
-    fn revoking_is_immediate() {
-        let inputs = leased();
-        inputs.revoke_lease(1_000);
-        assert!(!inputs.lease_alive(1_000));
-    }
-
-    #[test]
-    fn a_lease_revoked_late_in_the_clock_stays_revoked_and_extends_again() {
-        for revoked_at in [(1u32 << 31) + 10, u32::MAX - 1_000] {
+    fn a_lease_lapsed_late_in_the_clock_stays_lapsed_and_extends_again() {
+        for renewed_at in [(1u32 << 31) + 10, u32::MAX - 1_000] {
             let inputs = AnswerInputs::new();
-            inputs.revoke_lease(revoked_at);
-            let later = revoked_at.wrapping_add(500);
-            assert!(!inputs.lease_alive(revoked_at), "revoked at {revoked_at}");
-            assert_eq!(inputs.lease_remaining_ms(later), 0, "revoked at {revoked_at}");
+            inputs.extend_lease(renewed_at, LEASE_TTL_MS);
+            let lapsed_at = renewed_at.wrapping_add(LEASE_TTL_MS);
+            let later = lapsed_at.wrapping_add(500);
+            assert!(!inputs.lease_alive(lapsed_at), "renewed at {renewed_at}");
+            assert_eq!(inputs.lease_remaining_ms(later), 0, "renewed at {renewed_at}");
             inputs.extend_lease(later, LEASE_TTL_MS);
             assert!(inputs.lease_alive(later));
             assert!(!inputs.lease_alive(later.wrapping_add(LEASE_TTL_MS)));

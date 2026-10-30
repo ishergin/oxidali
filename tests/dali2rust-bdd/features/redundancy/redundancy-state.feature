@@ -32,6 +32,14 @@ Feature: Redundancy — state and the planned handover
     And the JSON pointer "/arbitration/defended" at "/api/v1/redundancy" should eventually be greater than 0
     And the JSON pointer "/now_ms" at "/api/v1/redundancy" should eventually be greater than 0
 
+  @id:RED-034
+  Scenario: A standby whose workers turn keeps renewing its liveness lease
+    Given this controller has stood down
+    When I note the supervisor's defended and stale ticks
+    Then the supervisor should eventually have defended 2 more ticks with no stale worker
+    And the JSON pointer "/lease_remaining_ms" at "/api/v1/redundancy" should eventually be greater than 0
+    And the JSON pointer "/answering" at "/api/v1/redundancy" should eventually be "false"
+
   @id:RED-021
   Scenario: Every response says which controller answered it
     When I send a GET request to "/api/v1/health"

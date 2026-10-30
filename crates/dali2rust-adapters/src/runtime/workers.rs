@@ -947,7 +947,6 @@ struct ArbitrationBringUp {
 fn bring_up_arbitration(
     ev_rx: BusSubscriberRx,
     answer_inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>,
-    settings: Arc<RegistryStore>,
     beats: &RedundancyBeats,
 ) -> ArbitrationBringUp {
     let counters =
@@ -957,7 +956,6 @@ fn bring_up_arbitration(
         dali2rust_redundancy_runtime::SupervisorInputs {
             answer_inputs: Arc::clone(&answer_inputs),
             watch: beats.watch(),
-            settings: settings as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
             counters: Arc::clone(&counters),
             config: dali2rust_redundancy_runtime::ArbitrationSupervisorConfig::default(),
         },
@@ -981,7 +979,6 @@ fn start_supervisor(
             .take()
             .expect("supervisor inbox subscribed once"),
         Arc::clone(&wire.arbitration),
-        Arc::clone(&inputs.registry_store),
         beats,
     )
 }
