@@ -654,6 +654,7 @@ fn stats_task_timing_dto(h: &RuntimeCounterHandles) -> StatsDaliTaskTimingDto {
     let gate = dali2rust_platform::dali::persist_gate_stats();
     StatsDaliTaskTimingDto {
         answer_staged_total: s.answer_staged.load(Relaxed),
+        answer_over_backward_total: s.answer_over_backward.load(Relaxed),
         answer_table_behind_total: s.answer_table_behind.load(Relaxed),
         answer_table_publish_max_ticks: s.answer_table_publish_max_ticks.load(Relaxed),
         sniff_poll_late_total: s.sniff_poll_late.load(Relaxed),

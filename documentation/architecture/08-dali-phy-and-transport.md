@@ -87,9 +87,10 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   `TX_ARM_LEAD_TICKS` (3) after the arming tick, whose work would otherwise delay the
   opening edge and shorten the start bit. Work on the transmit-start path is
   timing-critical; move it off that tick rather than make it faster.
-- The lead listens: a dominant level during it means another master took the slot, and
-  the frame steps back unwritten (`TxPollResult::Yielded`) and re-arms from the interrupt
-  once the bus is idle. A line inside its start-bit debounce counts as busy.
+- A forward frame's lead listens: a dominant level during it means another master took
+  the slot, and the frame steps back unwritten (`TxPollResult::Yielded`) and re-arms from
+  the interrupt once the bus is idle. A line inside its start-bit debounce counts as busy.
+  An answer's lead does not listen (ADR-030).
 - A held or yielded frame is voided when another master's forward frame completes first
   — that command spends the `ENABLE DEVICE TYPE` the frame may depend on (102 §11.7.14)
   and may have rewritten its DTR — and is reported that tick as `SessionEvent::TxVoided`
@@ -165,10 +166,16 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   `LEASE_TTL_MS` ahead, rewritten at every poll and applied at answer time: a stalled
   supervisor or a stalled drain silences the answer within one lease, and a lease nobody
   rewrites reads alive again for at most one lease per wrap of the counter.
-- The interrupt stages the answer in the answer cell under the capture's bus epoch and
-  sends it on the tick the idle counter reaches the Table 20 target (`answer_gate`),
-  ahead of any forward frame of ours, only while no later bus event has moved the epoch,
-  and discards it once the window has passed.
+- The interrupt stages the answer in the answer cell under the capture's bus epoch, which
+  only a forward frame moves, ours or a foreign one. The slot is counted from that frame's
+  last edge in every bus state: the answer goes out on the tick the count reaches the
+  Table 20 target (`answer_gate`), ahead of any forward frame of ours, and is discarded
+  once the window has passed. A backward frame or a violation captured meanwhile neither
+  voids it nor moves its slot.
+- A reception in progress holds the answer only when it began less than 2,4 ms after that
+  edge, since 101 Table 20 reads such a frame as no backward frame. A later one is another
+  unit's answer: ours abandons the reception and starts over it, the dominant level wins,
+  and `answer_over_backward_total` in `/api/v1/stats` counts it.
 - The window constants live in `dali-phy::backward_window`, derived from
   `fsm::TX_ARM_LEAD_TICKS` and bounded at compile time; the gear emulator stages its
   answers in the same cell.

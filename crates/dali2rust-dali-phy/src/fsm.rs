@@ -149,6 +149,7 @@ pub struct DaliBitbangPhy<H: BitbangHal> {
     tx_idle_after_break: bool,
     tx_armed: u8,
     tx_yielded: bool,
+    tx_answer: bool,
     rx_pre_idle: u8,
     tx_pre_idle: u16,
     collision_policy: CollisionPolicy,
@@ -182,6 +183,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
             tx_idle_after_break: false,
             tx_armed: 0,
             tx_yielded: false,
+            tx_answer: false,
             rx_pre_idle: 0,
             tx_pre_idle: 0,
             collision_policy: CollisionPolicy::Auto,
@@ -268,7 +270,7 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
     #[inline]
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn tick_tx_armed(&mut self, bus_is_high: u8) {
-        if bus_is_high == 0 {
+        if bus_is_high == 0 && !self.tx_answer {
             self.tx_yielded = true;
             self.tx_armed = 0;
             self.set_bus_idle();
@@ -390,12 +392,21 @@ impl<H: BitbangHal> DaliBitbangPhy<H> {
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     pub fn start_tx(&mut self, halfbits: &HalfBitBuffer) -> bool {
+        self.bus_state == BusState::Idle && self.load_tx(halfbits, false)
+    }
+
+    // IEC 62386-101 §9.1.1, Table 17
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    pub fn start_answer(&mut self, halfbits: &HalfBitBuffer) -> bool {
+        matches!(self.bus_state, BusState::Idle | BusState::Rx) && self.load_tx(halfbits, true)
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn load_tx(&mut self, halfbits: &HalfBitBuffer, answer: bool) -> bool {
         if halfbits.length == 0 || halfbits.length > HalfBitBuffer::MAX_DATA_HALF_BITS {
             return false;
         }
-        if self.bus_state != BusState::Idle {
-            return false;
-        }
+        self.tx_answer = answer;
         self.tx_pre_idle = self.idlecnt;
         self.tx_hb_data = halfbits.data;
         self.tx_hb_len = halfbits.length;
@@ -530,6 +541,28 @@ mod tests {
         fn bus_set_high(&mut self) {
             self.writes.push((self.tick, true));
         }
+    }
+
+    #[test]
+    fn an_answer_starts_over_a_reception_and_holds_its_lead_on_a_dominant_line() {
+        let mut phy = DaliBitbangPhy::new(TestHal { bus_high: false });
+        for _ in 0..u32::from(RX_START_DEBOUNCE_TICKS) + 2 {
+            phy.tick();
+        }
+        assert_eq!(phy.bus_state(), BusState::Rx);
+        let answer = HalfBitBuffer { data: [0b0101_0101; 9], length: BACKWARD_FRAME_HALF_BITS };
+        assert!(!phy.start_tx(&answer), "a forward frame waits for an idle line");
+        assert!(phy.start_answer(&answer), "an answer starts over the reception");
+        assert_eq!(phy.rx_state(), RxState::Empty, "the reception is abandoned");
+        for _ in 0..TX_ARM_LEAD_TICKS {
+            phy.tick();
+        }
+        assert_eq!(
+            phy.poll_tx_state(),
+            TxPollResult::Transmitting,
+            "a dominant line in the lead does not make an answer yield"
+        );
+        assert!(!phy.start_answer(&answer), "nor does a second one start over ours");
     }
 
     #[test]

@@ -1029,6 +1029,7 @@ export type StatsDali = {
   isr_late_ticks_total: number
   isr_max_gap_us: number
   answer_staged_total: number
+  answer_over_backward_total: number
   answer_table_behind_total: number
   answer_table_publish_max_ticks: number
   sniff_poll_late_total: number

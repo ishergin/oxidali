@@ -7,7 +7,7 @@ use crate::answer::AtomicAnswerCell;
 use crate::answer_table::{AnswerTableCell, TableLookup};
 use crate::backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_MAX_IDLE_TICKS, ANSWER_ARM_TARGET_IDLE_TICKS,
-    BACKWARD_DATA_BITS,
+    BACKWARD_DATA_BITS, BACKWARD_RECEIVE_MIN_TICKS,
 };
 use crate::command::{AtomicCommandCell, ExchangeId, TxGates};
 use crate::cpu::{raw_core_id, ISR_CORE_ID};
@@ -54,6 +54,70 @@ enum TryArmAnswer {
     NotStaged,
     Held,
     Armed,
+}
+
+#[derive(Clone, Copy)]
+enum LineUnderAnswer {
+    Idle,
+    Backward,
+    Busy,
+}
+
+#[derive(Clone, Copy)]
+struct AnswerArm {
+    since_edge: u16,
+    late: bool,
+    over_backward: bool,
+}
+
+struct AnswerSlot {
+    forward_edge_tick: AtomicU32,
+    rx_started_tick: AtomicU32,
+}
+
+impl AnswerSlot {
+    const fn new() -> Self {
+        Self {
+            forward_edge_tick: AtomicU32::new(0),
+            rx_started_tick: AtomicU32::new(0),
+        }
+    }
+}
+
+struct AnswerTally {
+    sent: AtomicU32,
+    stale: AtomicU32,
+    expired: AtomicU32,
+    late: AtomicU32,
+    rejected: AtomicU32,
+    collided: AtomicU32,
+    over_backward: AtomicU32,
+}
+
+impl AnswerTally {
+    const fn new() -> Self {
+        Self {
+            sent: AtomicU32::new(0),
+            stale: AtomicU32::new(0),
+            expired: AtomicU32::new(0),
+            late: AtomicU32::new(0),
+            rejected: AtomicU32::new(0),
+            collided: AtomicU32::new(0),
+            over_backward: AtomicU32::new(0),
+        }
+    }
+
+    fn snapshot(&self) -> AnswerCounts {
+        AnswerCounts {
+            sent: self.sent.load(Ordering::Relaxed),
+            stale: self.stale.load(Ordering::Relaxed),
+            expired: self.expired.load(Ordering::Relaxed),
+            late: self.late.load(Ordering::Relaxed),
+            rejected: self.rejected.load(Ordering::Relaxed),
+            collided: self.collided.load(Ordering::Relaxed),
+            over_backward: self.over_backward.load(Ordering::Relaxed),
+        }
+    }
 }
 
 struct ControlState {
@@ -144,6 +208,7 @@ pub struct AnswerCounts {
     pub late: u32,
     pub rejected: u32,
     pub collided: u32,
+    pub over_backward: u32,
 }
 
 pub struct PhyIsrCore {
@@ -175,14 +240,10 @@ pub struct PhyIsrCore {
     bus_epoch: AtomicU8,
     active_is_answer: AtomicBool,
     last_answer_arm_idle_ticks: AtomicU32,
-    answers_sent: AtomicU32,
-    answers_stale: AtomicU32,
-    answers_expired: AtomicU32,
-    answers_late: AtomicU32,
-    answers_rejected: AtomicU32,
+    answers: AnswerTally,
     probe: TickProbe,
     tx: TxCounters,
-    answers_collided: AtomicU32,
+    answer_slot: AnswerSlot,
     table_path: TablePath,
 }
 
@@ -329,14 +390,10 @@ impl PhyIsrCore {
             bus_epoch: AtomicU8::new(0),
             active_is_answer: AtomicBool::new(false),
             last_answer_arm_idle_ticks: AtomicU32::new(0),
-            answers_sent: AtomicU32::new(0),
-            answers_stale: AtomicU32::new(0),
-            answers_expired: AtomicU32::new(0),
-            answers_late: AtomicU32::new(0),
-            answers_rejected: AtomicU32::new(0),
+            answers: AnswerTally::new(),
             probe: TickProbe::new(),
             tx: TxCounters::new(),
-            answers_collided: AtomicU32::new(0),
+            answer_slot: AnswerSlot::new(),
             table_path: TablePath::new(),
         }
     }
@@ -360,6 +417,7 @@ impl PhyIsrCore {
         // SAFETY: this ISR exclusively owns the timing accumulator.
         unsafe { self.track_rx_timing(rx_before, phy.rx_state(), sample_gap_us) };
         self.publish_tick_state(phy);
+        self.note_rx_start(rx_before, phy.rx_state());
         if was_tx_busy && !phy.tx_busy.load(Ordering::Acquire) {
             // SAFETY: this is the interrupt, the sole owner of `pending`.
             unsafe { self.report_tx_completion(phy) };
@@ -561,6 +619,7 @@ impl PhyIsrCore {
         unsafe { *self.pending.get() = None };
     }
 
+    // IEC 62386-101 Table 17
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     unsafe fn try_arm_answer(&self, phy: &mut DaliBitbangPhy<RegisterGpio>) -> TryArmAnswer {
         let Some(epoch) = self.answer.staged_epoch() else {
@@ -568,25 +627,53 @@ impl PhyIsrCore {
         };
         if epoch != self.bus_epoch.load(Ordering::Relaxed) {
             self.answer.discard();
-            self.answers_stale.fetch_add(1, Ordering::Relaxed);
+            self.answers.stale.fetch_add(1, Ordering::Relaxed);
             return TryArmAnswer::NotStaged;
         }
-        if phy.bus_state() != BusState::Idle || phy.line_debouncing() {
-            return TryArmAnswer::Held;
-        }
-        match answer_gate(
-            phy.idle_tick_count(),
-            ANSWER_ARM_TARGET_IDLE_TICKS,
-            ANSWER_ARM_MAX_IDLE_TICKS,
-        ) {
+        let since_edge = self.ticks_since_forward_edge();
+        match answer_gate(since_edge, ANSWER_ARM_TARGET_IDLE_TICKS, ANSWER_ARM_MAX_IDLE_TICKS) {
             AnswerGate::Hold => TryArmAnswer::Held,
             AnswerGate::Expired => {
                 self.answer.discard();
-                self.answers_expired.fetch_add(1, Ordering::Relaxed);
+                self.answers.expired.fetch_add(1, Ordering::Relaxed);
                 TryArmAnswer::NotStaged
             }
-            // SAFETY: caller guarantees the ISR context.
-            AnswerGate::Arm { late } => unsafe { self.fire_staged_answer(phy, late) },
+            AnswerGate::Arm { late } => {
+                let over_backward = match self.line_under_answer(phy) {
+                    LineUnderAnswer::Busy => return TryArmAnswer::Held,
+                    LineUnderAnswer::Idle => false,
+                    LineUnderAnswer::Backward => true,
+                };
+                let arm = AnswerArm { since_edge, late, over_backward };
+                // SAFETY: caller guarantees the ISR context.
+                unsafe { self.fire_staged_answer(phy, arm) }
+            }
+        }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn ticks_since_forward_edge(&self) -> u16 {
+        let edge = self.answer_slot.forward_edge_tick.load(Ordering::Relaxed);
+        let elapsed = self.wire_ticks_total.load(Ordering::Relaxed).wrapping_sub(edge);
+        if elapsed > u16::MAX as u32 {
+            u16::MAX
+        } else {
+            elapsed as u16
+        }
+    }
+
+    // IEC 62386-101 Table 20
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn line_under_answer(&self, phy: &DaliBitbangPhy<RegisterGpio>) -> LineUnderAnswer {
+        let edge = self.answer_slot.forward_edge_tick.load(Ordering::Relaxed);
+        let started = self.answer_slot.rx_started_tick.load(Ordering::Relaxed);
+        match phy.bus_state() {
+            BusState::Idle if phy.line_debouncing() => LineUnderAnswer::Backward,
+            BusState::Idle => LineUnderAnswer::Idle,
+            BusState::Rx if started.wrapping_sub(edge) > BACKWARD_RECEIVE_MIN_TICKS => {
+                LineUnderAnswer::Backward
+            }
+            _ => LineUnderAnswer::Busy,
         }
     }
 
@@ -594,23 +681,33 @@ impl PhyIsrCore {
     unsafe fn fire_staged_answer(
         &self,
         phy: &mut DaliBitbangPhy<RegisterGpio>,
-        late: bool,
+        arm: AnswerArm,
     ) -> TryArmAnswer {
         let Some((_epoch, hb)) = self.answer.take() else {
             return TryArmAnswer::NotStaged;
         };
         self.last_answer_arm_idle_ticks
-            .store(u32::from(phy.idle_tick_count()), Ordering::Relaxed);
-        if late {
-            self.answers_late.fetch_add(1, Ordering::Relaxed);
+            .store(u32::from(arm.since_edge), Ordering::Relaxed);
+        if arm.late {
+            self.answers.late.fetch_add(1, Ordering::Relaxed);
         }
         self.active_is_answer.store(true, Ordering::Release);
         self.active_expects_backward.store(false, Ordering::Release);
-        if !phy.start_tx(&hb) {
+        if !phy.start_answer(&hb) {
             self.active_is_answer.store(false, Ordering::Release);
-            self.answers_rejected.fetch_add(1, Ordering::Relaxed);
+            self.answers.rejected.fetch_add(1, Ordering::Relaxed);
+        } else if arm.over_backward {
+            self.answers.over_backward.fetch_add(1, Ordering::Relaxed);
         }
         TryArmAnswer::Armed
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn note_rx_start(&self, before: RxState, after: RxState) {
+        if before != RxState::Receiving && after == RxState::Receiving {
+            let now = self.wire_ticks_total.load(Ordering::Relaxed);
+            self.answer_slot.rx_started_tick.store(now, Ordering::Relaxed);
+        }
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -734,11 +831,11 @@ impl PhyIsrCore {
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn report_answer_completion(&self, poll: TxPollResult) {
         if poll == TxPollResult::Collision {
-            self.answers_collided.fetch_add(1, Ordering::Relaxed);
+            self.answers.collided.fetch_add(1, Ordering::Relaxed);
         } else if poll == TxPollResult::Yielded {
-            self.answers_stale.fetch_add(1, Ordering::Relaxed);
+            self.answers.stale.fetch_add(1, Ordering::Relaxed);
         } else {
-            self.answers_sent.fetch_add(1, Ordering::Relaxed);
+            self.answers.sent.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -825,20 +922,28 @@ impl PhyIsrCore {
         let Some(mut ev) = phy.take_completed_rx_event() else {
             return;
         };
-        let epoch = self
-            .bus_epoch
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_add(1);
-        ev.rx_epoch = epoch;
-        ev.rx_tick = self.wire_ticks_total.load(Ordering::Relaxed);
+        let now = self.wire_ticks_total.load(Ordering::Relaxed);
+        let class = frame_length_class(ev.sample_count);
+        ev.rx_epoch = match class {
+            FrameLengthClass::Forward => self.note_forward_capture(now, phy.idle_tick_count()),
+            FrameLengthClass::Backward => self.bus_epoch.load(Ordering::Relaxed),
+        };
+        ev.rx_tick = now;
         // SAFETY: `tick` is the sole owner, and the completed event closes this accumulator before the next capture.
         unsafe { self.stamp_rx_timing(&mut ev) };
-        match frame_length_class(ev.sample_count) {
+        match class {
             // SAFETY: called from `tick`, which owns `pending` exclusively.
             FrameLengthClass::Backward => unsafe { self.route_backward_capture(ev) },
             // SAFETY: same.
             FrameLengthClass::Forward => unsafe { self.route_forward_capture(ev) },
         }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn note_forward_capture(&self, now: u32, ticks_since_edge: u16) -> u8 {
+        let edge = now.wrapping_sub(u32::from(ticks_since_edge));
+        self.answer_slot.forward_edge_tick.store(edge, Ordering::Relaxed);
+        self.bus_epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -1021,14 +1126,7 @@ impl PhyIsrCore {
     }
 
     pub fn answer_counts(&self) -> AnswerCounts {
-        AnswerCounts {
-            sent: self.answers_sent.load(Ordering::Relaxed),
-            stale: self.answers_stale.load(Ordering::Relaxed),
-            expired: self.answers_expired.load(Ordering::Relaxed),
-            late: self.answers_late.load(Ordering::Relaxed),
-            rejected: self.answers_rejected.load(Ordering::Relaxed),
-            collided: self.answers_collided.load(Ordering::Relaxed),
-        }
+        self.answers.snapshot()
     }
 
     pub fn tx_yields(&self) -> u32 {
@@ -1856,33 +1954,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_foreign_edge_inside_an_answers_lead_counts_it_stale() {
-        let (mut set, mut clr) = (0u32, 0u32);
-        let mut input = 0b0010u32;
-        let input_ptr = std::ptr::addr_of_mut!(input);
-        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
-        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
-
-        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
-        assert!(core.submit_answer(epoch, &answer_frame()));
-        while core.last_answer_arm_idle_ticks() == 0 {
-            // SAFETY: single-threaded test standing in for the ISR context.
-            unsafe { core.tick() };
-        }
-        // SAFETY: same provenance as the pointer the core reads through.
-        unsafe { *input_ptr = 0 };
-        // SAFETY: same.
-        unsafe { core.tick() };
-        let c = core.answer_counts();
-        assert_eq!(c.stale, 1, "a yielded answer is stale: {c:?}");
-        assert_eq!(
-            c.sent + c.late + c.collided + c.rejected + c.expired,
-            0,
-            "{c:?}"
-        );
-    }
-
     static FAKE_CLOCK_US: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(1_000);
     unsafe extern "C" fn fake_clock() -> i64 {
         FAKE_CLOCK_US.load(Ordering::Relaxed)
@@ -2174,6 +2245,103 @@ mod tests {
             .rx_epoch
     }
 
+    const FORWARD_COMPLETES_AFTER_TICKS: u32 = 16;
+
+    fn settled_capture_epoch(core: &PhyIsrCore, input_ptr: *mut u32, settle_ticks: u32) -> u8 {
+        drive_bits(core, input_ptr, &SIXTEEN_BITS);
+        drive(core, input_ptr, 0b0010, settle_ticks - TX_HALF_BIT_TICKS);
+        core.pop_rx()
+            .expect("the foreign forward capture reaches the sniffer")
+            .rx_epoch
+    }
+
+    fn drive_bits(core: &PhyIsrCore, input_ptr: *mut u32, bits: &[bool]) {
+        for &bit in core::iter::once(&true).chain(bits) {
+            let (first, second) = if bit { (0, 0b0010) } else { (0b0010, 0) };
+            drive(core, input_ptr, first, TX_HALF_BIT_TICKS);
+            drive(core, input_ptr, second, TX_HALF_BIT_TICKS);
+        }
+    }
+
+    fn last_edge_ticks_after_receive() -> u32 {
+        TX_HALF_BIT_TICKS + 24
+    }
+
+    #[test]
+    fn an_answer_starts_in_its_slot_over_another_unit_s_answer_and_is_counted() {
+        let target = u32::from(ANSWER_ARM_TARGET_IDLE_TICKS);
+        for other_starts_at in [54, target - 1] {
+            let (mut set, mut clr) = (0u32, 0u32);
+            let mut input = 0b0010u32;
+            let input_ptr = std::ptr::addr_of_mut!(input);
+            // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+            let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+            let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+            assert!(core.submit_answer(epoch, &answer_frame()));
+            drive(&core, input_ptr, 0b0010, other_starts_at - last_edge_ticks_after_receive());
+            drive_bits(&core, input_ptr, &EIGHT_BITS);
+            drive(&core, input_ptr, 0b0010, 160);
+
+            let c = core.answer_counts();
+            assert_eq!(c.sent, 1, "the answer goes out in its slot over the other unit's");
+            assert_eq!(c.over_backward, 1, "and that is counted");
+            assert_eq!(c.stale + c.expired + c.rejected + c.collided, 0);
+            assert_eq!(
+                core.last_answer_arm_idle_ticks(),
+                target,
+                "the slot counts from the forward frame's last edge: other at {other_starts_at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_backward_capture_before_the_slot_neither_voids_the_answer_nor_moves_its_slot() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        assert!(core.submit_answer(epoch, &answer_frame()));
+        let glitch = 4;
+        drive(&core, input_ptr, 0, glitch);
+        let answer_ends = u32::from(ANSWER_ARM_TARGET_IDLE_TICKS)
+            + u32::from(TX_ARM_LEAD_TICKS)
+            + u32::from(answer_frame().length) * TX_HALF_BIT_TICKS
+            + 2;
+        drive(&core, input_ptr, 0b0010, answer_ends - last_edge_ticks_after_receive() - glitch);
+
+        let c = core.answer_counts();
+        assert_eq!(c.stale, 0, "a backward-length capture is not a later forward frame");
+        assert_eq!(
+            c.sent, 1,
+            "the answer is done in the slot of the forward frame, not of the capture in between"
+        );
+    }
+
+    #[test]
+    fn an_answer_does_not_yield_in_its_arming_lead() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        assert!(core.submit_answer(epoch, &answer_frame()));
+        while core.last_answer_arm_idle_ticks() == 0 {
+            drive(&core, input_ptr, 0b0010, 1);
+        }
+        drive(&core, input_ptr, 0, u32::from(TX_ARM_LEAD_TICKS) - 1);
+        drive(&core, input_ptr, 0b0010, 160);
+
+        let c = core.answer_counts();
+        assert_eq!(c.sent, 1, "another unit's opening edge in our lead does not stop ours");
+        assert_eq!(c.stale, 0);
+    }
+
     #[test]
     fn an_answer_for_the_latest_capture_goes_out_at_the_target_tick() {
         let (mut set, mut clr) = (0u32, 0u32);
@@ -2214,8 +2382,8 @@ mod tests {
         let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
 
         let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
-        assert!(core.submit_answer(epoch, &answer_frame()));
         receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        assert!(core.submit_answer(epoch, &answer_frame()));
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 160) };
 
@@ -2274,14 +2442,16 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_is_held_while_a_foreign_frame_is_mid_air_and_dropped_when_it_completes() {
+    fn an_answer_waits_out_a_frame_that_began_before_the_backward_window() {
         let (mut set, mut clr) = (0u32, 0u32);
         let mut input = 0b0010u32;
         let input_ptr = std::ptr::addr_of_mut!(input);
         // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
         let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
 
-        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        let early = BACKWARD_RECEIVE_MIN_TICKS - 2;
+        assert!(early >= FORWARD_COMPLETES_AFTER_TICKS);
+        let epoch = settled_capture_epoch(&core, input_ptr, early);
         assert!(core.submit_answer(epoch, &answer_frame()));
 
         drive(&core, input_ptr, 0, 8);
@@ -2297,8 +2467,8 @@ mod tests {
         // SAFETY: single-threaded test standing in for the ISR context.
         unsafe { tick_n(&core, 160) };
         let c = core.answer_counts();
-        assert_eq!(c.sent, 0);
-        assert!(c.stale >= 1);
+        assert_eq!(c.sent + c.over_backward, 0, "a frame of the grey area is not an answer");
+        assert!(c.expired >= 1, "so ours waits it out and its window closes");
     }
 
     #[test]
@@ -2330,21 +2500,16 @@ mod tests {
         // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
         let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
 
-        let mut data = [0u8; HalfBitBuffer::DATA_LEN];
-        data[0] = 0b0101_0101;
-        data[1] = 0b0101_0101;
+        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        let data = test_forward_frame();
         assert!(core.queue_tx(&data, 16, false, TxGates::settle(0)));
         assert!(core.queue_tx(&data, 16, false, TxGates::settle(0)));
+        assert!(core.submit_answer(epoch, &answer_frame()));
+        // SAFETY: single-threaded test standing in for the ISR context, the sole owner of `pending`.
+        unsafe { core.abort_batch_tail() };
+        assert!(core.take_batch_aborted(), "the queued tail must be voided");
         // SAFETY: single-threaded test standing in for the ISR context.
-        unsafe { tick_n(&core, 2 + usize::from(TX_ARM_LEAD_TICKS)) };
-        assert!(core.submit_answer(1, &answer_frame()));
-
-        drive(&core, input_ptr, 0, 14);
-        drive(&core, input_ptr, 0b0010, 220);
-        assert!(
-            core.take_batch_aborted(),
-            "the collided batch tail must be voided"
-        );
+        unsafe { tick_n(&core, 160) };
         assert_eq!(
             core.answer_counts().sent,
             1,

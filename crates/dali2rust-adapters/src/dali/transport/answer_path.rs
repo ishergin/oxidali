@@ -32,8 +32,9 @@ pub const fn arbitration_answers(
     }
 }
 
-pub fn mirror_table_counts(sink: &PhySnifferCounters, table: &AnswerTableCounts) {
+pub fn mirror_answer_counts(sink: &PhySnifferCounters, sent: &AnswerCounts, table: &AnswerTableCounts) {
     sink.answer_staged.store(table.answered, Relaxed);
+    sink.answer_over_backward.store(sent.over_backward, Relaxed);
     sink.answer_table_behind.store(table.behind, Relaxed);
     sink.answer_table_torn.store(table.torn, Relaxed);
     sink.answer_decode_overrun.store(table.decode_overrun, Relaxed);
@@ -145,6 +146,7 @@ mod tests {
         late: 4,
         rejected: 5,
         collided: 6,
+        over_backward: 7,
     };
     const TABLE: AnswerTableCounts = AnswerTableCounts {
         answered: 11,
@@ -173,14 +175,15 @@ mod tests {
     #[test]
     fn every_table_count_reaches_its_own_sniffer_counter() {
         let sink = PhySnifferCounters::default();
-        mirror_table_counts(&sink, &TABLE);
+        mirror_answer_counts(&sink, &SENT, &TABLE);
         let got = [
             sink.answer_staged.load(Relaxed),
             sink.answer_table_behind.load(Relaxed),
             sink.answer_table_torn.load(Relaxed),
             sink.answer_decode_overrun.load(Relaxed),
+            sink.answer_over_backward.load(Relaxed),
         ];
-        assert_eq!(got, [11, 13, 14, 16]);
+        assert_eq!(got, [11, 13, 14, 16, 7]);
     }
 
     #[test]

@@ -193,13 +193,14 @@ impl Console {
     fn note_answer_cell(&self) {
         let a = self.phy.answer_counts();
         note!(
-            "sent={} stale={} expired={} late={} rejected={} collided={} last_arm_idle_ticks={}",
+            "sent={} stale={} expired={} late={} rejected={} collided={} over_backward={} last_arm_idle_ticks={}",
             a.sent,
             a.stale,
             a.expired,
             a.late,
             a.rejected,
             a.collided,
+            a.over_backward,
             self.phy.last_answer_arm_idle_ticks()
         );
         let (late_ticks, max_gap_us) = self.phy.late_tick_counts();

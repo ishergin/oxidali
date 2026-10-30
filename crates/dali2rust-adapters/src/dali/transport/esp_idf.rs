@@ -29,7 +29,7 @@ use dali2rust_dali_phy::{
 };
 
 use super::answer_path::{
-    arbitration_answers, mirror_table_counts, AnswerPublisher, PUBLISH_BUDGET_TICKS,
+    arbitration_answers, mirror_answer_counts, AnswerPublisher, PUBLISH_BUDGET_TICKS,
 };
 use super::sniffer_diagnostics::{gap_to_u32, SnifferDiagnostics};
 use super::{LATE_REPORT_BYTES, MICROS_PER_MILLI};
@@ -1311,7 +1311,7 @@ unsafe fn mirror_arbitration_counters(inner: *mut TransportInner) {
     let (c, t) = unsafe { ((*inner).isr.answer_counts(), (*inner).isr.answer_table_counts()) };
     // SAFETY: same.
     if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
-        mirror_table_counts(sink, &t);
+        mirror_answer_counts(sink, &c, &t);
     }
     // SAFETY: same.
     if let Some(inputs) = unsafe { (*inner).answer_inputs.get() } {

@@ -361,6 +361,7 @@ pub struct PhySnifferCounters {
     pub isr_ticks_surplus_raw: core::sync::atomic::AtomicU32,
 
     pub answer_staged: core::sync::atomic::AtomicU32,
+    pub answer_over_backward: core::sync::atomic::AtomicU32,
     pub answer_table_behind: core::sync::atomic::AtomicU32,
     pub answer_table_torn: core::sync::atomic::AtomicU32,
     pub answer_decode_overrun: core::sync::atomic::AtomicU32,
