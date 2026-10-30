@@ -6,7 +6,7 @@ use dali2rust_dali_phy::PHY_TICK_US;
 use dali2rust_domain::dali::dev103::bus_unit::{Device103Unit, TestFrame, UnitFrame};
 use dali2rust_platform::answer_table::AnswerTableImage;
 use dali2rust_platform::arbitration::AnswerInputs;
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitIdentity, BusUnitNvm, BusUnitQuiescence};
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitIdentity, BusUnitNvm, BusUnitQuiescence, PowerNotice};
 use dali2rust_platform::dali::{
     ObservedFrameSender, ObservedItem, ObservedRawFrame, ObservedRawFrameKind,
 };
@@ -22,7 +22,7 @@ pub struct UnitReports {
     pub nvm: Option<BusUnitEvidence>,
     pub quiescence: Option<BusUnitQuiescence>,
     pub test_frame: Option<TestFrame>,
-    pub power_notification: Option<[u8; 3]>,
+    pub power_notification: Option<PowerNotice>,
 }
 
 impl UnitReports {
@@ -161,7 +161,8 @@ impl BusUnitWire {
 }
 
 const fn due(reported_at_ms: u32, now_ms: u32) -> bool {
-    now_ms.wrapping_sub(reported_at_ms) >= BUS_UNIT_RESEND_MS
+    let elapsed = now_ms.wrapping_sub(reported_at_ms);
+    elapsed >= BUS_UNIT_RESEND_MS && elapsed < u32::MAX / 2
 }
 
 // IEC 62386-103 Table 18
@@ -384,8 +385,8 @@ mod host_pump {
         let (stop, stopped) = channel();
         std::thread::spawn(move || {
             while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(HOST_POLL) {
-                let at_ms = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
-                state.lock().unwrap_or_else(PoisonError::into_inner).poll(at_ms);
+                let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+                state.poll(dali2rust_bsp::monotonic_clock::observation_stamp_ms());
             }
         });
         stop
@@ -419,6 +420,7 @@ mod tests {
     const WIRE_SHORT: u8 = 5;
     const ADOPTED_REVISION: u32 = 3;
     const RESEND_WAIT_FACTOR: u64 = 3;
+    const PUMP_STOP_DEADLINE: Duration = Duration::from_secs(2);
 
     const fn entropy() -> u32 {
         0x0012_3456
@@ -619,7 +621,7 @@ mod tests {
         let early = wire.poll(Some(&inputs), completed + POWER_NOTIFICATION_EARLIEST_MS - 1);
         assert_eq!(early.items().count(), 0, "nothing before the window opens");
         let due = wire.poll(Some(&inputs), completed + POWER_NOTIFICATION_LATEST_MS);
-        let named = [0xFE, 0xE0, 0x40 | OPERATOR_SHORT];
+        let named = PowerNotice { short_address: Some(OPERATOR_SHORT), device_groups: 0 };
         assert_eq!(due.items().collect::<Vec<_>>(), [ObservedItem::BusUnitPowerNotification(named)]);
     }
 
@@ -632,6 +634,23 @@ mod tests {
         assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS).nvm, evidence);
         assert_eq!(wire.poll(Some(&inputs), reported_at() + 2 * BUS_UNIT_RESEND_MS - 1).nvm, None);
         assert_eq!(wire.poll(Some(&inputs), reported_at() + 2 * BUS_UNIT_RESEND_MS).nvm, evidence);
+    }
+
+    #[test]
+    fn a_poll_stamped_before_the_report_it_follows_resends_nothing() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        assert!(readdress(&mut wire).is_some());
+        assert_eq!(wire.poll(Some(&inputs), reported_at() - 1).nvm, None);
+    }
+
+    #[test]
+    fn the_host_pump_lets_its_state_go_once_its_wire_is_dropped() {
+        let mut wire = InjectedWire::default();
+        wire.set_identity(&IDENTITY);
+        let state = std::sync::Arc::downgrade(&wire.state);
+        drop(wire);
+        dali2rust_test_support::wait_until(|| state.upgrade().is_none(), PUMP_STOP_DEADLINE);
     }
 
     #[test]

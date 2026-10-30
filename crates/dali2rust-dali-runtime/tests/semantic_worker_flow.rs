@@ -419,7 +419,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
 const POWER_NOTIFICATION: [u8; 3] = [0xFE, 0xE0, 0x00];
 
 fn power_notification() -> BusCommandPayload {
-    m::Dali103PowerNotificationCommand { registry_adapter_id: 0, frame: POWER_NOTIFICATION }.into()
+    m::Dali103PowerNotificationCommand { registry_adapter_id: 0, short_address: None, device_groups: 0 }.into()
 }
 
 fn assert_nothing_reached_the_wire(harness: &WorkerHarness, kind: &str) {
@@ -523,6 +523,16 @@ fn a_passive_controller_still_sends_its_power_notification() {
     harness.publish(envelope_on_adapter_0(307, power_notification()));
     assert_eq!(harness.recv_confirmation_for(307).status, DeliveryStatus::Ok);
     assert_eq!(harness.sent_frames24.lock().unwrap().as_slice(), &[POWER_NOTIFICATION]);
+}
+
+// IEC 62386-103 §9.6.2, Table 7, §9.12.2
+#[test]
+fn a_power_notification_is_encoded_from_the_unit_s_address_and_lowest_group() {
+    let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
+    let named = m::Dali103PowerNotificationCommand { registry_adapter_id: 0, short_address: Some(5), device_groups: 0b0110_0100 };
+    harness.publish(envelope_on_adapter_0(308, named.into()));
+    assert_eq!(harness.recv_confirmation_for(308).status, DeliveryStatus::Ok);
+    assert_eq!(harness.sent_frames24.lock().unwrap().as_slice(), &[[0xFE, 0xF1, 0x45]]);
 }
 
 #[test]

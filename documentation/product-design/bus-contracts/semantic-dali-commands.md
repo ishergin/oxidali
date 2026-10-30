@@ -155,7 +155,7 @@ min/max — только когда ответы так и не устоялис
 | `Dali103ArbitrationProbeCommand` | Широковещательный `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7) на приоритете 5; проходит гейт пассивного контроллера | никогда |
 | `Dali103HandoverCommand` | Пара `ENABLE APPLICATION CONTROLLER` пиру, затем собственный уход в пассив; направление одно (103 §9.9.1) | никогда |
 | `Dali103TestFrameCommand` | `SEND TESTFRAME` чужого контроллера (103 §11.10.21): кадр из DTR0–DTR2 на приоритете `PPP`, повторы `RR`, при `T` — в транзакции; проходит гейт пассивного контроллера, не проходит quiescent; REST-двери нет | никогда |
-| `Dali103PowerNotificationCommand` | `POWER NOTIFICATION` после загрузки, пока `powerCycleNotification` ENABLED (103 §9.12.2): один кадр с адресом и наименьшей группой блока на приоритете 2; проходит гейт пассивного контроллера, не проходит quiescent; REST-двери нет | никогда |
+| `Dali103PowerNotificationCommand` | `POWER NOTIFICATION` после загрузки ([ADR-030](../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)): несёт адрес и группы блока, кадр по Табл. 7 строит `DaliWorker`; проходит гейт пассивного контроллера, не проходит quiescent; REST-двери нет | никогда |
 
 Какие исходы 24-битного кадра повторяются —
 [`ADR-027`](../../architecture/decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md).

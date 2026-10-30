@@ -31,7 +31,7 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::pres::DaliCommand;
 use dali2rust_domain::registry::mirek_to_kelvin;
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence};
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence, PowerNotice};
 use dali2rust_platform::dali::{
     FrameDirection, ObservedItem, ObservedRawFrame, ObservedRawFrameKind, SnifferRecord,
     SnifferTap,
@@ -181,7 +181,7 @@ impl Translator {
             ObservedItem::BusUnit(evidence) => self.report_bus_unit(evidence),
             ObservedItem::BusUnitQuiescence(quiescence) => self.report_quiescence(quiescence),
             ObservedItem::BusUnitTestFrame { data, dtr } => self.send_test_frame(data, dtr),
-            ObservedItem::BusUnitPowerNotification(frame) => self.send_power_notification(frame),
+            ObservedItem::BusUnitPowerNotification(notice) => self.send_power_notification(notice),
         }
     }
 
@@ -192,9 +192,12 @@ impl Translator {
     }
 
     // IEC 62386-103 §9.12.2
-    fn send_power_notification(&self, frame: [u8; 3]) {
-        let registry_adapter_id = self.registry_adapter_id;
-        self.send_bus_unit_frame(Dali103PowerNotificationCommand { registry_adapter_id, frame });
+    fn send_power_notification(&self, notice: PowerNotice) {
+        self.send_bus_unit_frame(Dali103PowerNotificationCommand {
+            registry_adapter_id: self.registry_adapter_id,
+            short_address: notice.short_address,
+            device_groups: notice.device_groups,
+        });
     }
 
     fn send_bus_unit_frame(&self, command: impl Into<BusCommandPayload>) {

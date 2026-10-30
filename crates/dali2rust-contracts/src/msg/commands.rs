@@ -1142,11 +1142,13 @@ declare_bus_payloads! {
 
     pub struct Dali103PowerNotificationCommand {
         pub registry_adapter_id: u8,
-        pub frame: [u8; 3],
+        pub short_address: Option<u8>,
+        pub device_groups: u32,
     }
     budget = Dali103PowerNotificationCommand {
         registry_adapter_id: u8::MAX,
-        frame: [u8::MAX; 3],
+        short_address: Some(u8::MAX),
+        device_groups: u32::MAX,
     };
 }
 

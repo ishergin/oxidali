@@ -13,7 +13,7 @@ use dali2rust_contracts::msg::{
     LevelTransition, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence};
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence, PowerNotice};
 use dali2rust_platform::dali::{ObservedItem, ObservedRawFrame, ObservedRawFrameKind};
 use dali2rust_test_support::{
     recv_command_matching, recv_event_matching, try_recv_event_matching_envelope, wait_until,
@@ -844,14 +844,15 @@ fn a_testframe_the_bus_unit_accepted_goes_to_the_wire_owner_as_a_command() {
 #[test]
 fn a_power_notification_the_bus_unit_raised_goes_to_the_wire_owner_as_a_command() {
     let harness = spawn_harness();
-    harness.tx.0.send(ObservedItem::BusUnitPowerNotification([0xFE, 0xF1, 0x45])).expect("send");
+    let notice = PowerNotice { short_address: Some(5), device_groups: 0b0110_0100 };
+    harness.tx.0.send(ObservedItem::BusUnitPowerNotification(notice)).expect("send");
     let ce = recv_command_matching(&harness.cmd_tap, Duration::from_secs(1), |payload| {
         matches!(payload, BusCommandPayload::Dali103PowerNotificationCommand(_))
     });
     let BusCommandPayload::Dali103PowerNotificationCommand(body) = &ce.payload else {
         unreachable!("predicate selected this variant");
     };
-    assert_eq!((body.registry_adapter_id, body.frame), (0, [0xFE, 0xF1, 0x45]));
+    assert_eq!((body.registry_adapter_id, body.short_address, body.device_groups), (0, Some(5), 0b0110_0100));
     assert_eq!(ce.meta.origin, Origin::Sniffer);
 }
 

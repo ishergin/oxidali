@@ -41,7 +41,6 @@ const FIRST_PROBE_QUERY: usize = 1;
 const READ_BACK_QUERY: usize = 3;
 const TESTFRAME_24_BIT_REPEATED_TWICE: u8 = 0b0001_0101;
 const TESTFRAME: [u8; 3] = [0x07, 0xFE, 0x10];
-const POWER_NOTIFICATION: [u8; 3] = [0xFE, 0xE0, 0x00];
 
 #[derive(Clone, Copy)]
 enum Answer {
@@ -280,7 +279,7 @@ fn a_held_test_frame_is_refused_with_its_cause_and_is_not_an_execution_failure()
 // IEC 62386-103 §9.9.3, §9.12.2
 #[test]
 fn a_held_power_notification_is_refused_with_its_cause_and_is_not_an_execution_failure() {
-    let notification = Dali103PowerNotificationCommand { registry_adapter_id: 0, frame: POWER_NOTIFICATION };
+    let notification = Dali103PowerNotificationCommand { registry_adapter_id: 0, short_address: None, device_groups: 0 };
     let (transport, cause, counters) =
         held_after(notification.into(), Answer::Confirmation, SentFrames::AfterQueries(GATE_QUERIES), false);
     assert_eq!(cause, quiescent_cause());

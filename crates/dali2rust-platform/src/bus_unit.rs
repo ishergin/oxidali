@@ -26,6 +26,12 @@ pub struct BusUnitSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PowerNotice {
+    pub short_address: Option<u8>,
+    pub device_groups: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BusUnitEvidence {
     pub adopted: BusUnitNvm,
     pub adopted_revision: u32,

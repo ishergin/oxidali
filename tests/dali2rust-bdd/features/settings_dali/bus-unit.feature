@@ -112,7 +112,7 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     When I restart the host stack
     Then the mock transport 24-bit trace should be exactly "FE E0 00" within 6000 ms
     And 24-bit forward frame 1 should be sent at priority 2
-    And the mock transport 24-bit trace should stay exactly "FE E0 00" for 1000 ms
+    And the mock transport 24-bit trace should stay exactly "FE E0 00" for 5000 ms
 
   @id:SET-DALI-016
   Scenario: A controller at its factory power cycle notification setting announces no boot

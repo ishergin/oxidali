@@ -38,7 +38,7 @@ pub enum ObservedItem {
     BusUnit(crate::bus_unit::BusUnitEvidence),
     BusUnitQuiescence(crate::bus_unit::BusUnitQuiescence),
     BusUnitTestFrame { data: u8, dtr: [u8; 3] },
-    BusUnitPowerNotification([u8; 3]),
+    BusUnitPowerNotification(crate::bus_unit::PowerNotice),
 }
 
 impl ObservedItem {

@@ -239,10 +239,11 @@ test is followed: `RESET` leaves `initialisationState` and its timer as they wer
 - 101 Table 3 defines an external power cycle by a supply loss of 5 s or more; this
   controller treats every boot as one, an OTA reboot and a watchdog reset included.
   `powerCycleSeen` is TRUE after every boot.
-- `POWER NOTIFICATION` is sent once after every boot while `powerCycleNotification` is
-  ENABLED: priority 2, uniformly delayed into 1,3–5 s after the power-on procedure, which
-  ends at hydration (103 §9.12.2 and the window of test 12.4.16); quiescent mode started
-  inside the delay suppresses it. `powerCycleNotification` keeps
+- `POWER NOTIFICATION` is sent once after a boot whose power-on procedure, which ends at
+  hydration, finds `powerCycleNotification` ENABLED, and only if it is still ENABLED when
+  the delay ends: priority 2, the unit's short address and lowest group, delayed into
+  1,3–5 s after that procedure (103 §9.12.2 and the window of test 12.4.16). Quiescent mode
+  started inside the delay suppresses it, even when it stops again before the delay ends. `powerCycleNotification` keeps
   the factory value DISABLED of Table 17, so nothing is sent until another controller or
   the operator enables it.
 

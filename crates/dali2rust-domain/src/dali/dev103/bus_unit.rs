@@ -3,11 +3,10 @@ use dali2rust_platform::answer_table::{
     AnswerEntry, AnswerTableImage, COMPARE_ENTRY, NO_SHORT_ADDRESS, QUERY_SHORT_ADDRESS_ENTRY,
     VERIFY_SHORT_ADDRESS_ENTRY,
 };
-pub use dali2rust_platform::bus_unit::{BusUnitIdentity, BusUnitNvm, BusUnitSnapshot};
+pub use dali2rust_platform::bus_unit::{BusUnitIdentity, BusUnitNvm, BusUnitSnapshot, PowerNotice};
 
 use crate::dali::dev103::address::{Device103Address, MAX_SHORT_ADDRESS};
 use crate::dali::dev103::command::{Device103Command, Special103Command};
-use crate::dali::dev103::event::power_notification;
 use crate::dali::dev103::frame::ForwardFrame24;
 use crate::dali::frame::send_twice_span_ms;
 
@@ -135,7 +134,7 @@ pub struct UnitEffects {
     pub identify: Option<bool>,
     pub quiescent: Option<bool>,
     pub test_frame: Option<TestFrame>,
-    pub power_notification: Option<[u8; 3]>,
+    pub power_notification: Option<PowerNotice>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,18 +265,21 @@ impl Device103Unit {
     }
 
     // IEC 62386-103 §9.12.2
-    fn power_on_step(&mut self, now_ms: u32, entropy: &mut dyn FnMut() -> u32) -> Option<[u8; 3]> {
+    fn power_on_step(&mut self, now_ms: u32, entropy: &mut dyn FnMut() -> u32) -> Option<PowerNotice> {
         match self.power_on {
             PowerOn::Pending if self.is_hydrated() => {
-                let at_ms = now_ms.wrapping_add(power_notification_delay(entropy()));
-                self.power_on = PowerOn::Notifying { at_ms };
+                self.power_on = if self.nvm.power_cycle_notification {
+                    PowerOn::Notifying { at_ms: now_ms.wrapping_add(power_notification_delay(entropy())) }
+                } else {
+                    PowerOn::Done
+                };
                 None
             }
             PowerOn::Notifying { at_ms } if passed(now_ms, at_ms) => {
                 self.power_on = PowerOn::Done;
                 let nvm = self.nvm;
                 nvm.power_cycle_notification
-                    .then(|| power_notification(nvm.short_address, nvm.device_groups).as_bytes())
+                    .then_some(PowerNotice { short_address: nvm.short_address, device_groups: nvm.device_groups })
             }
             _ => None,
         }
@@ -1620,7 +1622,7 @@ mod tests {
         power_cycle_notification: true,
         ..FACTORY_NVM
     };
-    const NAMED_NOTIFICATION: [u8; 3] = [0xFE, 0xF1, 0x45];
+    const NAMED_NOTIFICATION: PowerNotice = PowerNotice { short_address: Some(5), device_groups: 0b0110_0100 };
     const LAST_DRAW: u32 = POWER_NOTIFICATION_LATEST_MS - POWER_NOTIFICATION_EARLIEST_MS;
 
     fn power_on(nvm: BusUnitNvm, draw: u32) -> (Bench, u32) {
@@ -1631,7 +1633,7 @@ mod tests {
         (bench, completed)
     }
 
-    fn notification_at(bench: &mut Bench, now_ms: u32) -> Option<[u8; 3]> {
+    fn notification_at(bench: &mut Bench, now_ms: u32) -> Option<PowerNotice> {
         bench.unit.tick(now_ms, &mut || ENTROPY).power_notification
     }
 
@@ -1670,6 +1672,14 @@ mod tests {
     fn a_notification_disabled_inside_the_delay_is_not_sent() {
         let (mut bench, completed) = power_on(NOTIFYING, LAST_DRAW);
         bench.device(Device103Address::Broadcast, Device103Command::DisablePowerCycleNotification);
+        assert_eq!(notification_at(&mut bench, completed + POWER_NOTIFICATION_LATEST_MS), None);
+    }
+
+    #[test]
+    fn an_enable_inside_the_delay_does_not_announce_a_boot_that_ended_disabled() {
+        let (mut bench, completed) = power_on(FACTORY_NVM, 0);
+        bench.device(Device103Address::Broadcast, Device103Command::EnablePowerCycleNotification);
+        assert!(bench.unit.nvm().power_cycle_notification);
         assert_eq!(notification_at(&mut bench, completed + POWER_NOTIFICATION_LATEST_MS), None);
     }
 

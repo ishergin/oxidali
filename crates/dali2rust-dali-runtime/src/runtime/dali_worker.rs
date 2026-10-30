@@ -34,6 +34,7 @@ use crate::runtime::required_publish::Kind as PublishKind;
 use crate::runtime::executor::arbitration;
 use crate::runtime::executor::bus_unit;
 use crate::runtime::executor::held_cause_of;
+use dali2rust_domain::dali::dev103::event::power_notification;
 use crate::runtime::executor::bus_health::probe_bus_health;
 use crate::runtime::executor::{
     apply_broadcast_target_state, apply_group_target_state, apply_short_target_state,
@@ -569,7 +570,8 @@ fn handle_power_notification(
     cmd: &dali2rust_contracts::msg::Dali103PowerNotificationCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let sent = controller.send_frame24(cmd.frame, false).map(drop).map_err(|error| held_cause_of(&error));
+    let frame = power_notification(cmd.short_address, cmd.device_groups).as_bytes();
+    let sent = controller.send_frame24(frame, false).map(drop).map_err(|error| held_cause_of(&error));
     confirm_sent(sent, publisher, correlation_id, counters);
 }
 
