@@ -1,11 +1,15 @@
 use std::io;
 use std::io::Write as StdWrite;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::http::server::{Configuration, EspHttpConnection, EspHttpServer, Method, Request};
 use esp_idf_svc::io::{EspIOError, Write};
-use esp_idf_svc::sys::{heap_caps_malloc, EspError, ESP_FAIL, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL};
+use esp_idf_svc::sys::{
+    heap_caps_malloc, httpd_get_client_list, EspError, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT,
+    MALLOC_CAP_INTERNAL,
+};
 
 use dali2rust_api::http::router::{BodyRefusal, Router, MAX_REQUEST_BODY_BYTES};
 use dali2rust_api::http::types::{HttpBody, HttpResponse};
@@ -307,10 +311,34 @@ struct Phases {
     total_ms: u64,
 }
 
+fn note_socket_pressure(conn: &EspHttpConnection<'_>) {
+    static FULL: AtomicBool = AtomicBool::new(false);
+    static FULL_ENTRIES: AtomicU32 = AtomicU32::new(0);
+    let mut fds = [0 as core::ffi::c_int; HTTPD_MAX_OPEN_SOCKETS];
+    let mut open = HTTPD_MAX_OPEN_SOCKETS;
+    // SAFETY: the request is live for this handler, its `handle` is the server serving it, and the
+    // list call writes at most `open` descriptors into `fds`, which holds that many.
+    let err = unsafe { httpd_get_client_list((*conn.handle()).handle, &mut open, fds.as_mut_ptr()) };
+    if err != ESP_OK {
+        return;
+    }
+    let full = open >= HTTPD_MAX_OPEN_SOCKETS;
+    if full && !FULL.swap(true, Ordering::Relaxed) {
+        let entry = FULL_ENTRIES.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        log::warn!(
+            "HTTP: all {open} sockets open (full #{entry}); the next connection closes the least \
+             recently used"
+        );
+    } else if !full {
+        FULL.store(false, Ordering::Relaxed);
+    }
+}
+
 fn handle_request(
     router: &Arc<Router>,
     mut req: Request<&mut EspHttpConnection<'_>>,
 ) -> Result<(), EspIOError> {
+    note_socket_pressure(req.connection());
     let method = wire_method(req.method());
     let uri = req.uri().to_string();
     match read_body(&mut req) {

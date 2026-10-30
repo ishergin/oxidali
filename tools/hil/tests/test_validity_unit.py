@@ -841,6 +841,32 @@ def test_a_breached_budget_names_how_it_moves_and_no_closed_record(monkeypatch):
     assert "dated" not in report and not re.search(r"ISSUE-[0-9]", report)
 
 
+SOCKETS_FULL = ["W (90210) dali2rust_adapters::http::esp_idf: HTTP: all 10 sockets open "
+                "(full #1); the next connection closes the least recently used"]
+
+
+def _transport_report(tmp_path, serial):
+    return "\n".join(validity.format_report(
+        {"ledger": {"http_transport": 1}, "http_sockets_full": validity.http_sockets_full(serial),
+         "retry_events": ["http_transport GET health (ConnectionError < ProtocolError < "
+                          "ConnectionResetError/ECONNRESET)"]},
+        _budget(tmp_path)))
+
+
+def test_a_transport_retry_is_laid_beside_the_httpd_sockets_that_were_full(tmp_path):
+    full = _transport_report(tmp_path, SOCKETS_FULL)
+    assert "httpd sockets full: 1 time(s)" in full and "not ruled out" in full
+    assert "never in this run's serial window" in _transport_report(
+        tmp_path, ["I (1) x: boot"])
+    assert "serial window not read" in _transport_report(tmp_path, [])
+
+
+def test_the_sockets_full_line_is_reported_only_beside_a_transport_retry(tmp_path):
+    body = "\n".join(validity.format_report(
+        {"ledger": {"http_503": 1}, "http_sockets_full": 3}, _budget(tmp_path)))
+    assert "httpd sockets full" not in body
+
+
 def test_the_bridge_backlog_peak_counts_only_when_the_burst_raised_it():
     raised = test_ha_bridge._backlog_peak({"bus_backlog_peak": 17}, {"bus_backlog_peak": 40})
     assert "raised the bridge's backlog peak from 17 to 40" in raised

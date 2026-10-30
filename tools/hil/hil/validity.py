@@ -12,6 +12,7 @@ BOOT_HEAP_RE = re.compile(r"boot heap \[([^\]]+)\]: internal free=(\d+)")
 BEFORE_HTTPD_RE = re.compile(r"internal heap before httpd: free=(\d+)")
 
 CENSUS_RE = re.compile(r"task stack hwm \(B free(?:,[^)]*)?\):\s*(.*)$")
+HTTP_SOCKETS_FULL_RE = re.compile(r"HTTP: all \d+ sockets open \(full #\d+\)")
 OBSERVED_TASK_RE = re.compile(
     r"\b(httpd|mqtt_task)=(\d+)@0x[0-9a-f]+@(\d+):(fresh|stale)\b")
 
@@ -124,6 +125,12 @@ def boot_heap_breaches(ladder, budget):
         if free is not None and free < floor:
             out.append((stage, free, floor))
     return out
+
+
+def http_sockets_full(lines):
+    if not lines:
+        return None
+    return sum(1 for line in lines if HTTP_SOCKETS_FULL_RE.search(line))
 
 
 def stack_min_free(lines):
@@ -685,7 +692,23 @@ def format_report(state, budget):
             verdict = "budget %d" % limit
         lines.append("  %-28s %5d   %s" % (name, count, verdict))
     lines += _retry_event_lines(state)
+    lines += _http_sockets_full_lines(state, ledger)
     return lines
+
+
+def _http_sockets_full_lines(state, ledger):
+    if not ledger.get("http_transport"):
+        return []
+    full = state.get("http_sockets_full")
+    if full is None:
+        return ["  httpd sockets full: serial window not read, so no http_transport retry "
+                "here can be laid to a least-recently-used close (ISSUE-55)"]
+    if not full:
+        return ["  httpd sockets full: never in this run's serial window, so no "
+                "http_transport retry here is a least-recently-used close (ISSUE-55)"]
+    return ["  httpd sockets full: %d time(s) in this run's serial window, so a "
+            "least-recently-used close is not ruled out for its http_transport retries; "
+            "pairing one with a retry needs the serial time of the line (ISSUE-55)" % full]
 
 
 MAX_LISTED_RETRY_EVENTS = 12

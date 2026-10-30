@@ -54,6 +54,7 @@ def _validity_state(config):
     state["stack_min_free"] = validity.stack_min_free(census_lines)
     state["stack_observation_gaps"] = validity.stack_observation_gaps(census_lines)
     state["observed_task_states"] = validity.observed_task_states(census_lines)
+    state["http_sockets_full"] = validity.http_sockets_full(census_lines)
     state["boot_heap_budget"] = validity.load_boot_heap_budget()
     state["boot_heap"] = _boot_heap_ladder(config)
     state["runtime_heap_budget"] = validity.load_runtime_heap_budget()
