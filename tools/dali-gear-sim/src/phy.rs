@@ -105,8 +105,8 @@ impl GearPhy {
         self.isr.answer_counts()
     }
 
-    pub fn last_answer_arm_idle_ticks(&self) -> u32 {
-        self.isr.last_answer_arm_idle_ticks()
+    pub fn last_answer_arm_since_edge_ticks(&self) -> u32 {
+        self.isr.last_answer_arm_since_edge_ticks()
     }
 
     pub fn late_tick_counts(&self) -> (u32, u32) {

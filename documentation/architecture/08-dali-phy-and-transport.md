@@ -173,9 +173,11 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   once the window has passed. A backward frame or a violation captured meanwhile neither
   voids it nor moves its slot.
 - A reception in progress holds the answer only when it began less than 2,4 ms after that
-  edge, since 101 Table 20 reads such a frame as no backward frame. A later one is another
-  unit's answer: ours abandons the reception and starts over it, the dominant level wins,
-  and `answer_over_backward_total` in `/api/v1/stats` counts it.
+  edge, since 101 Table 20 reads such a frame as no backward frame, and so does a line held
+  low for `fsm::LINE_HELD_TICKS`. A later one is another unit's answer: ours abandons the
+  reception and starts over it, the dominant level wins, and `answer_over_backward_total`
+  in `/api/v1/stats` counts it, as it counts a frame whose start is still being debounced
+  on our arming tick.
 - The window constants live in `dali-phy::backward_window`, derived from
   `fsm::TX_ARM_LEAD_TICKS` and bounded at compile time; the gear emulator stages its
   answers in the same cell.

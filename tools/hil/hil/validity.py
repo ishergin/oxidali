@@ -483,6 +483,7 @@ STATS_DALI_COUNTERS = (
     ("console_log_truncated_total", "console_log_truncated"),
     ("console_uart_errors_total", "console_uart_errors"),
     ("answer_staged_total", "answer_staged"),
+    ("answer_over_backward_total", "answer_over_backward"),
     ("answer_table_behind_total", "answer_table_behind"),
     ("answer_table_publish_max_ticks", "answer_table_publish_max_ticks"),
     ("sniff_poll_late_total", "sniff_poll_late"),

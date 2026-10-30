@@ -1,6 +1,6 @@
 # ADR-030: The controller as a Part 103 bus unit
 
-Status: Accepted; amends ADR-003, ADR-018 and ADR-025
+Status: Accepted; amends ADR-003, ADR-017, ADR-018 and ADR-025
 Date: 2026-10-28
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-017: DALI transactions and forward-frame priority
 
-Status: Accepted, amended by ADR-020
+Status: Accepted, amended by ADR-020 and ADR-030
 Date: 2026-08-09
 
 ## Context
@@ -96,7 +96,7 @@ their ratio is readable.
 when the frame was armed or heard. It is the only honest measure of a frame's realised
 priority; `p1_window_late` counts intended priority-1 frames that left past 14,7 ms.
 Settling is enforced once, in the interrupt, from the last edge of any master, and the
-backward window is judged by the interrupt's idle counter rather than the task's clock,
+backward window is judged by the interrupt's own tick count rather than the task's clock,
 because a task-side deadline is late by however long the task took to wake (both
 mechanisms: [08](../08-dali-phy-and-transport.md)).
 

@@ -1,4 +1,4 @@
-use crate::fsm::{PHY_TICK_US, TX_ARM_LEAD_TICKS};
+use crate::fsm::{PHY_TICK_US, RX_START_DEBOUNCE_TICKS, TX_ARM_LEAD_TICKS};
 
 
 // IEC 62386-101 Table 20
@@ -21,6 +21,7 @@ pub const ANSWER_ARM_TARGET_IDLE_TICKS: u16 =
 pub const ANSWER_ARM_MAX_IDLE_TICKS: u16 =
     (us_to_ticks(BACKWARD_MAX_US) as u16).saturating_sub(ANSWER_ARM_LEAD_TICKS);
 pub const BACKWARD_RECEIVE_MIN_TICKS: u32 = BACKWARD_RECEIVE_MIN_US.div_ceil(PHY_TICK_US);
+pub const RX_START_STAMP_LAG_TICKS: u32 = RX_START_DEBOUNCE_TICKS as u32;
 const _: () = assert!(BACKWARD_RECEIVE_MIN_TICKS < ANSWER_ARM_TARGET_IDLE_TICKS as u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

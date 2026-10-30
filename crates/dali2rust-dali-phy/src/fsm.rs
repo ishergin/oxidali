@@ -566,6 +566,27 @@ mod tests {
     }
 
     #[test]
+    fn a_forward_frame_after_an_answer_still_yields_in_its_lead() {
+        let mut phy = DaliBitbangPhy::new(TestHal { bus_high: true });
+        let answer = HalfBitBuffer { data: [0b0101_0101; 9], length: BACKWARD_FRAME_HALF_BITS };
+        assert!(phy.start_answer(&answer));
+        for _ in 0..200 {
+            phy.tick();
+        }
+        assert_eq!(phy.bus_state(), BusState::Idle, "the answer is done");
+        let forward = HalfBitBuffer { data: [0b0101_0101; 9], length: 16 };
+        assert!(phy.start_tx(&forward));
+        phy.tick();
+        phy.hal.bus_high = false;
+        phy.tick();
+        assert_eq!(
+            phy.poll_tx_state(),
+            TxPollResult::Yielded,
+            "an answer's exemption ends with the answer"
+        );
+    }
+
+    #[test]
     fn a_dominant_line_during_the_arming_lead_yields_without_writing_an_edge() {
         let mut phy = DaliBitbangPhy::new(RecordingHal {
             bus_high: true,

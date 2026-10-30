@@ -7,12 +7,14 @@ use crate::answer::AtomicAnswerCell;
 use crate::answer_table::{AnswerTableCell, TableLookup};
 use crate::backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_MAX_IDLE_TICKS, ANSWER_ARM_TARGET_IDLE_TICKS,
-    BACKWARD_DATA_BITS, BACKWARD_RECEIVE_MIN_TICKS,
+    BACKWARD_DATA_BITS, BACKWARD_RECEIVE_MIN_TICKS, RX_START_STAMP_LAG_TICKS,
 };
 use crate::command::{AtomicCommandCell, ExchangeId, TxGates};
 use crate::cpu::{raw_core_id, ISR_CORE_ID};
 use crate::frame_length::{frame_length_class, is_forward24_length, FrameLengthClass};
-use crate::fsm::{BusState, DaliBitbangPhy, RxCompletedEvent, RxState, TxPollResult};
+use crate::fsm::{
+    BusState, DaliBitbangPhy, RxCompletedEvent, RxState, TxPollResult, LINE_HELD_TICKS,
+};
 use crate::gpio::RegisterGpio;
 use crate::halfbits::HalfBitBuffer;
 use crate::manchester::{
@@ -239,7 +241,7 @@ pub struct PhyIsrCore {
     answer: AtomicAnswerCell,
     bus_epoch: AtomicU8,
     active_is_answer: AtomicBool,
-    last_answer_arm_idle_ticks: AtomicU32,
+    last_answer_arm_since_edge_ticks: AtomicU32,
     answers: AnswerTally,
     probe: TickProbe,
     tx: TxCounters,
@@ -389,7 +391,7 @@ impl PhyIsrCore {
             answer: AtomicAnswerCell::new(),
             bus_epoch: AtomicU8::new(0),
             active_is_answer: AtomicBool::new(false),
-            last_answer_arm_idle_ticks: AtomicU32::new(0),
+            last_answer_arm_since_edge_ticks: AtomicU32::new(0),
             answers: AnswerTally::new(),
             probe: TickProbe::new(),
             tx: TxCounters::new(),
@@ -633,22 +635,34 @@ impl PhyIsrCore {
         let since_edge = self.ticks_since_forward_edge();
         match answer_gate(since_edge, ANSWER_ARM_TARGET_IDLE_TICKS, ANSWER_ARM_MAX_IDLE_TICKS) {
             AnswerGate::Hold => TryArmAnswer::Held,
-            AnswerGate::Expired => {
-                self.answer.discard();
-                self.answers.expired.fetch_add(1, Ordering::Relaxed);
-                TryArmAnswer::NotStaged
-            }
-            AnswerGate::Arm { late } => {
-                let over_backward = match self.line_under_answer(phy) {
-                    LineUnderAnswer::Busy => return TryArmAnswer::Held,
-                    LineUnderAnswer::Idle => false,
-                    LineUnderAnswer::Backward => true,
-                };
-                let arm = AnswerArm { since_edge, late, over_backward };
-                // SAFETY: caller guarantees the ISR context.
-                unsafe { self.fire_staged_answer(phy, arm) }
-            }
+            AnswerGate::Expired => self.expire_staged_answer(),
+            // SAFETY: caller guarantees the ISR context.
+            AnswerGate::Arm { late } => unsafe { self.arm_over_line(phy, since_edge, late) },
         }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn expire_staged_answer(&self) -> TryArmAnswer {
+        self.answer.discard();
+        self.answers.expired.fetch_add(1, Ordering::Relaxed);
+        TryArmAnswer::NotStaged
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    unsafe fn arm_over_line(
+        &self,
+        phy: &mut DaliBitbangPhy<RegisterGpio>,
+        since_edge: u16,
+        late: bool,
+    ) -> TryArmAnswer {
+        let over_backward = match self.line_under_answer(phy) {
+            LineUnderAnswer::Busy => return TryArmAnswer::Held,
+            LineUnderAnswer::Idle => false,
+            LineUnderAnswer::Backward => true,
+        };
+        let arm = AnswerArm { since_edge, late, over_backward };
+        // SAFETY: caller guarantees the ISR context.
+        unsafe { self.fire_staged_answer(phy, arm) }
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -665,16 +679,25 @@ impl PhyIsrCore {
     // IEC 62386-101 Table 20
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn line_under_answer(&self, phy: &DaliBitbangPhy<RegisterGpio>) -> LineUnderAnswer {
-        let edge = self.answer_slot.forward_edge_tick.load(Ordering::Relaxed);
-        let started = self.answer_slot.rx_started_tick.load(Ordering::Relaxed);
+        if phy.bus_low_run_ticks() >= LINE_HELD_TICKS {
+            return LineUnderAnswer::Busy;
+        }
         match phy.bus_state() {
             BusState::Idle if phy.line_debouncing() => LineUnderAnswer::Backward,
             BusState::Idle => LineUnderAnswer::Idle,
-            BusState::Rx if started.wrapping_sub(edge) > BACKWARD_RECEIVE_MIN_TICKS => {
+            BusState::Rx if self.reception_began_in_the_backward_window() => {
                 LineUnderAnswer::Backward
             }
             _ => LineUnderAnswer::Busy,
         }
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn reception_began_in_the_backward_window(&self) -> bool {
+        let edge = self.answer_slot.forward_edge_tick.load(Ordering::Relaxed);
+        let started = self.answer_slot.rx_started_tick.load(Ordering::Relaxed);
+        let quiet = started.wrapping_sub(edge).saturating_sub(RX_START_STAMP_LAG_TICKS);
+        quiet >= BACKWARD_RECEIVE_MIN_TICKS
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
@@ -686,7 +709,7 @@ impl PhyIsrCore {
         let Some((_epoch, hb)) = self.answer.take() else {
             return TryArmAnswer::NotStaged;
         };
-        self.last_answer_arm_idle_ticks
+        self.last_answer_arm_since_edge_ticks
             .store(u32::from(arm.since_edge), Ordering::Relaxed);
         if arm.late {
             self.answers.late.fetch_add(1, Ordering::Relaxed);
@@ -1141,8 +1164,8 @@ impl PhyIsrCore {
         self.tx.collision_restarts.load(Ordering::Relaxed)
     }
 
-    pub fn last_answer_arm_idle_ticks(&self) -> u32 {
-        self.last_answer_arm_idle_ticks.load(Ordering::Relaxed)
+    pub fn last_answer_arm_since_edge_ticks(&self) -> u32 {
+        self.last_answer_arm_since_edge_ticks.load(Ordering::Relaxed)
     }
 
     pub fn queue_tx(
@@ -2288,7 +2311,7 @@ mod tests {
             assert_eq!(c.over_backward, 1, "and that is counted");
             assert_eq!(c.stale + c.expired + c.rejected + c.collided, 0);
             assert_eq!(
-                core.last_answer_arm_idle_ticks(),
+                core.last_answer_arm_since_edge_ticks(),
                 target,
                 "the slot counts from the forward frame's last edge: other at {other_starts_at}"
             );
@@ -2331,7 +2354,7 @@ mod tests {
 
         let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
         assert!(core.submit_answer(epoch, &answer_frame()));
-        while core.last_answer_arm_idle_ticks() == 0 {
+        while core.last_answer_arm_since_edge_ticks() == 0 {
             drive(&core, input_ptr, 0b0010, 1);
         }
         drive(&core, input_ptr, 0, u32::from(TX_ARM_LEAD_TICKS) - 1);
@@ -2359,7 +2382,7 @@ mod tests {
         assert_eq!(c.sent, 1, "the answer must go out exactly once");
         assert_eq!(c.stale + c.expired + c.rejected + c.collided, 0);
         assert_eq!(
-            core.last_answer_arm_idle_ticks(),
+            core.last_answer_arm_since_edge_ticks(),
             u32::from(ANSWER_ARM_TARGET_IDLE_TICKS),
             "the answer must arm on the target tick, not ticks later"
         );
@@ -2449,7 +2472,7 @@ mod tests {
         // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
         let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
 
-        let early = BACKWARD_RECEIVE_MIN_TICKS - 2;
+        let early = BACKWARD_RECEIVE_MIN_TICKS - 1;
         assert!(early >= FORWARD_COMPLETES_AFTER_TICKS);
         let epoch = settled_capture_epoch(&core, input_ptr, early);
         assert!(core.submit_answer(epoch, &answer_frame()));
@@ -2469,6 +2492,67 @@ mod tests {
         let c = core.answer_counts();
         assert_eq!(c.sent + c.over_backward, 0, "a frame of the grey area is not an answer");
         assert!(c.expired >= 1, "so ours waits it out and its window closes");
+    }
+
+    #[test]
+    fn an_answer_starts_over_a_frame_that_began_on_the_backward_window_s_first_tick() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        let epoch = settled_capture_epoch(&core, input_ptr, BACKWARD_RECEIVE_MIN_TICKS);
+        assert!(core.submit_answer(epoch, &answer_frame()));
+        drive_bits(&core, input_ptr, &EIGHT_BITS);
+        drive(&core, input_ptr, 0b0010, 160);
+
+        let c = core.answer_counts();
+        assert_eq!(c.sent, 1, "a frame begun 2,4 ms after the edge is another unit's answer");
+        assert_eq!(c.over_backward, 1, "so ours starts over it and that is counted");
+        assert_eq!(c.stale + c.expired + c.rejected, 0);
+        assert_eq!(
+            core.last_answer_arm_since_edge_ticks(),
+            u32::from(ANSWER_ARM_TARGET_IDLE_TICKS),
+            "and it starts in its own slot"
+        );
+    }
+
+    #[test]
+    fn a_held_line_inside_the_backward_window_holds_the_answer_until_it_expires() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        assert!(core.submit_answer(epoch, &answer_frame()));
+        assert!(last_edge_ticks_after_receive() > BACKWARD_RECEIVE_MIN_TICKS);
+        drive(&core, input_ptr, 0, 600);
+        drive(&core, input_ptr, 0b0010, 160);
+
+        let c = core.answer_counts();
+        assert_eq!(c.sent + c.over_backward, 0, "a held line is no other unit's answer");
+        assert_eq!(c.expired, 1, "so ours waits it out and its window closes");
+    }
+
+    #[test]
+    fn an_answer_staged_a_counter_wrap_after_its_edge_expires_unsent() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        let epoch = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        drive(&core, input_ptr, 0b0010, u32::from(u16::MAX) + 1);
+        assert!(core.submit_answer(epoch, &answer_frame()));
+        drive(&core, input_ptr, 0b0010, 160);
+
+        let c = core.answer_counts();
+        assert_eq!(c.sent, 0, "an edge older than the slot counter reaches is long past");
+        assert_eq!(c.expired, 1);
     }
 
     #[test]
