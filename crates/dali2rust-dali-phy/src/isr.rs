@@ -869,6 +869,9 @@ impl PhyIsrCore {
         poll: TxPollResult,
     ) {
         if self.control.active.swap(false, Ordering::AcqRel) {
+            if poll == TxPollResult::Yielded {
+                self.bus_epoch.fetch_sub(1, Ordering::Relaxed);
+            }
             // SAFETY: called from `tick`, the sole owner of `pending`.
             unsafe { self.clear_pending() };
             self.active_expects_backward.store(false, Ordering::Release);
@@ -2341,6 +2344,29 @@ mod tests {
         // SAFETY: same provenance as the pointer the core reads through.
         unsafe { *input_ptr = 0; core.tick() };
         assert_eq!(core.tx_yields(), 1);
+        let after = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        assert_eq!(after, before.wrapping_add(1), "only the foreign frame went by");
+    }
+
+    #[test]
+    fn a_cancelled_frame_that_yields_in_its_lead_is_not_counted_on_the_line() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        let before = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        let gate = u8::MAX;
+        drive(&core, input_ptr, 0b0010, u32::from(gate));
+        assert!(core.submit_tx(&test_forward_frame(), 16, false, TxGates::settle(gate)));
+        let exchange = core.current_exchange();
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { core.tick() };
+        core.cancel_exchange(exchange);
+        // SAFETY: same provenance as the pointer the core reads through.
+        unsafe { *input_ptr = 0; core.tick() };
+        assert!(core.cancellation_acknowledged(exchange), "the cancel branch ran");
+        assert_eq!(core.tx_yields(), 0, "the frame ended as cancelled, not as a plain yield");
         let after = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
         assert_eq!(after, before.wrapping_add(1), "only the foreign frame went by");
     }

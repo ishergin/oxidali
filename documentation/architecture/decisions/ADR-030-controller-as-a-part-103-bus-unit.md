@@ -173,6 +173,10 @@ answer to any next one, and the slot no longer waits for a task.
   poller, the arbitration probe and the power notification — while queries are still
   answered (103 §9.9.3). It ends with `STOP QUIESCENT MODE` or 15 min ± 1,5 min after the
   last `START`, and a power-on clears it.
+- The gate is read before every frame, not only when a command starts: a command already
+  on the wire when quiescence begins, or when the controller is made passive, stops at
+  its next frame with the same refusal, and a started transaction finishes, because
+  nothing yields inside one.
 - The model reports each `START` with its deadline and each end, and the registry holds
   the deadline in RAM; the gate, the poller and the HCL scheduler read it, and it lapses
   at that deadline even if the report of a `STOP` is lost.

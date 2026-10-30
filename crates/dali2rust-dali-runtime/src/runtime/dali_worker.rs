@@ -19,8 +19,8 @@ use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::commands::dali_command_from_wire;
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::ses::command_priority;
-use dali2rust_domain::dali::controller::DaliApplicationController;
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_domain::registry::RegistryReadPort;
@@ -64,7 +64,7 @@ mod wire;
 mod write_attributes;
 
 use attribute_read::handle_read_attributes;
-use blocked::{adapter_command_blocked, controller_passive_blocked, controller_quiescent_blocked};
+use blocked::{adapter_command_blocked, controller_passive_blocked, controller_quiescent_blocked, GateHolds};
 use dev103::{
     handle_103_commission, handle_103_identify, handle_103_instance_configure, handle_103_scan,
 };

@@ -13,6 +13,7 @@ use dali2rust_contracts::msg::{
     MemoryBankReadPreset, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
+use dali2rust_domain::dali::frame::HoldCause;
 use dali2rust_domain::registry::{PollTargetView, PollerReadPort, PollerSettingsView};
 
 use super::power_cycle::{short_bit, PollerConfig, PowerCycleWatch};
@@ -543,15 +544,29 @@ fn drain_confirmations(state: &mut PollerState, deps: &PollerWiring, conf_rx: &B
             end_probe_without_verdict(state, deps, &conf, probe);
             continue;
         }
-        if conf.status != DeliveryStatus::DeliveryRejected {
-            continue;
-        }
-        let Some(outstanding) = take_outstanding(state, conf.meta.correlation_id) else {
-            continue;
-        };
+        end_read_without_outcome(state, deps, &conf);
+    }
+}
+
+fn end_read_without_outcome(state: &mut PollerState, deps: &PollerWiring, ended: &ConfirmationEnvelope) {
+    let rejected = ended.status == DeliveryStatus::DeliveryRejected;
+    if !rejected && !refused_before_the_wire(ended) {
+        return;
+    }
+    let Some(outstanding) = state.outstanding.filter(|o| o.correlation_id == ended.meta.correlation_id) else {
+        return;
+    };
+    state.outstanding = None;
+    if rejected {
         deps.counters.skipped_inbox_full.fetch_add(1, Ordering::Relaxed);
+    }
+    if rejected || refused_until_quiescence_ends(ended) {
         requeue_target(state, outstanding.target);
     }
+}
+
+fn refused_until_quiescence_ends(ended: &ConfirmationEnvelope) -> bool {
+    ended.confirmation.error.as_ref().is_some_and(|error| error.message.as_str() == HoldCause::Quiescent.message())
 }
 
 fn end_probe_without_verdict(state: &mut PollerState, deps: &PollerWiring, ended: &ConfirmationEnvelope, probe: PendingProbe) {
@@ -1117,6 +1132,55 @@ mod tests {
         pump_queue(&mut state, &t.deps);
         assert!(state.outstanding.is_some(), "the parked read goes out once quiescent mode ends");
         assert!(state.pending_probe.is_some(), "and so does the parked probe");
+    }
+
+    fn ended(correlation_id: u64, code: ErrorCode, cause: &str) -> ConfirmationEnvelope {
+        dali2rust_contracts::bus::build_confirmation_envelope_with_product_error(
+            correlation_id,
+            DeliveryStatus::ExecutionFailed,
+            0,
+            SOURCE_ID_UNSPECIFIED,
+            Some((code, cause)),
+        )
+    }
+
+    #[test]
+    fn a_read_a_gate_refused_in_flight_goes_out_again_once_the_gate_opens() {
+        let t = test_deps();
+        let mut state = test_state();
+        publish_read(&mut state, &t.deps, poll_target(9));
+        let corr = state.outstanding.expect("armed read").correlation_id;
+        end_read_without_outcome(&mut state, &t.deps, &ended(corr, ErrorCode::Conflict, "controller_quiescent"));
+        assert!(state.outstanding.is_none(), "the slot is free at once, not after the abandon TTL");
+        assert_eq!(state.queue.front().map(|t| t.short_address), Some(9), "and the target waits its turn");
+        assert_eq!(t.deps.counters.skipped_inbox_full.load(Ordering::Relaxed), 0, "a refusal is not a full inbox");
+        pump_queue(&mut state, &t.deps);
+        assert_eq!(t.deps.counters.duty_deferred.load(Ordering::Relaxed), 0, "nothing reached the wire, so nothing buys rest");
+        assert_eq!(state.outstanding.map(|o| o.target.short_address), Some(9));
+    }
+
+    #[test]
+    fn a_read_that_reached_the_wire_waits_for_its_outcome() {
+        let t = test_deps();
+        let mut state = test_state();
+        publish_read(&mut state, &t.deps, poll_target(9));
+        let corr = state.outstanding.expect("armed read").correlation_id;
+        end_read_without_outcome(&mut state, &t.deps, &ended(corr, ErrorCode::OperationFailed, "cause"));
+        assert_eq!(state.outstanding.map(|o| o.correlation_id), Some(corr));
+        assert!(state.queue.is_empty());
+    }
+
+    #[test]
+    fn a_read_refused_for_a_lasting_cause_frees_its_slot_and_waits_for_the_next_cycle() {
+        for cause in ["adapter_disabled", "controller_passive"] {
+            let t = test_deps();
+            let mut state = test_state();
+            publish_read(&mut state, &t.deps, poll_target(9));
+            let corr = state.outstanding.expect("armed read").correlation_id;
+            end_read_without_outcome(&mut state, &t.deps, &ended(corr, ErrorCode::Conflict, cause));
+            assert!(state.outstanding.is_none(), "{cause}: the slot is free at once");
+            assert!(state.queue.is_empty(), "{cause}: the read is not sent again into the same refusal");
+        }
     }
 
     #[test]

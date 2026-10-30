@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{
-    DaliApplicationController, DaliProductController, Frame24Fault, ReadbackWorkaround,
+    DaliApplicationController, DaliProductController, Frame24Fault, ReadbackWorkaround, WireHold,
 };
-use dali2rust_domain::dali::frame::{ForwardFrame, FrameError};
+use dali2rust_domain::dali::frame::{ForwardFrame, FrameError, HoldCause};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::ses::{
     DaliPriority, DaliSession, RetryPolicy, TransactionPriority,
@@ -55,6 +55,7 @@ pub struct DaliController<T: DaliTransport + Send> {
     retry_policy: RetryPolicy,
     retry_seed: u64,
     lease: Option<WireLease>,
+    hold: Option<Arc<dyn WireHold>>,
     at_step_boundary: bool,
     sniffer: Option<Arc<SnifferTap>>,
     sniffer_adapter_id: u8,
@@ -107,6 +108,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             retry_policy,
             retry_seed,
             lease: None,
+            hold: None,
             at_step_boundary: false,
             sniffer: None,
             sniffer_adapter_id: 0,
@@ -225,6 +227,13 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
         let result = run(self);
         self.lease = previous;
         self.at_step_boundary = previous_boundary;
+        result
+    }
+
+    fn with_wire_hold<R>(&mut self, hold: Arc<dyn WireHold>, run: impl FnOnce(&mut Self) -> R) -> R {
+        let previous = self.hold.replace(hold);
+        let result = run(self);
+        self.hold = previous;
         result
     }
 
@@ -555,6 +564,7 @@ fn response_from_outcome(outcome: TransferOutcome) -> DaliResponse {
 fn fault24_from_error(error: FrameError) -> Frame24Fault {
     match error {
         FrameError::Preempted => Frame24Fault::Preempted,
+        FrameError::Held(cause) => Frame24Fault::Held(cause),
         FrameError::Collision
         | FrameError::BusBusy
         | FrameError::TransportError

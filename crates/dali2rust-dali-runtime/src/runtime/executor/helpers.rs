@@ -4,7 +4,7 @@ use dali2rust_domain::dali::controller::{DaliApplicationController, ReadbackWork
 use dali2rust_domain::dali::devices::dt8_color::{
     Dt8Command, opcode_requires_repeat as dt8_opcode_requires_repeat,
 };
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
@@ -84,6 +84,12 @@ impl SemanticDaliError {
         matches!(self, Self::OperationFailed(PREEMPTED_MESSAGE))
     }
 
+    pub fn is_held(self) -> bool {
+        [HoldCause::Passive, HoldCause::Quiescent]
+            .into_iter()
+            .any(|cause| self == Self::Conflict(cause.message()))
+    }
+
     pub fn is_device_absent(self) -> bool {
         matches!(self, Self::OperationFailed(DEVICE_ABSENT_MESSAGE))
     }
@@ -103,13 +109,21 @@ pub const RANDOMISE_SETTLE_MS: u64 = 100;
 
 fn map_transport_error(error: &impl core::fmt::Debug) -> SemanticDaliError {
     let rendered = format!("{error:?}");
-    if rendered.contains("Preempted") {
+    if let Some(cause) = held_cause_in(&rendered) {
+        SemanticDaliError::Conflict(cause.message())
+    } else if rendered.contains("Preempted") {
         SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE)
     } else if rendered.contains("Collision") || rendered.contains("BusBusy") {
         SemanticDaliError::OperationFailed("bus_contended")
     } else {
         SemanticDaliError::OperationFailed("dali_transport_error")
     }
+}
+
+fn held_cause_in(rendered: &str) -> Option<HoldCause> {
+    [HoldCause::Passive, HoldCause::Quiescent]
+        .into_iter()
+        .find(|cause| rendered.contains(&format!("Held({cause:?})")))
 }
 
 pub fn dali_short_address(short_address: u8) -> Result<DaliAddress, SemanticDaliError> {

@@ -69,6 +69,7 @@ fn fault_to_error(fault: Frame24Fault) -> SemanticDaliError {
         Frame24Fault::Unsupported => SemanticDaliError::OperationFailed(TRANSPORT_UNSUPPORTED_24BIT),
         Frame24Fault::Contended => SemanticDaliError::OperationFailed(FRAME24_CONTENDED),
         Frame24Fault::Preempted => SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE),
+        Frame24Fault::Held(cause) => SemanticDaliError::Conflict(cause.message()),
     }
 }
 

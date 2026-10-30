@@ -272,6 +272,22 @@ pub struct ReadPortDouble {
     pub policy_armed: bool,
     pub known_shorts: Vec<u8>,
     pub identity: IdentityRead,
+    pub held_after: Option<HeldAfter>,
+}
+
+pub struct HeldAfter {
+    pub transport: Arc<Mutex<MockDaliTransport>>,
+    pub frames24: usize,
+    pub passive: bool,
+}
+
+impl ReadPortDouble {
+    fn held(&self, passive: bool) -> bool {
+        self.held_after.as_ref().is_some_and(|held| {
+            held.passive == passive
+                && held.transport.lock().expect("mock lock").sent_frames24().len() >= held.frames24
+        })
+    }
 }
 
 impl InputInstanceTypeReadPort for ReadPortDouble {
@@ -282,11 +298,11 @@ impl InputInstanceTypeReadPort for ReadPortDouble {
 
 impl RegistryReadPort for ReadPortDouble {
     fn application_controller_active(&self) -> bool {
-        true
+        !self.held(true)
     }
 
     fn controller_quiescent(&self) -> bool {
-        false
+        self.held(false)
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {

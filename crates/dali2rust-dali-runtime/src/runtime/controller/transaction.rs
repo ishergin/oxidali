@@ -53,6 +53,14 @@ impl<T: DaliTransport + Send> DaliController<T> {
             >= TRANSACTION_BUDGET_MS
     }
 
+    // IEC 62386-103 §9.9.1, §9.9.3
+    pub(super) fn held_by(&self) -> Option<HoldCause> {
+        if self.tx.depth > 0 && self.tx.first_frame_sent {
+            return None;
+        }
+        self.hold.as_ref()?.held()
+    }
+
     pub(super) fn must_yield(&self) -> bool {
         if self.tx.depth > 0 && self.tx.first_frame_sent {
             return false;

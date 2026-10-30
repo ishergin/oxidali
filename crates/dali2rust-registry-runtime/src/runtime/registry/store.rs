@@ -649,7 +649,7 @@ impl RegistryReadPort for RegistryStore {
     }
 
     fn controller_quiescent(&self) -> bool {
-        self.quiescent_remaining_at(dali2rust_platform::liveness::monotonic_ms()).is_some()
+        self.quiescent_remaining_at(Instant::now()).is_some()
     }
 
     fn virtual_lamp_snapshot(

@@ -9,11 +9,11 @@ pub(super) fn controller_passive_blocked(
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
-    if read_port.application_controller_active() || passive_allowed(&ce.payload) {
+    if hold_cause(read_port, passive_allowed(&ce.payload)) != Some(HoldCause::Passive) {
         return false;
     }
     counters.tx_suppressed_passive.fetch_add(1, Ordering::Relaxed);
-    refuse_every_frame(ce, bus_id, answer, publisher, counters, "controller_passive")
+    refuse_every_frame(ce, bus_id, answer, publisher, counters, HoldCause::Passive.message())
 }
 
 // IEC 62386-103 §9.9.3
@@ -25,10 +25,51 @@ pub(super) fn controller_quiescent_blocked(
     publisher: &BusPublisher,
     counters: &DaliWorkerCounters,
 ) -> bool {
-    if !read_port.controller_quiescent() {
+    if hold_cause(read_port, passive_allowed(&ce.payload)) != Some(HoldCause::Quiescent) {
         return false;
     }
-    refuse_every_frame(ce, bus_id, answer, publisher, counters, "controller_quiescent")
+    refuse_every_frame(ce, bus_id, answer, publisher, counters, HoldCause::Quiescent.message())
+}
+
+// IEC 62386-103 §9.9.1, §9.9.3
+fn hold_cause(read_port: &dyn RegistryReadPort, passive_allowed: bool) -> Option<HoldCause> {
+    if !passive_allowed && !read_port.application_controller_active() {
+        Some(HoldCause::Passive)
+    } else if read_port.controller_quiescent() {
+        Some(HoldCause::Quiescent)
+    } else {
+        None
+    }
+}
+
+pub(super) struct GateHold {
+    read_port: Arc<dyn RegistryReadPort>,
+    passive_allowed: bool,
+}
+
+impl WireHold for GateHold {
+    fn held(&self) -> Option<HoldCause> {
+        hold_cause(self.read_port.as_ref(), self.passive_allowed)
+    }
+}
+
+pub(super) struct GateHolds {
+    strict: Arc<dyn WireHold>,
+    passive_allowed: Arc<dyn WireHold>,
+}
+
+impl GateHolds {
+    pub(super) fn new(read_port: &Arc<dyn RegistryReadPort>) -> Self {
+        let hold = |passive_allowed| -> Arc<dyn WireHold> {
+            Arc::new(GateHold { read_port: Arc::clone(read_port), passive_allowed })
+        };
+        Self { strict: hold(false), passive_allowed: hold(true) }
+    }
+
+    pub(super) fn for_frame(&self, frame: &BusFrame) -> Arc<dyn WireHold> {
+        let admitted = matches!(frame, BusFrame::Command(ce) if passive_allowed(&ce.payload));
+        Arc::clone(if admitted { &self.passive_allowed } else { &self.strict })
+    }
 }
 
 fn refuse_every_frame(
@@ -39,7 +80,7 @@ fn refuse_every_frame(
     counters: &DaliWorkerCounters,
     cause: &'static str,
 ) -> bool {
-    match blocked_refusal(&ce.payload, counters) {
+    match blocked_refusal(ce, counters) {
         BlockedRefusal::Operation(handled) => {
             if let Some(counter) = handled {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -80,7 +121,7 @@ pub(super) fn adapter_command_blocked(
         return false;
     }
 
-    match blocked_refusal(&ce.payload, counters) {
+    match blocked_refusal(ce, counters) {
         BlockedRefusal::Operation(handled) => fail_blocked_semantic_operation(
             publisher,
             bus_id,
@@ -104,11 +145,11 @@ enum BlockedRefusal<'c> {
     NotGated,
 }
 
-fn blocked_refusal<'c>(
-    payload: &BusCommandPayload,
-    counters: &'c DaliWorkerCounters,
-) -> BlockedRefusal<'c> {
-    match payload {
+fn blocked_refusal<'c>(ce: &CommandEnvelope, counters: &'c DaliWorkerCounters) -> BlockedRefusal<'c> {
+    match &ce.payload {
+        BusCommandPayload::DaliReadAttributesCommand(_) if ce.meta.origin == Origin::Poller => {
+            BlockedRefusal::Confirmation
+        }
         BusCommandPayload::DaliDiscoverDevicesCommand(_) => {
             BlockedRefusal::Operation(Some(&counters.semantic_discover_devices_handled))
         }

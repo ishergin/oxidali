@@ -141,7 +141,7 @@ dali2rust_contracts::dispatch_bus_events! {
         commit_device_replacement(publisher, corr, store, counters, body);
     },
     BusUnitQuiescenceObservedEvent(body) => {
-        if store.apply_bus_unit_quiescence(body, dali2rust_platform::liveness::monotonic_ms()) {
+        if store.apply_bus_unit_quiescence(body, std::time::Instant::now()) {
             log::info!(
                 "registry: another controller {} quiescent mode (sequence {})",
                 if body.remaining_ms.is_some() { "started" } else { "stopped" },

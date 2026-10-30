@@ -1218,3 +1218,22 @@ fn a_passive_controller_refuses_an_instance_action_on_the_confirmation() {
     assert_eq!(error.message.as_str(), "controller_passive");
     assert_nothing_reached_the_wire(&harness, "an instance action");
 }
+
+#[test]
+fn a_background_read_the_gates_refuse_is_answered_by_the_poller_s_own_discipline() {
+    let read = m::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None };
+    let ports = [
+        (TestReadPort::default(), "adapter_disabled"),
+        (TestReadPort { enabled: true, passive: true, ..Default::default() }, "controller_passive"),
+        (quiescent(), "controller_quiescent"),
+    ];
+    for (corr, (read_port, cause)) in (321..).zip(ports) {
+        let harness = WorkerHarness::new(Arc::new(read_port), ControllerMode::NoAnswer);
+        let ce = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Poller), read.clone());
+        harness.publish(ce);
+        let conf = harness.recv_confirmation_for(corr);
+        let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+        assert_eq!((error.code, error.message.as_str()), (ErrorCode::Conflict, cause));
+        assert_nothing_reached_the_wire(&harness, cause);
+    }
+}

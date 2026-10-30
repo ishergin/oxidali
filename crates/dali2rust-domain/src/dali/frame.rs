@@ -73,6 +73,23 @@ pub enum FrameError {
     BusBusy,
     TransportError,
     Preempted,
+    Held(HoldCause),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldCause {
+    Passive,
+    Quiescent,
+}
+
+impl HoldCause {
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::Passive => "controller_passive",
+            Self::Quiescent => "controller_quiescent",
+        }
+    }
 }
 
 #[cfg(test)]
