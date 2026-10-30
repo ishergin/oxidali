@@ -841,23 +841,30 @@ def test_a_breached_budget_names_how_it_moves_and_no_closed_record(monkeypatch):
     assert "dated" not in report and not re.search(r"ISSUE-[0-9]", report)
 
 
-SOCKETS_FULL = ["W (90210) dali2rust_adapters::http::esp_idf: HTTP: all 10 sockets open "
-                "(full #1); the next connection closes the least recently used"]
+SOCKETS_FULL = ["W (90210) dali2rust_adapters::http::esp_idf: HTTP: all 10 sockets open; "
+                "the next connection closes the least recently used"]
+BOOT_BANNER = ("I (812) dali2rust_adapters::http::esp_idf: HTTP: httpd stack_size=20480 "
+               "bytes in internal, max_open_sockets=10, uri_match_wildcard=true")
+SOCKETS_CENSUS = "I (60001) dali2rust_firmware: task stack hwm (B free): httpd=2048"
 
 
-def _transport_report(tmp_path, serial):
-    return "\n".join(validity.format_report(
-        {"ledger": {"http_transport": 1}, "http_sockets_full": validity.http_sockets_full(serial),
-         "retry_events": ["http_transport GET health (ConnectionError < ProtocolError < "
-                          "ConnectionResetError/ECONNRESET)"]},
-        _budget(tmp_path)))
+def _transport_report(tmp_path, serial, census=True):
+    state = {"ledger": {"http_transport": 1}, "http_sockets_full": validity.http_sockets_full(serial),
+             "retry_events": ["http_transport GET health (ConnectionError < ProtocolError < "
+                              "ConnectionResetError/ECONNRESET)"]}
+    if census:
+        state["stack_min_free"] = {"httpd": 2048}
+    return "\n".join(validity.format_report(state, _budget(tmp_path)))
 
 
 def test_a_transport_retry_is_laid_beside_the_httpd_sockets_that_were_full(tmp_path):
-    full = _transport_report(tmp_path, SOCKETS_FULL)
-    assert "httpd sockets full: 1 time(s)" in full and "not ruled out" in full
-    assert "never in this run's serial window" in _transport_report(
-        tmp_path, ["I (1) x: boot"])
+    full = _transport_report(tmp_path, [BOOT_BANNER, SOCKETS_CENSUS] + SOCKETS_FULL)
+    assert "httpd sockets full: 1 line(s)" in full and "not ruled out" in full
+    quiet = _transport_report(tmp_path, [BOOT_BANNER, SOCKETS_CENSUS])
+    assert "not seen in this run's serial window" in quiet
+    assert "does not rule one out" in quiet
+    blind = _transport_report(tmp_path, [BOOT_BANNER], census=False)
+    assert "carries no stack census" in blind and "not seen" not in blind
     assert "serial window not read" in _transport_report(tmp_path, [])
 
 
