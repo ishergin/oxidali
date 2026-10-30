@@ -481,7 +481,7 @@ fn feedback_dialect(
     };
     match (instance.feedback.probed, instance.feedback.opcode_map) {
         (true, None) => Err(json_err(422, "feedback_not_supported")),
-        (_, Some("ed1")) => Ok(2),
+        (_, Some("ed1")) => Err(json_err(422, "feedback_unverifiable")),
         (_, Some(_)) => Ok(1),
         (false, None) => Ok(0),
     }
