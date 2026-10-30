@@ -565,13 +565,18 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
            plain. A failed discovery publish is already counted under
            `Publish failures`, so `Discovery failed` is not painted twice.
 
-           `Connects total` climbing against a flat `Publishes total` is a
-           reconnect loop, which no single gauge shows. -->
+           `Connects total` climbing while `Publishes total` on the Stats
+           screen stays flat is a reconnect loop, which no single gauge shows;
+           publishes are counted there and only there.
+
+           `Bus backlog peak` is a gauge, not a total: the largest burst the
+           bridge held from its inbox in one turn since boot. From 16 held
+           frames the bridge coalesces, so `Bus coalesced` moves only in a
+           turn whose backlog reached 16. -->
       <div class="card span2">
         <header><h3>MQTT bridge</h3></header>
         <div class="attr"><span class="k">Connected</span><span class="v">yes</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Connects total</span><span class="v">1</span><span class="delta"></span></div>
-        <div class="attr"><span class="k">Publishes total</span><span class="v">8 411</span><span class="delta live">+8</span></div>
         <div class="attr"><span class="k">Publish failures total</span><span class="v fault">2</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Commands received total</span><span class="v">318</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Commands dropped total</span><span class="v">0</span><span class="delta"></span></div>
@@ -583,6 +588,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Terminal event publish retried total</span><span class="v">4</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Bus discarded total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Bus coalesced total</span><span class="v">57</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Bus backlog peak</span><span class="v">23</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Rule publishes dropped total</span><span class="v">0</span><span class="delta"></span></div>
       </div>
 

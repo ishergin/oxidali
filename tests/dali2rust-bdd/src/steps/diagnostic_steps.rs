@@ -157,7 +157,7 @@ async fn dali_mock_forward_frames(world: &mut DaliWorld, expected: u64) {
     );
 }
 
-// ADP-001 SYS-247 INP-075 RULE-003 RULE-005 RULE-007 RULE-008 RULE-009 RULE-089 CFG-008 CFG-011
+// ADP-001 SYS-247 INP-075 RULE-003 RULE-005 RULE-007 RULE-008 RULE-009 RULE-089 CFG-008 CFG-011 INP-073
 #[then(regex = r#"the response body should contain "([^"]+)""#)]
 async fn response_body_contains(world: &mut DaliWorld, expected: String) {
     let resp = world.last_response().expect("no response");

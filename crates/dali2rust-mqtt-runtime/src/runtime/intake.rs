@@ -15,7 +15,7 @@ use crate::runtime::state::{
 };
 use crate::runtime::worker::{MqttWorkerPorts, WORKER_STACK};
 
-const COALESCE_FROM: usize = 16;
+pub const BRIDGE_COALESCE_FROM: usize = 16;
 
 const GROUP_ID_COUNT: u8 = 16;
 
@@ -87,7 +87,7 @@ fn frame_tag(frame: &BusFrame) -> &'static str {
 
 fn intake(ev_rx: &BusSubscriberRx, burst: &mut BurstCoalescer<BusFrame>, ports: &MqttWorkerPorts) {
     while let Ok(frame) = ev_rx.try_recv() {
-        let key = if burst.len() >= COALESCE_FROM {
+        let key = if burst.len() >= BRIDGE_COALESCE_FROM {
             match &frame {
                 BusFrame::Event(event) => dali2rust_api::ws::coalesce_key(event),
                 _ => None,
@@ -97,6 +97,8 @@ fn intake(ev_rx: &BusSubscriberRx, burst: &mut BurstCoalescer<BusFrame>, ports: 
         };
         burst.push(key, frame);
     }
+    let backlog = u32::try_from(burst.len()).unwrap_or(u32::MAX);
+    dali2rust_bus::worker_counters::raise(&ports.counters.bus_backlog_peak, backlog);
     let superseded = burst.take_superseded();
     if superseded > 0 {
         dali2rust_bus::worker_counters::bump_by(&ports.counters.bus_coalesced_total, superseded);

@@ -14,6 +14,8 @@ pub struct FeedbackProbe {
     pub colour_capability: Option<u8>,
 }
 
+pub const FEEDBACK_UNVERIFIABLE: &str = "feedback_unverifiable";
+
 // DiiA SW098bp §11.6.1
 pub fn probe_feedback(
     controller: &mut impl DaliApplicationController,
@@ -90,6 +92,10 @@ impl ConfiguredFeedback {
         .iter()
         .any(Option::is_some)
     }
+
+    pub fn learned_map(&self, sent_map: u8) -> bool {
+        self.map_code != sent_map && FeedbackOpcodeMap::from_code(self.map_code).is_some()
+    }
 }
 
 const fn commands_of(field: FeedbackPatchField) -> (Feedback332Command, Feedback332Command) {
@@ -128,6 +134,10 @@ pub fn configure_feedback(
         return Err(SemanticDaliError::OperationFailed("feedback_not_supported"));
     };
     proved.map_code = map_code;
+    // IEC 62386-332 Table 5
+    if matches!(map, FeedbackOpcodeMap::Ed1) {
+        return Err(SemanticDaliError::OperationFailed(FEEDBACK_UNVERIFIABLE));
+    }
     for field in FeedbackPatchField::ALL {
         if !cmd.patches(field) {
             continue;
@@ -218,6 +228,34 @@ mod tests {
         };
         cmd.patch(field, VALUE);
         cmd
+    }
+
+    #[test]
+    fn an_unprobed_panel_found_on_the_ed1_map_is_refused_before_any_set_frame() {
+        let (address, feature) = (Device103Address::Short(2), InstanceAddress::FeatureNumber(1));
+        let mock = MockDaliTransport::new();
+        let ed1_capability = Feedback332Command::QueryCapability
+            .frame(address, feature, FeedbackOpcodeMap::Ed1)
+            .as_bytes();
+        mock.script_frame24_answer(ed1_capability, feedback_capability::VISIBLE);
+        let (transport, mut controller) = setup_controller(mock);
+        let mut cmd = command_patching(FeedbackPatchField::ActiveBrightness);
+        cmd.opcode_map = FeedbackOpcodeMap::ABSENT_CODE;
+        let mut proved = ConfiguredFeedback::default();
+
+        let outcome = configure_feedback(&mut controller, &cmd, &mut proved);
+
+        assert!(
+            matches!(outcome, Err(SemanticDaliError::OperationFailed(FEEDBACK_UNVERIFIABLE))),
+            "{outcome:?}"
+        );
+        let corrected_capability = Feedback332Command::QueryCapability
+            .frame(address, feature, FeedbackOpcodeMap::DiiaCorrected)
+            .as_bytes();
+        let frames = transport.lock().expect("mock lock").sent_frames24();
+        assert_eq!(frames, [corrected_capability, ed1_capability], "only the probe may reach the wire");
+        assert!(proved.learned_map(cmd.opcode_map), "the probed map must be recorded");
+        assert!(!proved.proved_any());
     }
 
     #[test]

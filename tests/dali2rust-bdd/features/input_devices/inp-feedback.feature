@@ -41,16 +41,16 @@ Feature: Part 332 feedback: configuration over REST, probed dialect, timers
     And the mock transport should have sent no 24-bit frames
 
   @id:INP-073
-  Scenario: The 2017 opcode dialect is probed, recorded and then used for readbacks
+  Scenario: The 2017 opcode dialect is probed and recorded, and a feedback write to it is refused before the wire
     Given the mock bus answers a control-device scan with a device at address 0 holding instance types "1" and an ed1-map feedback answering capability 03
     When input devices are scanned on adapter 0 and the scan succeeds
     And I send a GET request to "/api/v1/adapters/0/input-devices/0"
     Then the JSON pointer "/instances/0/feedback/opcode_map" should be "ed1"
     When the mock transport 24-bit trace is cleared
-    And the mock bus answers 24-bit query "01 FE 36" with "28"
-    And the mock bus answers 24-bit query "01 20 2D" with "28"
-    And I PATCH JSON {"timing":40} to "/api/v1/adapters/0/input-devices/0/instances/0/feedback" and the operation succeeds
-    Then the mock transport 24-bit trace should be exactly "C1 30 28, 01 FE 36, 01 20 12, 01 20 12, 01 20 2D"
+    And I PATCH JSON {"timing":40} to "/api/v1/adapters/0/input-devices/0/instances/0/feedback"
+    Then the response status should be 422
+    And the response body should contain "feedback_unverifiable"
+    And the mock transport should have sent no 24-bit frames
 
   @id:INP-074
   Scenario: Scan records feedback absence honestly

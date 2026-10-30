@@ -13,6 +13,6 @@ mod subscriptions;
 pub mod worker;
 
 pub use bus_out::MQTT_WORKER_REQUIRED_EVENTS;
-pub use intake::{MQTT_WORKER_HANDLED_COMMANDS, MQTT_WORKER_HANDLED_EVENTS};
+pub use intake::{BRIDGE_COALESCE_FROM, MQTT_WORKER_HANDLED_COMMANDS, MQTT_WORKER_HANDLED_EVENTS};
 pub use rule_topics::RuleTopicsReadPort;
 pub use worker::{spawn_mqtt_worker, MqttWorkerPorts};

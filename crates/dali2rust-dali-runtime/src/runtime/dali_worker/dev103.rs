@@ -392,7 +392,8 @@ pub(super) fn handle_103_feedback_configure(
 ) {
     let mut proved = ConfiguredFeedback::default();
     let outcome = configure_feedback(controller, cmd, &mut proved);
-    let recorded = (outcome.is_ok() || proved.proved_any())
+    let learned = proved.proved_any() || proved.learned_map(cmd.opcode_map);
+    let recorded = (outcome.is_ok() || learned)
         && publish_feedback_configured(publisher, adapter_id, correlation_id, cmd, &proved, counters);
     close_configuration(publisher, adapter_id, correlation_id, outcome, recorded, FEEDBACK_CONFIGURED_LOST, counters);
 }
