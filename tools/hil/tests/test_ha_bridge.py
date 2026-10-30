@@ -401,7 +401,8 @@ def _bridge_counters(api):
             "delivered": int(subscriber.get("delivered") or 0),
             "receiver_overflow": int(subscriber.get("receiver_overflow") or 0),
             "bus_coalesced_total": int(mqtt.get("bus_coalesced_total") or 0),
-            "bus_discarded_total": int(mqtt.get("bus_discarded_total") or 0)}
+            "bus_discarded_total": int(mqtt.get("bus_discarded_total") or 0),
+            "bus_backlog_peak": mqtt.get("bus_backlog_peak")}
 
 
 def _bridge_settled(api):
@@ -415,6 +416,16 @@ def _bridge_settled(api):
         elif time.monotonic() - still_since >= BRIDGE_QUIET_S:
             return now
     return last
+
+
+def _backlog_peak(before, after):
+    first, last = before.get("bus_backlog_peak"), after.get("bus_backlog_peak")
+    if first is None or last is None:
+        return "this firmware reports no bus_backlog_peak"
+    if last > first:
+        return "the burst raised the bridge's backlog peak from %d to %d frames" % (first, last)
+    return ("the burst did not raise the bridge's since-boot backlog peak of %d frames, so it "
+            "never left the bridge further behind than earlier traffic had" % last)
 
 
 def _moved(before, after):
@@ -494,8 +505,9 @@ def test_a_group_burst_over_the_announced_park_overflows_no_bridge_inbox(
     assert moved["delivered"] > BRIDGE_INBOX_DEPTH and moved["bus_coalesced_total"], (
         "INCONCLUSIVE, not a product failure: the bridge was delivered %d event(s), %d needed "
         "to outrun its %d-slot inbox, and coalesced %d, so the burst never filled the buffer "
-        "that merges them: %r" % (moved["delivered"], BRIDGE_INBOX_DEPTH + 1,
-                                  BRIDGE_INBOX_DEPTH, moved["bus_coalesced_total"], moved))
+        "that merges them; %s: %r"
+        % (moved["delivered"], BRIDGE_INBOX_DEPTH + 1, BRIDGE_INBOX_DEPTH,
+           moved["bus_coalesced_total"], _backlog_peak(before, after), moved))
 
 
 RAW_CONNECT_S = 30.0

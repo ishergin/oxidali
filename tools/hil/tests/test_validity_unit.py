@@ -839,3 +839,12 @@ def test_a_breached_budget_names_how_it_moves_and_no_closed_record(monkeypatch):
     report = "\n".join(config._hil_validity_report)
     assert report.count(BUDGET_MOVES) == FLOORS_AND_RETRIES and session.exitstatus == 1
     assert "dated" not in report and not re.search(r"ISSUE-[0-9]", report)
+
+
+def test_the_bridge_backlog_peak_counts_only_when_the_burst_raised_it():
+    raised = test_ha_bridge._backlog_peak({"bus_backlog_peak": 17}, {"bus_backlog_peak": 40})
+    assert "raised the bridge's backlog peak from 17 to 40" in raised
+    flat = test_ha_bridge._backlog_peak({"bus_backlog_peak": 40}, {"bus_backlog_peak": 40})
+    assert "did not raise" in flat
+    old = test_ha_bridge._backlog_peak({"bus_backlog_peak": None}, {"bus_backlog_peak": None})
+    assert "reports no bus_backlog_peak" in old

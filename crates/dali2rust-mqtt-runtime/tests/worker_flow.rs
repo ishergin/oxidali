@@ -8,6 +8,7 @@ use dali2rust_bus::{BusChannel, BusConfig, PublishResult};
 use dali2rust_domain::registry::{
     CapabilityFlagsView, HaGroupView, HaInputInstanceView, HaInputView, HaSceneView,
 };
+use dali2rust_mqtt_runtime::BRIDGE_COALESCE_FROM;
 use dali2rust_test_support::{
     command_frame, recv_command_matching, remains_false_for, wait_until,
 };
@@ -21,6 +22,7 @@ const PANEL_BUTTON_CONFIG: &str = "homeassistant/event/ctl1/a0_in0_0/config";
 const PANEL_OCCUPANCY_CONFIG: &str = "homeassistant/binary_sensor/ctl1/a0_in0_1/config";
 const PANEL_CONFIGS: [&str; 2] = [PANEL_BUTTON_CONFIG, PANEL_OCCUPANCY_CONFIG];
 const REPUBLISH_RUN: u64 = 78;
+const COMMITS: u8 = 60;
 
 #[test]
 fn a_backlog_from_a_disabled_period_is_discarded_not_replayed() {
@@ -332,7 +334,7 @@ fn a_burst_of_commits_for_one_lamp_is_coalesced_before_the_broker_sees_it() {
     let counters = Arc::clone(&h.counters);
     wait_until(move || counters.is_connected(), WAIT_S);
 
-    for level in 1..=60u8 {
+    for level in 1..=COMMITS {
         assert_eq!(
             h.publisher.try_publish(BusChannel::Events, runtime_frame(1, level)),
             PublishResult::Queued,
@@ -348,6 +350,13 @@ fn a_burst_of_commits_for_one_lamp_is_coalesced_before_the_broker_sees_it() {
     assert!(
         h.counters.bus_coalesced_total.load(Ordering::Relaxed) > 0,
         "sixty commits for one lamp must supersede each other, not queue"
+    );
+    let peak = h.counters.bus_backlog_peak.load(Ordering::Relaxed);
+    let peak = usize::try_from(peak).unwrap_or(usize::MAX);
+    assert!(
+        (BRIDGE_COALESCE_FROM..=usize::from(COMMITS)).contains(&peak),
+        "the bridge merges only behind a backlog of {BRIDGE_COALESCE_FROM}, so its peak says \
+         how far it fell behind: {peak}"
     );
     let mock = Arc::clone(&h.mock);
     wait_until(

@@ -30,6 +30,7 @@ BDD-конвенции — [`../architecture/05-testing-and-bdd.md`](../architec
 | Поле | Что теперь | Что зарезервировано |
 |---|---|---|
 | `AdapterDto.counters` | `400 unknown_field`; счётчики провода — `stats.dali` | — |
+| `diagnostics.mqtt.publishes_total` | поля нет; публикации моста — `stats.mqtt.publishes_total` | — |
 | `PollerSettingsDto.max_concurrent` | `400 unknown_field`; в полёте всегда одно чтение (`ADR-009`) | значение `4` маски `PollerSettingsUpdateCommand` |
 | `declared_type` / `declared_color_mode` виртуальной лампы | `400 unknown_field`; лампа наследует тип и цвет от устройства | — |
 | `duration_ms` identify | `400 unknown_field`; окно опознания принадлежит гиру | — |

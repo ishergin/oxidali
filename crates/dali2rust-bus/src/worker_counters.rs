@@ -19,3 +19,7 @@ pub fn set_flag(counter: &AtomicU32, up: bool) {
 pub fn mirror(counter: &AtomicU32, total: u32) {
     counter.store(total, Ordering::Relaxed);
 }
+
+pub fn raise(counter: &AtomicU32, value: u32) {
+    counter.fetch_max(value, Ordering::Relaxed);
+}
