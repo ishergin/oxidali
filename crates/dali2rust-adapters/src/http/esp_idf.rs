@@ -1,6 +1,6 @@
 use std::io;
 use std::io::Write as StdWrite;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use esp_idf_svc::handle::RawHandle;
@@ -19,7 +19,8 @@ use super::wire_method::wire_method;
 
 const HTTPD_TASK_STACK_BYTES: usize = 20 * 1024;
 const HTTPD_MAX_OPEN_SOCKETS: usize = 10;
-const SOCKETS_FULL_LOG_EVERY_MS: u32 = 1_000;
+const SOCKETS_FULL_ENTRY_GAP_MS: u32 = 1_000;
+const SOCKETS_FULL_REPEAT_MS: u32 = 60_000;
 
 pub struct HttpdStackReserve(*mut core::ffi::c_void);
 
@@ -321,17 +322,29 @@ fn open_sockets(conn: &EspHttpConnection<'_>) -> Option<usize> {
 }
 
 fn note_socket_pressure(conn: &EspHttpConnection<'_>) {
-    static LAST_LOGGED_MS: AtomicU32 = AtomicU32::new(0);
-    let Some(open) = open_sockets(conn).filter(|open| *open >= HTTPD_MAX_OPEN_SOCKETS) else {
+    let Some(open) = open_sockets(conn) else {
         return;
     };
+    if sockets_full_log_due(open >= HTTPD_MAX_OPEN_SOCKETS) {
+        log::warn!("HTTP: all {open} sockets open; the next connection closes the least recently used");
+    }
+}
+
+fn sockets_full_log_due(full: bool) -> bool {
+    static FULL: AtomicBool = AtomicBool::new(false);
+    static LAST_LOGGED_MS: AtomicU32 = AtomicU32::new(0);
+    let was_full = FULL.swap(full, Ordering::Relaxed);
+    if !full {
+        return false;
+    }
+    let gap_ms = if was_full { SOCKETS_FULL_REPEAT_MS } else { SOCKETS_FULL_ENTRY_GAP_MS };
     let now_ms = dali2rust_platform::liveness::monotonic_ms().max(1);
     let last = LAST_LOGGED_MS.load(Ordering::Relaxed);
-    if last != 0 && now_ms.wrapping_sub(last) < SOCKETS_FULL_LOG_EVERY_MS {
-        return;
+    if last != 0 && now_ms.wrapping_sub(last) < gap_ms {
+        return false;
     }
     LAST_LOGGED_MS.store(now_ms, Ordering::Relaxed);
-    log::warn!("HTTP: all {open} sockets open; the next connection closes the least recently used");
+    true
 }
 
 fn handle_request(

@@ -848,12 +848,11 @@ BOOT_BANNER = ("I (812) dali2rust_adapters::http::esp_idf: HTTP: httpd stack_siz
 SOCKETS_CENSUS = "I (60001) dali2rust_firmware: task stack hwm (B free): httpd=2048"
 
 
-def _transport_report(tmp_path, serial, census=True):
+def _transport_report(tmp_path, serial):
     state = {"ledger": {"http_transport": 1}, "http_sockets_full": validity.http_sockets_full(serial),
+             "stack_min_free": validity.stack_min_free(serial),
              "retry_events": ["http_transport GET health (ConnectionError < ProtocolError < "
                               "ConnectionResetError/ECONNRESET)"]}
-    if census:
-        state["stack_min_free"] = {"httpd": 2048}
     return "\n".join(validity.format_report(state, _budget(tmp_path)))
 
 
@@ -863,8 +862,11 @@ def test_a_transport_retry_is_laid_beside_the_httpd_sockets_that_were_full(tmp_p
     quiet = _transport_report(tmp_path, [BOOT_BANNER, SOCKETS_CENSUS])
     assert "not seen in this run's serial window" in quiet
     assert "does not rule one out" in quiet
-    blind = _transport_report(tmp_path, [BOOT_BANNER], census=False)
+    blind = _transport_report(tmp_path, [BOOT_BANNER])
     assert "carries no stack census" in blind and "not seen" not in blind
+    uncensused = _transport_report(tmp_path, [BOOT_BANNER] + SOCKETS_FULL)
+    assert "httpd sockets full: 1 line(s)" in uncensused
+    assert "carries no stack census" not in uncensused
     assert "serial window not read" in _transport_report(tmp_path, [])
 
 
