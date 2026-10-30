@@ -1,4 +1,5 @@
 pub mod address;
+pub mod bus_unit;
 pub mod command;
 pub mod event;
 pub mod frame;

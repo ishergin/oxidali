@@ -9,8 +9,7 @@ license.workspace = true
 
 [dependencies]
 dali2rust-contracts = { path = "../dali2rust-contracts" }
+dali2rust-dali-phy = { path = "../dali2rust-dali-phy" }
 dali2rust-platform = { path = "../dali2rust-platform" }
 serde = { version = "1", features = ["derive"] }
 
-[dev-dependencies]
-dali2rust-dali-phy = { path = "../dali2rust-dali-phy" }

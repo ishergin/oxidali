@@ -1,6 +1,22 @@
 use crate::dali::dev103::address::{Device103Address, InstanceAddress};
 use crate::dali::dev103::frame::ForwardFrame24;
 
+macro_rules! opcode_enum {
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($variant:ident = $code:literal,)* }) => {
+        $(#[$meta])*
+        #[repr(u8)]
+        $vis enum $name {
+            $($variant = $code,)*
+        }
+
+        impl $name {
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
+        }
+    };
+}
+
+const FIRST_DEVICE_QUERY: u8 = 0x30;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Command103Metadata {
     pub opcode: u8,
@@ -9,81 +25,79 @@ pub struct Command103Metadata {
     pub uses_dtr0: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Device103Command {
-    IdentifyDevice,
-    ResetPowerCycleSeen,
-    Reset,
-    SetShortAddress,
-    EnableWriteMemory,
-    EnableApplicationController,
-    DisableApplicationController,
-    StartQuiescentMode,
-    StopQuiescentMode,
-    EnablePowerCycleNotification,
-    DisablePowerCycleNotification,
-    QueryDeviceStatus,
-    QueryApplicationControllerError,
-    QueryInputDeviceError,
-    QueryMissingShortAddress,
-    QueryVersionNumber,
-    QueryNumberOfInstances,
-    QueryContentDtr0,
-    QueryContentDtr1,
-    QueryContentDtr2,
-    QueryRandomAddressH,
-    QueryRandomAddressM,
-    QueryRandomAddressL,
-    QueryApplicationControlEnabled,
-    QueryOperatingMode,
-    QueryQuiescentMode,
-    QueryPowerCycleNotification,
-    QueryDeviceCapabilities,
-    QueryExtendedVersionNumber,
-    QueryResetState,
+opcode_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Device103Command {
+        IdentifyDevice = 0x00,
+        ResetPowerCycleSeen = 0x01,
+        Reset = 0x10,
+        ResetMemoryBank = 0x11,
+        SetShortAddress = 0x14,
+        EnableWriteMemory = 0x15,
+        EnableApplicationController = 0x16,
+        DisableApplicationController = 0x17,
+        SetOperatingMode = 0x18,
+        AddToDeviceGroups0To15 = 0x19,
+        AddToDeviceGroups16To31 = 0x1A,
+        RemoveFromDeviceGroups0To15 = 0x1B,
+        RemoveFromDeviceGroups16To31 = 0x1C,
+        StartQuiescentMode = 0x1D,
+        StopQuiescentMode = 0x1E,
+        EnablePowerCycleNotification = 0x1F,
+        DisablePowerCycleNotification = 0x20,
+        SavePersistentVariables = 0x21,
+        QueryDeviceStatus = 0x30,
+        QueryApplicationControllerError = 0x31,
+        QueryInputDeviceError = 0x32,
+        QueryMissingShortAddress = 0x33,
+        QueryVersionNumber = 0x34,
+        QueryNumberOfInstances = 0x35,
+        QueryContentDtr0 = 0x36,
+        QueryContentDtr1 = 0x37,
+        QueryContentDtr2 = 0x38,
+        QueryRandomAddressH = 0x39,
+        QueryRandomAddressM = 0x3A,
+        QueryRandomAddressL = 0x3B,
+        ReadMemoryLocation = 0x3C,
+        QueryApplicationControlEnabled = 0x3D,
+        QueryOperatingMode = 0x3E,
+        QueryManufacturerSpecificMode = 0x3F,
+        QueryQuiescentMode = 0x40,
+        QueryDeviceGroups0To7 = 0x41,
+        QueryDeviceGroups8To15 = 0x42,
+        QueryDeviceGroups16To23 = 0x43,
+        QueryDeviceGroups24To31 = 0x44,
+        QueryPowerCycleNotification = 0x45,
+        QueryDeviceCapabilities = 0x46,
+        QueryExtendedVersionNumber = 0x47,
+        QueryResetState = 0x48,
+    }
 }
 
 impl Device103Command {
+    // IEC 62386-103 Table 21
     #[must_use]
     pub const fn metadata(self) -> Command103Metadata {
-        let (opcode, expects_backward, send_twice, uses_dtr0) = match self {
-            Self::IdentifyDevice => (0x00, false, true, false),
-            Self::ResetPowerCycleSeen => (0x01, false, true, false),
-            Self::Reset => (0x10, false, true, false),
-            Self::SetShortAddress => (0x14, false, true, true),
-            Self::EnableWriteMemory => (0x15, false, true, false),
-            Self::EnableApplicationController => (0x16, false, true, false),
-            Self::DisableApplicationController => (0x17, false, true, false),
-            Self::StartQuiescentMode => (0x1D, false, true, false),
-            Self::StopQuiescentMode => (0x1E, false, true, false),
-            Self::EnablePowerCycleNotification => (0x1F, false, true, false),
-            Self::DisablePowerCycleNotification => (0x20, false, true, false),
-            Self::QueryDeviceStatus => (0x30, true, false, false),
-            Self::QueryApplicationControllerError => (0x31, true, false, false),
-            Self::QueryInputDeviceError => (0x32, true, false, false),
-            Self::QueryMissingShortAddress => (0x33, true, false, false),
-            Self::QueryVersionNumber => (0x34, true, false, false),
-            Self::QueryNumberOfInstances => (0x35, true, false, false),
-            Self::QueryContentDtr0 => (0x36, true, false, false),
-            Self::QueryContentDtr1 => (0x37, true, false, false),
-            Self::QueryContentDtr2 => (0x38, true, false, false),
-            Self::QueryRandomAddressH => (0x39, true, false, false),
-            Self::QueryRandomAddressM => (0x3A, true, false, false),
-            Self::QueryRandomAddressL => (0x3B, true, false, false),
-            Self::QueryApplicationControlEnabled => (0x3D, true, false, false),
-            Self::QueryOperatingMode => (0x3E, true, false, false),
-            Self::QueryQuiescentMode => (0x40, true, false, false),
-            Self::QueryPowerCycleNotification => (0x45, true, false, false),
-            Self::QueryDeviceCapabilities => (0x46, true, false, false),
-            Self::QueryExtendedVersionNumber => (0x47, true, false, true),
-            Self::QueryResetState => (0x48, true, false, false),
-        };
+        let opcode = self as u8;
+        let expects_backward = opcode >= FIRST_DEVICE_QUERY;
         Command103Metadata {
             opcode,
             expects_backward,
-            send_twice,
-            uses_dtr0,
+            send_twice: !expects_backward,
+            uses_dtr0: matches!(
+                self,
+                Self::ResetMemoryBank
+                    | Self::SetShortAddress
+                    | Self::SetOperatingMode
+                    | Self::ReadMemoryLocation
+                    | Self::QueryExtendedVersionNumber
+            ),
         }
+    }
+
+    #[must_use]
+    pub fn from_opcode(opcode: u8) -> Option<Self> {
+        Self::ALL.iter().copied().find(|command| *command as u8 == opcode)
     }
 
     #[must_use]
@@ -169,47 +183,47 @@ impl Instance103Command {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Special103Command {
-    Terminate,
-    Initialise,
-    Randomise,
-    Compare,
-    Withdraw,
-    SearchAddrH,
-    SearchAddrM,
-    SearchAddrL,
-    ProgramShortAddress,
-    VerifyShortAddress,
-    QueryShortAddress,
-    WriteMemoryLocation,
-    WriteMemoryLocationNoReply,
-    Dtr0,
-    Dtr1,
-    Dtr2,
+opcode_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Special103Command {
+        Terminate = 0x00,
+        Initialise = 0x01,
+        Randomise = 0x02,
+        Compare = 0x03,
+        Withdraw = 0x04,
+        SearchAddrH = 0x05,
+        SearchAddrM = 0x06,
+        SearchAddrL = 0x07,
+        ProgramShortAddress = 0x08,
+        VerifyShortAddress = 0x09,
+        QueryShortAddress = 0x0A,
+        WriteMemoryLocation = 0x20,
+        WriteMemoryLocationNoReply = 0x21,
+        Dtr0 = 0x30,
+        Dtr1 = 0x31,
+        Dtr2 = 0x32,
+        SendTestframe = 0x33,
+    }
 }
 
 impl Special103Command {
+    // IEC 62386-103 Table 22
     #[must_use]
     pub const fn selector(self) -> (u8, bool, bool) {
-        match self {
-            Self::Terminate => (0x00, false, false),
-            Self::Initialise => (0x01, false, true),
-            Self::Randomise => (0x02, false, true),
-            Self::Compare => (0x03, true, false),
-            Self::Withdraw => (0x04, false, false),
-            Self::SearchAddrH => (0x05, false, false),
-            Self::SearchAddrM => (0x06, false, false),
-            Self::SearchAddrL => (0x07, false, false),
-            Self::ProgramShortAddress => (0x08, false, false),
-            Self::VerifyShortAddress => (0x09, true, false),
-            Self::QueryShortAddress => (0x0A, true, false),
-            Self::WriteMemoryLocation => (0x20, true, false),
-            Self::WriteMemoryLocationNoReply => (0x21, false, false),
-            Self::Dtr0 => (0x30, false, false),
-            Self::Dtr1 => (0x31, false, false),
-            Self::Dtr2 => (0x32, false, false),
-        }
+        let expects_backward = matches!(
+            self,
+            Self::Compare
+                | Self::VerifyShortAddress
+                | Self::QueryShortAddress
+                | Self::WriteMemoryLocation
+        );
+        let send_twice = matches!(self, Self::Initialise | Self::Randomise);
+        (self as u8, expects_backward, send_twice)
+    }
+
+    #[must_use]
+    pub fn from_selector(selector: u8) -> Option<Self> {
+        Self::ALL.iter().copied().find(|command| *command as u8 == selector)
     }
 
     #[must_use]
@@ -670,38 +684,7 @@ mod tests {
 
     #[test]
     fn every_device_and_instance_opcode_is_unique_within_its_family() {
-        let device = [
-            Device103Command::IdentifyDevice,
-            Device103Command::ResetPowerCycleSeen,
-            Device103Command::Reset,
-            Device103Command::SetShortAddress,
-            Device103Command::EnableWriteMemory,
-            Device103Command::EnableApplicationController,
-            Device103Command::DisableApplicationController,
-            Device103Command::StartQuiescentMode,
-            Device103Command::StopQuiescentMode,
-            Device103Command::EnablePowerCycleNotification,
-            Device103Command::DisablePowerCycleNotification,
-            Device103Command::QueryDeviceStatus,
-            Device103Command::QueryApplicationControllerError,
-            Device103Command::QueryInputDeviceError,
-            Device103Command::QueryMissingShortAddress,
-            Device103Command::QueryVersionNumber,
-            Device103Command::QueryNumberOfInstances,
-            Device103Command::QueryContentDtr0,
-            Device103Command::QueryContentDtr1,
-            Device103Command::QueryContentDtr2,
-            Device103Command::QueryRandomAddressH,
-            Device103Command::QueryRandomAddressM,
-            Device103Command::QueryRandomAddressL,
-            Device103Command::QueryApplicationControlEnabled,
-            Device103Command::QueryOperatingMode,
-            Device103Command::QueryQuiescentMode,
-            Device103Command::QueryPowerCycleNotification,
-            Device103Command::QueryDeviceCapabilities,
-            Device103Command::QueryExtendedVersionNumber,
-            Device103Command::QueryResetState,
-        ];
+        let device = Device103Command::ALL;
         let mut opcodes: Vec<u8> = device.iter().map(|c| c.metadata().opcode).collect();
         let count = opcodes.len();
         opcodes.sort_unstable();
@@ -740,6 +723,18 @@ mod tests {
                 "only queries moved between editions"
             );
         }
+    }
+
+    #[test]
+    fn every_opcode_names_the_command_that_carries_it() {
+        for command in Device103Command::ALL {
+            assert_eq!(Device103Command::from_opcode(command.metadata().opcode), Some(*command));
+        }
+        for command in Special103Command::ALL {
+            assert_eq!(Special103Command::from_selector(command.selector().0), Some(*command));
+        }
+        assert_eq!(Device103Command::from_opcode(0x02), None);
+        assert_eq!(Special103Command::from_selector(0x0B), None);
     }
 
     #[test]

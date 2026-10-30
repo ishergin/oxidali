@@ -59,7 +59,7 @@ pub const fn answer_entry_index(frame: [u8; 3], short_address: u8, groups: u32) 
 }
 
 #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
-const fn addresses_the_device(address: u8, short_address: u8, groups: u32) -> bool {
+pub const fn addresses_the_device(address: u8, short_address: u8, groups: u32) -> bool {
     match address {
         BROADCAST => true,
         BROADCAST_UNADDRESSED => short_address == NO_SHORT_ADDRESS,
