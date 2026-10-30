@@ -61,7 +61,7 @@ fn run_wire_payload(
     match result {
         Ok(res) => Some(res),
         Err(WireFailure::Held(cause)) => {
-            answer_each_failed(publisher, &[correlation_id], counters, (ErrorCode::Conflict, cause.message()));
+            answer_each_refused(publisher, &[correlation_id], counters, (ErrorCode::Conflict, cause.message()));
             None
         }
         Err(failure) => {

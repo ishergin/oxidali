@@ -181,9 +181,10 @@ pub(super) fn reread_physical_minimum(
     address: DaliAddress,
     confirmed: &mut ConfirmedWritableAttributes,
 ) -> Result<(), SemanticDaliError> {
-    if let Ok(v) = send_standard_query(controller, address, StandardCommand::QueryPhysicalMinimum)
-    {
-        confirmed.physical_minimum_readback = v;
+    match send_standard_query(controller, address, StandardCommand::QueryPhysicalMinimum) {
+        Ok(v) => confirmed.physical_minimum_readback = v,
+        Err(error) if error.is_held() => return Err(error),
+        Err(_) => {}
     }
     Ok(())
 }

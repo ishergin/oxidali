@@ -175,10 +175,17 @@ answer to any next one, and the slot no longer waits for a task.
   last `START`, and a power-on clears it.
 - The gate is read before every frame, not only when a command starts: a command already
   on the wire when quiescence begins, or when the controller is made passive, stops at
-  its next frame with the same refusal. A started transaction or step finishes, because
-  nothing yields inside one; our own Part 103 commissioning is one transaction from its
-  `START QUIESCENT MODE` to its `STOP QUIESCENT MODE`, so it ends the quiescence it began
-  even when the controller is made passive mid-run.
+  its next frame. A write or a programming ends with the gate's refusal; an attribute
+  read or a bus-health probe ends as a yield (`preempted`). A started transaction or
+  step finishes, because nothing yields inside one.
+- Our own Part 103 commissioning is not stopped by the controller being made passive
+  once it has started, so it ends the quiescence it began. Another controller's
+  `START QUIESCENT MODE` stops it at its next unit, and it then sends neither
+  `TERMINATE` nor `STOP QUIESCENT MODE`: that controller holds the bus quiet now.
+- A hold inside a 102 discovery verify session or a commissioning search leaves the gear
+  it initialised in initialisation, and the gear withdrawn so far withdrawn, until their
+  initialisation timer lapses or another controller ends it, since no `TERMINATE` may be
+  sent while the hold lasts.
 - The model reports each `START` with its deadline and each end, and the registry holds
   the deadline in RAM; the gate, the poller and the HCL scheduler read it, and it lapses
   at that deadline even if the report of a `STOP` is lost.

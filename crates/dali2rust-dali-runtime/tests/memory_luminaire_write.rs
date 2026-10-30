@@ -454,6 +454,28 @@ impl WireHold for QuiescentOnceUnlocked {
     }
 }
 
+struct AlwaysQuiescent;
+
+impl WireHold for AlwaysQuiescent {
+    fn held(&self) -> Option<HoldCause> {
+        Some(HoldCause::Quiescent)
+    }
+}
+
+// IEC 62386-103 §9.9.3
+#[test]
+fn a_hold_before_the_header_is_read_names_the_hold_and_not_the_header() {
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let bus = Arc::new(Mutex::new(sim));
+    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
+    let hold: Arc<dyn WireHold> = Arc::new(AlwaysQuiescent);
+    let outcome = controller.with_wire_hold(hold, |c| run_write(c, identity, &year(YEAR)));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, "controller_quiescent"));
+    assert!(bus.lock().expect("bus").sent_frames().is_empty());
+}
+
 // IEC 62386-103 §9.9.3
 // IEC 62386-102 §9.10.2
 #[test]

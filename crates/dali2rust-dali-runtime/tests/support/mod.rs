@@ -280,6 +280,7 @@ pub enum SentFrames {
     Of24(usize),
     Of16(usize),
     AfterQueries(usize),
+    AtQuery(usize),
 }
 
 pub struct HeldAfter {
@@ -300,6 +301,7 @@ impl ReadPortDouble {
                 SentFrames::Of24(frames) => mock.sent_frames24().len() >= frames,
                 SentFrames::Of16(frames) => mock.sent_frames().len() >= frames,
                 SentFrames::AfterQueries(queries) => held.queries.fetch_add(1, Ordering::SeqCst) >= queries,
+                SentFrames::AtQuery(query) => held.queries.fetch_add(1, Ordering::SeqCst) == query,
             }
         })
     }

@@ -33,6 +33,7 @@ use dali2rust_domain::dali::dev103::bus_unit::TestFrame;
 use crate::runtime::required_publish::Kind as PublishKind;
 use crate::runtime::executor::arbitration;
 use crate::runtime::executor::bus_unit;
+use crate::runtime::executor::held_cause_of;
 use crate::runtime::executor::bus_health::probe_bus_health;
 use crate::runtime::executor::{
     apply_broadcast_target_state, apply_group_target_state, apply_short_target_state,
@@ -526,11 +527,14 @@ fn handle_arbitration_probe(
     cmd: &dali2rust_contracts::msg::Dali103ArbitrationProbeCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let Ok(owned) = arbitration::probe_application_controller(controller) else {
-        counters
-            .arbitration_probe_failed
-            .fetch_add(1, Ordering::Relaxed);
-        return;
+    let owned = match arbitration::probe_application_controller(controller) {
+        Ok(owned) => owned,
+        Err(error) => {
+            if !error.is_held() {
+                counters.arbitration_probe_failed.fetch_add(1, Ordering::Relaxed);
+            }
+            return;
+        }
     };
     let ev = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -553,7 +557,7 @@ fn handle_test_frame(
     counters: &DaliWorkerCounters,
 ) {
     let request = TestFrame { data: cmd.data, dtr: cmd.dtr };
-    let sent = bus_unit::send_test_frame(controller, request).is_ok();
+    let sent = bus_unit::send_test_frame(controller, request).map_err(|bus_unit::TestFrameFailed(held)| held);
     confirm_sent(sent, publisher, correlation_id, counters);
 }
 
@@ -565,16 +569,25 @@ fn handle_power_notification(
     cmd: &dali2rust_contracts::msg::Dali103PowerNotificationCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let sent = controller.send_frame24(cmd.frame, false).is_ok();
+    let sent = controller.send_frame24(cmd.frame, false).map(drop).map_err(|error| held_cause_of(&error));
     confirm_sent(sent, publisher, correlation_id, counters);
 }
 
-fn confirm_sent(sent: bool, publisher: &BusPublisher, correlation_id: u64, counters: &DaliWorkerCounters) {
-    if sent {
-        publish_confirmation_ok(publisher, correlation_id, counters);
-    } else {
-        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
-        emit_execution_failed(publisher, correlation_id, counters);
+fn confirm_sent(
+    sent: Result<(), Option<HoldCause>>,
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    counters: &DaliWorkerCounters,
+) {
+    match sent {
+        Ok(()) => publish_confirmation_ok(publisher, correlation_id, counters),
+        Err(Some(cause)) => {
+            answer_each_refused(publisher, &[correlation_id], counters, (ErrorCode::Conflict, cause.message()));
+        }
+        Err(None) => {
+            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+            emit_execution_failed(publisher, correlation_id, counters);
+        }
     }
 }
 

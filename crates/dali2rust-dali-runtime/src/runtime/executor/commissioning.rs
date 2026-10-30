@@ -67,6 +67,7 @@ pub fn commission_next_unaddressed_with_retry_budget(
         {
             Ok(result) => return Ok(result),
             Err(AttemptFailure::GearWithdrawn(error)) => return Err(error),
+            Err(AttemptFailure::SearchRepeatable(error)) if error.is_held() => return Err(error),
             Err(AttemptFailure::SearchRepeatable(_)) if attempt + 1 < attempts => continue,
             Err(AttemptFailure::SearchRepeatable(_)) => {
                 return Err(SemanticDaliError::OperationFailed("bus_contended"))
@@ -94,29 +95,27 @@ fn commission_next_unaddressed_once(
         )));
     };
 
-    set_search_address(controller, random_address).map_err(AttemptFailure::SearchRepeatable)?;
-    let encoded_short = encode_program_short_address(short_address);
-    send_special(
-        controller,
-        SpecialCommand::ProgramShortAddress(encoded_short),
-    )
-    .map_err(AttemptFailure::SearchRepeatable)?;
-    if !send_special_response(
-        controller,
-        SpecialCommand::VerifyShortAddress(encoded_short),
-    )
-    .map_err(AttemptFailure::SearchRepeatable)?
-    .is_yes()
-    {
-        return Err(AttemptFailure::SearchRepeatable(
-            SemanticDaliError::OperationFailed("verify_short_address_failed"),
-        ));
-    }
-    send_special(controller, SpecialCommand::Withdraw).map_err(AttemptFailure::SearchRepeatable)?;
+    controller
+        .transaction_exempt(|controller| program_found_gear(controller, random_address, short_address))
+        .map_err(AttemptFailure::SearchRepeatable)?;
 
     detect_programmed_device(controller, short_address, detect_retries)
         .map(Some)
         .map_err(AttemptFailure::GearWithdrawn)
+}
+
+fn program_found_gear(
+    controller: &mut impl DaliApplicationController,
+    random_address: u32,
+    short_address: u8,
+) -> Result<(), SemanticDaliError> {
+    set_search_address(controller, random_address)?;
+    let encoded_short = encode_program_short_address(short_address);
+    send_special(controller, SpecialCommand::ProgramShortAddress(encoded_short))?;
+    if !send_special_response(controller, SpecialCommand::VerifyShortAddress(encoded_short))?.is_yes() {
+        return Err(SemanticDaliError::OperationFailed("verify_short_address_failed"));
+    }
+    send_special(controller, SpecialCommand::Withdraw)
 }
 
 fn detect_programmed_device(
@@ -387,7 +386,7 @@ fn run_write_step(
                     "search_address does not fit in 24 bits",
                 ));
             }
-            set_search_address(controller, addr)
+            controller.transaction_exempt(|controller| set_search_address(controller, addr))
         }
         CommissioningStep::ProgramShortAddress => {
             let short = require_short(short_address, "program-short-address")?;

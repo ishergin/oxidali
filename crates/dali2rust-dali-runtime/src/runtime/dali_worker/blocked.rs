@@ -70,7 +70,7 @@ impl GateHolds {
     }
 
     pub(super) fn for_frame(&self, frame: &BusFrame) -> Arc<dyn WireHold> {
-        let admitted = matches!(frame, BusFrame::Command(ce) if passive_allowed(&ce.payload));
+        let admitted = matches!(frame, BusFrame::Command(ce) if passive_admitted_once_started(&ce.payload));
         Arc::clone(if admitted { &self.passive_allowed } else { &self.strict })
     }
 }
@@ -101,6 +101,11 @@ fn refuse_every_frame(
 
 // DiiA 351 §7
 // IEC 62386-103 §9.9.1, §9.12.2, §12.3.16
+// IEC 62386-103 §9.9.1, §9.9.3
+fn passive_admitted_once_started(payload: &BusCommandPayload) -> bool {
+    passive_allowed(payload) || matches!(payload, BusCommandPayload::Dali103CommissionCommand(_))
+}
+
 fn passive_allowed(payload: &BusCommandPayload) -> bool {
     match payload {
         BusCommandPayload::Dali103ArbitrationProbeCommand(_)

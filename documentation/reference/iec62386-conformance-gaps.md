@@ -132,12 +132,15 @@ Another controller's `SEND TESTFRAME` puts its frame on the wire at the priority
 names, in either role. After every boot the controller sends `POWER NOTIFICATION` while
 `powerCycleNotification` is ENABLED.
 
-Two deviations are `ACCEPTED`, both decided in
+Three deviations are `ACCEPTED`. Two are decided in
 [ADR-018](../architecture/decisions/ADR-018-controller-redundancy.md): a passive standby
 still sends the arbitration probe, which is how it finds an unowned bus, although 103
 §9.9.1 allows a passive controller no forward frame but the power notification; and the
 answer lapses with the liveness lease, so a wedged controller stops holding the bus,
-although 103 §11.6.16 ties it to `applicationActive` alone.
+although 103 §11.6.16 ties it to `applicationActive` alone. The third is decided in
+ADR-030: our own Part 103 commissioning, once started, runs on after the controller is
+made passive, so it ends the quiescent mode it began rather than leaving the bus quiet
+until the 15-minute timer lapses.
 
 Not built for the controller as a bus unit: a proven latency
 for `SEND TESTFRAME`, which test 12.3.16 bounds by one settling time; the identification

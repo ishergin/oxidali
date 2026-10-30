@@ -1,11 +1,9 @@
 use super::*;
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, setup_controller, short_address, short_raw_query_frame,
-    wire_counters,
+    wire_counters, HeldWhenScriptLeft,
 };
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_domain::dali::controller::WireHold;
-use dali2rust_domain::dali::frame::HoldCause;
 use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_contracts::msg::ErrorCode;
@@ -1229,18 +1227,6 @@ fn the_colour_mode_follows_the_one_active_type_bit_and_is_unknown_for_several() 
         (0xFF, ColorMode::Unknown),
     ] {
         assert_eq!(color_mode_from_status(status), mode, "status {status:#04x}");
-    }
-}
-
-struct HeldWhenScriptLeft {
-    transport: Arc<std::sync::Mutex<MockDaliTransport>>,
-    left: usize,
-}
-
-impl WireHold for HeldWhenScriptLeft {
-    fn held(&self) -> Option<HoldCause> {
-        let remaining = self.transport.lock().expect("mock lock").scripted_exchanges_remaining();
-        (remaining <= self.left).then_some(HoldCause::Quiescent)
     }
 }
 

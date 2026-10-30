@@ -1,17 +1,19 @@
 use dali2rust_domain::dali::dev103::bus_unit::{TestFrame, TestFrameBits};
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::ses::TransactionPriority;
 use dali2rust_domain::dali::DaliApplicationController;
 
+use crate::runtime::executor::held_cause_of;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TestFrameFailed;
+pub struct TestFrameFailed(pub Option<HoldCause>);
 
 // IEC 62386-103 §11.10.21
 pub fn send_test_frame(
     controller: &mut impl DaliApplicationController,
     request: TestFrame,
 ) -> Result<(), TestFrameFailed> {
-    let class = TransactionPriority::from_priority(request.priority()).ok_or(TestFrameFailed)?;
+    let class = TransactionPriority::from_priority(request.priority()).ok_or(TestFrameFailed(None))?;
     controller.with_wire_class(Some(class), |c| {
         if request.in_transaction() {
             c.transaction(|c| send_each(c, request))
@@ -33,16 +35,13 @@ fn send_one(
     bits: TestFrameBits,
 ) -> Result<(), TestFrameFailed> {
     let sent = match bits {
-        TestFrameBits::Forward24(frame) => controller.send_frame24(frame, false).is_ok(),
-        TestFrameBits::Forward16([address, opcode]) => {
-            controller.send_raw(ForwardFrame::new(address, opcode), false).is_ok()
-        }
+        TestFrameBits::Forward24(frame) => controller.send_frame24(frame, false).map(drop).map_err(|e| held_cause_of(&e)),
+        TestFrameBits::Forward16([address, opcode]) => controller
+            .send_raw(ForwardFrame::new(address, opcode), false)
+            .map(drop)
+            .map_err(|e| held_cause_of(&e)),
     };
-    if sent {
-        Ok(())
-    } else {
-        Err(TestFrameFailed)
-    }
+    sent.map_err(TestFrameFailed)
 }
 
 #[cfg(test)]
@@ -120,7 +119,7 @@ mod tests {
                 Box::new(AdvancingClock::new(CLOCK_STEP_MS)),
             );
             let sent = send_test_frame(&mut controller, TestFrame { data, dtr: [1, 2, 3] });
-            assert_eq!(sent, Err(TestFrameFailed), "{data:#04x}");
+            assert_eq!(sent, Err(TestFrameFailed(None)), "{data:#04x}");
             assert!(transport.lock().unwrap().sent_frames24().is_empty());
         }
     }
