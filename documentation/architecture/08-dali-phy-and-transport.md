@@ -167,8 +167,8 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   supervisor or a stalled drain silences the answer within one lease, and a lease nobody
   rewrites reads alive again for at most one lease per wrap of the counter.
 - The interrupt stages the answer in the answer cell under the capture's bus epoch, which
-  only a forward frame moves, ours or a foreign one. The slot is counted from that frame's
-  last edge in every bus state: the answer goes out on the tick the count reaches the
+  only a forward frame moves, ours or a foreign one. The slot is counted from the
+  capture's last edge in every bus state: the answer goes out on the tick the count reaches the
   Table 20 target (`answer_gate`), ahead of any forward frame of ours, and is discarded
   once the window has passed. A backward frame or a violation captured meanwhile neither
   voids it nor moves its slot.
