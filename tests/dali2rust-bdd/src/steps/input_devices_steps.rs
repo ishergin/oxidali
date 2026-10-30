@@ -229,7 +229,7 @@ async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     );
 }
 
-// RULE-065 RULE-066 SET-DALI-012 SET-DALI-013
+// RULE-065 RULE-066 SET-DALI-012 SET-DALI-013 SET-DALI-014
 #[then(regex = r#"^the mock transport 24-bit trace should eventually be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_eventually_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);
@@ -316,7 +316,7 @@ async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();
 }
 
-// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094 INP-098 SET-DALI-014
+// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094 INP-098
 #[then("the mock transport should have sent no 24-bit frames")]
 async fn then_no_frames24(world: &mut DaliWorld) {
     let mock = world.dali_mock();

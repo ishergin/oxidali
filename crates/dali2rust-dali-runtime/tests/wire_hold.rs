@@ -1,24 +1,89 @@
 mod support;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_bus::{BusChannel, BusFrame, BusId, CorrelationIdAllocator};
-use dali2rust_contracts::msg::{Dali103ScanCommand, ErrorCode, OperationWorkerSignal, Origin};
+use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, BusSubscriberRx, CorrelationIdAllocator};
+use dali2rust_contracts::msg::{
+    BusCommandPayload, Dali103CommissionCommand, Dali103ScanCommand, DaliBusHealthProbeCommand, DaliCommandPayload, DaliProgramGroupMembershipCommand, DaliProgramTarget, ErrorCode,
+    GroupMembershipAction, OperationWorkerSignal, Origin,
+};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_dali_runtime::{spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock};
+use dali2rust_dali_runtime::runtime::executor::PROGRAM_VERIFY_REPAIRS;
+use dali2rust_domain::dali::dev103::{Device103Address, Device103Command};
+use dali2rust_dali_runtime::{
+    spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock, DALI_WORKER_HANDLED_COMMANDS,
+};
 use dali2rust_platform::dali::WireActivity;
 use dali2rust_test_support::publish_queued;
-use support::{next_signal, spawn_signal_bus, HeldAfter, ReadPortDouble};
+use support::{next_signal, HeldAfter, ReadPortDouble, SentFrames, SIGNAL_DEADLINE};
 
-const SCAN_CORRELATION: u64 = 610;
+const HELD_CORRELATION: u64 = 610;
 const FRAMES_BEFORE_THE_HOLD: usize = 5;
 const SCANNED_ADDRESSES: usize = 64;
+const SHORT: u8 = 4;
+const GROUP: u8 = 3;
+const SEND_TWICE: usize = 2;
+const GROUP_QUERIES: usize = 2;
+const DRIVE_FRAMES: usize = SEND_TWICE + GROUP_QUERIES;
+const DRIVES: usize = 1 + PROGRAM_VERIFY_REPAIRS as usize;
+const NOT_IN_THE_GROUP: u8 = 0x00;
+const GATE_QUERIES: usize = 2;
+const START_QUIESCENT_SENT_TWICE: usize = 2;
+const RAW_ADDRESS: u8 = 0xFF;
+const RAW_OFF: u8 = 0x00;
+const WORKER_INBOX: usize = 16;
+const ANSWER_INBOX: usize = 64;
+const FIRST_PROBE_QUERY: usize = 1;
 
-fn scan_held_after(frames24: usize, passive: bool) -> (Arc<Mutex<MockDaliTransport>>, (ErrorCode, String)) {
-    let (_host, publisher, worker_commands, signals) = spawn_signal_bus();
+#[derive(Clone, Copy)]
+enum Answer {
+    Operation,
+    Confirmation,
+}
+
+fn scan() -> BusCommandPayload {
+    Dali103ScanCommand { registry_adapter_id: 0 }.into()
+}
+
+type Held = (Arc<Mutex<MockDaliTransport>>, Result<(), (ErrorCode, String)>, Arc<DaliWorkerCounters>);
+
+fn scan_held_after(frames24: usize, passive: bool) -> Held {
+    held_after(scan(), Answer::Operation, SentFrames::Of24(frames24), passive)
+}
+
+fn group_add_held_after(frames16: usize) -> Held {
+    let add = DaliProgramGroupMembershipCommand {
+        registry_adapter_id: 0,
+        target: DaliProgramTarget::Short { short_address: SHORT },
+        group_id: GROUP,
+        action: GroupMembershipAction::Add,
+    };
+    held_after(add.into(), Answer::Confirmation, SentFrames::Of16(frames16), false)
+}
+
+fn held_after(
+    command: BusCommandPayload,
+    answer: Answer,
+    sent: SentFrames,
+    passive: bool,
+) -> Held {
+    let (_host, publisher, (worker_commands, signals, confirmations)) = BusHost::spawn(BusConfig::default(), |reg| {
+        (
+            reg.subscribe_commands(WORKER_INBOX, DALI_WORKER_HANDLED_COMMANDS),
+            reg.subscribe_events(ANSWER_INBOX, &["OperationWorkerSignalEvent"]),
+            reg.subscribe_confirmations(ANSWER_INBOX),
+        )
+    });
     let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
-    let held_after = HeldAfter { transport: Arc::clone(&transport), frames24, passive };
+    if matches!(answer, Answer::Confirmation) {
+        transport.lock().expect("mock lock").set_persistent_response(NOT_IN_THE_GROUP);
+    }
+    let queries = AtomicUsize::new(0);
+    let held_after = HeldAfter { transport: Arc::clone(&transport), sent, passive, queries };
+    let counters = Arc::new(DaliWorkerCounters::default());
     spawn_dali_worker(
         worker_commands,
         DaliController::new(Arc::clone(&transport), Box::new(StdClock::new())),
@@ -26,37 +91,119 @@ fn scan_held_after(frames24: usize, passive: bool) -> (Arc<Mutex<MockDaliTranspo
         Arc::new(ReadPortDouble { held_after: Some(held_after), ..ReadPortDouble::default() }),
         publisher.clone(),
         BusId::default(),
-        Arc::new(DaliWorkerCounters::default()),
+        Arc::clone(&counters),
         Arc::new(WireActivity::new()),
         Arc::new(CorrelationIdAllocator::new()),
     );
-    let scan = dali2rust_contracts::bus::command_envelope(
+    let command = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
-        SCAN_CORRELATION,
+        HELD_CORRELATION,
         BusId::default().0,
         Some(Origin::Api),
-        Dali103ScanCommand { registry_adapter_id: 0 },
+        command,
     );
-    publish_queued(&publisher, BusChannel::Commands, BusFrame::command(scan));
-    let terminal = std::iter::from_fn(|| next_signal(&signals, SCAN_CORRELATION))
+    publish_queued(&publisher, BusChannel::Commands, BusFrame::command(command));
+    let outcome = match answer {
+        Answer::Operation => operation_outcome(&signals),
+        Answer::Confirmation => Err(confirmed_failure(&confirmations)),
+    };
+    assert_eq!(counters.commands_handled.load(Ordering::SeqCst), 1, "the command passed the gates");
+    (transport, outcome, counters)
+}
+
+fn operation_outcome(signals: &BusSubscriberRx) -> Result<(), (ErrorCode, String)> {
+    let terminal = std::iter::from_fn(|| next_signal(signals, HELD_CORRELATION))
         .find(|signal| signal.signal != OperationWorkerSignal::WorkerStarted)
-        .expect("the scan ends with an outcome");
-    assert_eq!(terminal.signal, OperationWorkerSignal::WorkerFailed);
-    let error = terminal.error.expect("a failed scan names its cause");
-    (transport, (error.code, error.message.as_str().to_owned()))
+        .expect("the command ends with an outcome");
+    if terminal.signal == OperationWorkerSignal::WorkerSucceeded {
+        return Ok(());
+    }
+    let error = terminal.error.expect("a failed command names its cause");
+    Err((error.code, error.message.as_str().to_owned()))
+}
+
+fn confirmed_failure(confirmations: &BusSubscriberRx) -> (ErrorCode, String) {
+    let deadline = Instant::now() + SIGNAL_DEADLINE;
+    loop {
+        let remaining = deadline.checked_duration_since(Instant::now()).expect("the command is confirmed in time");
+        if let Ok(BusFrame::Confirmation(confirmed)) = confirmations.recv_timeout(remaining) {
+            if confirmed.meta.correlation_id == HELD_CORRELATION {
+                let error = confirmed.confirmation.error.as_ref().expect("a refused command names its cause");
+                return (error.code, error.message.as_str().to_owned());
+            }
+        }
+    }
 }
 
 #[test]
 fn another_controller_s_quiescent_mode_stops_a_scan_already_on_the_wire() {
-    let (transport, cause) = scan_held_after(FRAMES_BEFORE_THE_HOLD, false);
-    assert_eq!(cause, (ErrorCode::Conflict, "controller_quiescent".to_owned()));
+    let (transport, cause, _) = scan_held_after(FRAMES_BEFORE_THE_HOLD, false);
+    assert_eq!(cause, Err((ErrorCode::Conflict, "controller_quiescent".to_owned())));
     let sent = transport.lock().expect("mock lock").sent_frames24().len();
     assert_eq!(sent, FRAMES_BEFORE_THE_HOLD, "no frame after the START, of {SCANNED_ADDRESSES} addresses");
 }
 
 #[test]
 fn a_controller_made_passive_mid_scan_sends_nothing_more() {
-    let (transport, cause) = scan_held_after(FRAMES_BEFORE_THE_HOLD, true);
-    assert_eq!(cause, (ErrorCode::Conflict, "controller_passive".to_owned()));
+    let (transport, cause, _) = scan_held_after(FRAMES_BEFORE_THE_HOLD, true);
+    assert_eq!(cause, Err((ErrorCode::Conflict, "controller_passive".to_owned())));
     assert_eq!(transport.lock().expect("mock lock").sent_frames24().len(), FRAMES_BEFORE_THE_HOLD);
+}
+
+#[test]
+fn a_hold_between_a_group_add_and_its_read_back_is_reported_not_taken_for_silence() {
+    let (transport, cause, _) = group_add_held_after(SEND_TWICE);
+    assert_eq!(cause, Err((ErrorCode::Conflict, "controller_quiescent".to_owned())));
+    assert_eq!(transport.lock().expect("mock lock").sent_frames().len(), SEND_TWICE, "only the ADD went out");
+}
+
+#[test]
+fn a_hold_before_a_repair_ends_the_programming_with_its_cause() {
+    let (transport, cause, _) = group_add_held_after(DRIVE_FRAMES);
+    assert_eq!(cause, Err((ErrorCode::Conflict, "controller_quiescent".to_owned())));
+    assert_eq!(transport.lock().expect("mock lock").sent_frames().len(), DRIVE_FRAMES, "no repair went out");
+}
+
+#[test]
+fn a_hold_before_the_last_repair_s_read_back_is_reported_not_taken_for_silence() {
+    let last_add = DRIVES * DRIVE_FRAMES - GROUP_QUERIES;
+    let (transport, cause, _) = group_add_held_after(last_add);
+    assert_eq!(cause, Err((ErrorCode::Conflict, "controller_quiescent".to_owned())));
+    assert_eq!(transport.lock().expect("mock lock").sent_frames().len(), last_add);
+}
+
+#[test]
+fn a_raw_frame_held_after_the_gates_is_refused_with_its_cause() {
+    let raw = DaliCommandPayload {
+        wire_address: RAW_ADDRESS,
+        command: RAW_OFF,
+        repeat_count: 1,
+        raw_mode: true,
+        raw_expects_backward: false,
+    };
+    let (transport, cause, _) = held_after(raw.into(), Answer::Confirmation, SentFrames::AfterQueries(GATE_QUERIES), false);
+    assert_eq!(cause, Err((ErrorCode::Conflict, "controller_quiescent".to_owned())));
+    assert!(transport.lock().expect("mock lock").sent_frames().is_empty());
+}
+
+#[test]
+fn a_bus_health_probe_held_between_its_queries_yields_and_is_not_a_failed_probe() {
+    let probe = DaliBusHealthProbeCommand { registry_adapter_id: 0, query_power_failure: true };
+    let (transport, cause, counters) =
+        held_after(probe.into(), Answer::Confirmation, SentFrames::Of16(FIRST_PROBE_QUERY), false);
+    assert_eq!(cause, Err((ErrorCode::Preempted, "preempted".to_owned())), "a hold cuts a probe as a yield does");
+    assert_eq!(transport.lock().expect("mock lock").sent_frames().len(), FIRST_PROBE_QUERY);
+    assert_eq!(counters.bus_health_probe_failed.load(Ordering::SeqCst), 0, "and is not a failed probe");
+}
+
+// IEC 62386-103 §9.9.3
+#[test]
+fn our_own_commissioning_made_passive_mid_run_still_ends_the_quiescence_it_began() {
+    let commission = Dali103CommissionCommand { registry_adapter_id: 0, include_addressed: false };
+    let passive_after_start = SentFrames::Of24(START_QUIESCENT_SENT_TWICE);
+    let (transport, outcome, _) = held_after(commission.into(), Answer::Operation, passive_after_start, true);
+    assert_eq!(outcome, Ok(()));
+    let stop = Device103Command::StopQuiescentMode.frame(Device103Address::Broadcast).as_bytes();
+    let sent = transport.lock().expect("mock lock").sent_frames24();
+    assert_eq!(sent[sent.len() - 2..], [stop, stop], "the run ends with its STOP QUIESCENT MODE");
 }

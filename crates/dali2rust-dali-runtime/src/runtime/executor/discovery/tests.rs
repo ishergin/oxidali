@@ -4,6 +4,8 @@ use crate::runtime::executor::test_helpers::shared::{
     wire_counters,
 };
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
+use dali2rust_domain::dali::controller::WireHold;
+use dali2rust_domain::dali::frame::HoldCause;
 use dali2rust_domain::dali::commands::DaliCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_contracts::msg::ErrorCode;
@@ -1228,4 +1230,46 @@ fn the_colour_mode_follows_the_one_active_type_bit_and_is_unknown_for_several() 
     ] {
         assert_eq!(color_mode_from_status(status), mode, "status {status:#04x}");
     }
+}
+
+struct HeldWhenScriptLeft {
+    transport: Arc<std::sync::Mutex<MockDaliTransport>>,
+    left: usize,
+}
+
+impl WireHold for HeldWhenScriptLeft {
+    fn held(&self) -> Option<HoldCause> {
+        let remaining = self.transport.lock().expect("mock lock").scripted_exchanges_remaining();
+        (remaining <= self.left).then_some(HoldCause::Quiescent)
+    }
+}
+
+const DESCRIBE_EXCHANGES: usize = 1;
+
+#[test]
+fn a_hold_while_describing_names_itself_over_an_earlier_skip_and_describes_nothing() {
+    let mock = MockDaliTransport::new();
+    let random_address = 0x5C_1D_C2;
+    script_present_short_addresses(&mock, &[0, 1]);
+    for _ in 0..RANDOM_ADDRESS_MAX_SAMPLES {
+        script_random_address_unanswered_h(&mock, 0);
+    }
+    script_random_address_reads(&mock, 1, &[random_address, random_address]);
+    script_verify_session_begin(&mock);
+    script_verify_attempt(&mock, random_address, Some(0x03));
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Withdraw).to_forward_frame().raw());
+    script_verify_session_end(&mock);
+    script_describe_dt6(&mock, 1);
+
+    let (transport, mut controller) = setup_controller(mock);
+    let hold = Arc::new(HeldWhenScriptLeft { transport: Arc::clone(&transport), left: DESCRIBE_EXCHANGES });
+    let discovered = controller.with_wire_hold(hold, discover_known_control_gear).expect("discover");
+
+    assert_eq!(
+        discovered,
+        DiscoveryScanReport { devices: vec![], error: Some(SemanticDaliError::Conflict("controller_quiescent")) },
+        "the skipped short 0 does not hide the hold, and short 1 is not reported as unknown"
+    );
+    let remaining = transport.lock().expect("mock lock").scripted_exchanges_remaining();
+    assert_eq!(remaining, DESCRIBE_EXCHANGES, "nothing was sent to describe short 1");
 }

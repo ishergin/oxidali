@@ -24,8 +24,8 @@ use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED, TEXT_TERMINATOR,
 };
 use dali2rust_domain::dali::banks::part251::{self, LuminaireFormat, LUMINAIRE_COLOUR, YEAR_OFFSET};
-use dali2rust_domain::dali::controller::DaliApplicationController;
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::opcode::READ_MEMORY_LOCATION_OPCODE;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -442,6 +442,35 @@ fn a_locked_bank_is_opened_written_closed_and_read_back_whole() {
     let readback = outcome.readback.expect("the bank is read back");
     assert_eq!(readback.len(), usize::from(last) + 1, "the read-back covers the whole bank");
     assert_eq!(readback[usize::from(YEAR_OFFSET)], YEAR);
+}
+
+struct QuiescentOnceUnlocked(Arc<Mutex<SimDaliTransport>>);
+
+impl WireHold for QuiescentOnceUnlocked {
+    fn held(&self) -> Option<HoldCause> {
+        let unlock = special(SpecialCommand::WriteMemoryLocation(BANK_UNLOCKED));
+        let sent = self.0.lock().expect("bus").sent_frames();
+        sent.contains(&unlock).then_some(HoldCause::Quiescent)
+    }
+}
+
+// IEC 62386-103 §9.9.3
+// IEC 62386-102 §9.10.2
+#[test]
+fn a_hold_that_starts_after_the_unlock_lets_the_session_close_the_bank_and_names_its_cause() {
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let bus = Arc::new(Mutex::new(sim));
+    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
+    let hold: Arc<dyn WireHold> = Arc::new(QuiescentOnceUnlocked(Arc::clone(&bus)));
+    let outcome = controller.with_wire_hold(hold, |c| run_write(c, identity, &year(YEAR)));
+    drop(controller);
+    let sim = Arc::into_inner(bus).expect("one owner").into_inner().expect("bus");
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, "controller_quiescent"));
+    assert_eq!(written_values(&sim), vec![BANK_UNLOCKED, YEAR, FOUND_LOCK], "the started session ends closed");
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
+    assert_eq!(outcome.readback.as_deref(), Some(&[][..]), "nothing is read back while held");
 }
 
 // IEC 62386-102 §9.10.2, Table 8

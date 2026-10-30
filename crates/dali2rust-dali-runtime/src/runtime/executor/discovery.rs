@@ -494,7 +494,7 @@ fn record_discovery_skip(
     random_address: Option<u32>,
     error: SemanticDaliError,
 ) {
-    if first_error.is_none() {
+    if first_error.is_none() || error.is_held() {
         *first_error = Some(error);
     }
     match random_address {

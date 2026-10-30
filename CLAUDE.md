@@ -255,7 +255,8 @@ implemented: [conformance gaps](documentation/reference/iec62386-conformance-gap
   never the 16-bit `wire_address` + `command` pair. Part 103 and 102 encode addresses
   and operands differently; use the typed operands.
 - Priority comes from the command kind (`WIRE_CLASSES`: exhaustive, no default), never
-  the opcode, except on the raw diagnostic path (ADR-013).
+  the opcode, except on the raw diagnostic path (ADR-013) and for a foreign `SEND
+  TESTFRAME`, whose `PPP` bits name it (ADR-030).
 - Background work never delays an operator, and that is not a setting; a preempted read
   (`Preempted`) is routine, never shown as a failure (ADR-009).
 - A multi-frame unit is a transaction (`controller.transaction`; `controller.unit` when it

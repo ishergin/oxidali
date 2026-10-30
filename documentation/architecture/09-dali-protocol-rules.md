@@ -28,7 +28,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   no default, and a test fails for a missing row: `WirePriority`, `YieldGranularity`,
   whether the kind drives a lamp, and the 103 §9.13.1 class of its opening frame (policy
   implementing a "should"; each row cites its clause). Only the diagnostic path refines
-  the class from the opcode
+  the class from the opcode, and a foreign `SEND TESTFRAME` takes the class its `PPP`
+  bits name
   ([ADR-013](decisions/ADR-013-wire-priority-and-yield-granularity.md),
   [ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
 - The class follows purpose: switching, dimming, identification, feedback drive, the

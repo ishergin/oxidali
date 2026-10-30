@@ -71,7 +71,9 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     And a 24-bit frame C1 31 FE is observed on the bus
     And a 24-bit frame C1 32 10 is observed on the bus
     And a 24-bit frame C1 33 15 is observed on the bus
-    Then the mock transport 24-bit trace should eventually be exactly "07 FE 10, 07 FE 10, 07 FE 10"
+    And a 24-bit frame C1 32 11 is observed on the bus
+    And a 24-bit frame C1 33 05 is observed on the bus
+    Then the mock transport 24-bit trace should eventually be exactly "07 FE 10, 07 FE 10, 07 FE 10, 07 FE 11"
     And 24-bit forward frame 1 should be sent at priority 5
     And 24-bit forward frame 2 should be sent at priority 5
     And 24-bit forward frame 3 should be sent at priority 5
@@ -83,7 +85,9 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     And a 24-bit frame C1 31 FE is observed on the bus
     And a 24-bit frame C1 32 10 is observed on the bus
     And a 24-bit frame C1 33 4A is observed on the bus
-    Then the mock transport 24-bit trace should eventually be exactly "07 FE 10, 07 FE 10"
+    And a 24-bit frame C1 32 11 is observed on the bus
+    And a 24-bit frame C1 33 05 is observed on the bus
+    Then the mock transport 24-bit trace should eventually be exactly "07 FE 10, 07 FE 10, 07 FE 11"
     And 24-bit forward frame 1 should be sent at priority 2
     And 24-bit forward frame 2 should be sent at priority 1
 
@@ -92,6 +96,9 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     When a 24-bit frame C1 30 A5 is observed on the bus
     And a 24-bit frame C1 31 5A is observed on the bus
     And a 24-bit frame C1 33 23 is observed on the bus
-    Then the DALI mock transport should eventually have sent forward frame 0xA55A
+    And a 24-bit frame C1 32 11 is observed on the bus
+    And a 24-bit frame C1 33 05 is observed on the bus
+    Then the mock transport 24-bit trace should eventually be exactly "A5 5A 11"
+    And the DALI mock transport should have received 1 forward frame
+    And the DALI mock transport should have sent forward frame 0xA55A
     And forward frame 0xA55A should be sent at priority 3
-    And the mock transport should have sent no 24-bit frames

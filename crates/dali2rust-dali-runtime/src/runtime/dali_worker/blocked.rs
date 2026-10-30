@@ -1,5 +1,7 @@
 use super::*;
 
+use dali2rust_domain::dali::dev103::bus_unit::{TestFrame, TestFrameBits};
+
 // IEC 62386-103 §9.9.1
 pub(super) fn controller_passive_blocked(
     ce: &CommandEnvelope,
@@ -98,12 +100,15 @@ fn refuse_every_frame(
 
 // DiiA 351 §7
 // IEC 62386-103 §12.3.16
+// IEC 62386-103 §9.9.1, §12.3.16
 fn passive_allowed(payload: &BusCommandPayload) -> bool {
-    matches!(
-        payload,
-        BusCommandPayload::Dali103ArbitrationProbeCommand(_)
-            | BusCommandPayload::Dali103TestFrameCommand(_)
-    )
+    match payload {
+        BusCommandPayload::Dali103ArbitrationProbeCommand(_) => true,
+        BusCommandPayload::Dali103TestFrameCommand(test) => {
+            matches!(TestFrame { data: test.data, dtr: test.dtr }.bits(), TestFrameBits::Forward24(_))
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn adapter_command_blocked(

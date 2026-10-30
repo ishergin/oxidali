@@ -57,6 +57,7 @@ pub struct DaliController<T: DaliTransport + Send> {
     lease: Option<WireLease>,
     hold: Option<Arc<dyn WireHold>>,
     at_step_boundary: bool,
+    step_depth: u8,
     sniffer: Option<Arc<SnifferTap>>,
     sniffer_adapter_id: u8,
     transport_honours_settle: bool,
@@ -110,6 +111,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             lease: None,
             hold: None,
             at_step_boundary: false,
+            step_depth: 0,
             sniffer: None,
             sniffer_adapter_id: 0,
             transport_honours_settle,
@@ -267,7 +269,9 @@ impl<T: DaliTransport + Send> DaliApplicationController for DaliController<T> {
         let narrowed = self.lease.as_ref().map(|lease| lease.no_finer_than(YieldGranularity::Step));
         let outer = std::mem::replace(&mut self.lease, narrowed);
         self.step_boundary();
+        self.step_depth = self.step_depth.saturating_add(1);
         let result = run(self);
+        self.step_depth = self.step_depth.saturating_sub(1);
         self.lease = outer;
         result
     }

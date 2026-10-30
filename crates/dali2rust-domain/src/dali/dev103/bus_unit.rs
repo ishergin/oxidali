@@ -695,12 +695,19 @@ impl Step<'_> {
         }
     }
 
-    // IEC 62386-103 §11.10.21
+    // IEC 62386-103 §11.10.21, §9.9.3
     fn test_frame(&mut self, data: u8) {
         if data & TESTFRAME_RESERVED != 0 || !TESTFRAME_PRIORITIES.contains(&(data & TESTFRAME_PRIORITY)) {
             return;
         }
-        let [Some(dtr0), Some(dtr1), Some(dtr2)] = self.unit.dtr else {
+        if self.unit.quiescent() {
+            return;
+        }
+        let [Some(dtr0), Some(dtr1), dtr2] = self.unit.dtr else {
+            return;
+        };
+        let unused_by_a_16_bit_frame = (data & TESTFRAME_SIXTEEN_BIT != 0).then_some(0);
+        let Some(dtr2) = dtr2.or(unused_by_a_16_bit_frame) else {
             return;
         };
         self.effects.test_frame = Some(TestFrame { data, dtr: [dtr0, dtr1, dtr2] });
@@ -1463,6 +1470,29 @@ mod tests {
         bench.special(Special103Command::Dtr0, 1).special(Special103Command::Dtr1, 2).special(Special103Command::Dtr2, 3);
         bench.special(Special103Command::SendTestframe, 0x01);
         assert!(bench.effects.test_frame.is_some(), "priority 1 is in range");
+    }
+
+    #[test]
+    fn no_testframe_is_requested_while_another_controller_holds_the_bus_quiescent() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.special(Special103Command::Dtr0, 1).special(Special103Command::Dtr1, 2).special(Special103Command::Dtr2, 3);
+        bench.device(Device103Address::Broadcast, Device103Command::StartQuiescentMode);
+        bench.special(Special103Command::SendTestframe, 0x05);
+        assert_eq!(bench.effects.test_frame, None);
+        bench.device(Device103Address::Broadcast, Device103Command::StopQuiescentMode);
+        bench.special(Special103Command::SendTestframe, 0x05);
+        assert_eq!(bench.effects.test_frame, Some(TestFrame { data: 0x05, dtr: [1, 2, 3] }));
+    }
+
+    #[test]
+    fn a_16_bit_testframe_needs_only_the_dtrs_it_sends() {
+        let mut bench = Bench::hydrated(at(2));
+        bench.unit.lost_capture();
+        bench.special(Special103Command::Dtr0, 0xA5).special(Special103Command::Dtr1, 0x5A);
+        bench.special(Special103Command::SendTestframe, 0x05);
+        assert_eq!(bench.effects.test_frame, None, "a 24-bit frame still needs DTR2");
+        bench.special(Special103Command::SendTestframe, 0x25);
+        assert_eq!(bench.effects.test_frame, Some(TestFrame { data: 0x25, dtr: [0xA5, 0x5A, 0] }));
     }
 
     #[test]

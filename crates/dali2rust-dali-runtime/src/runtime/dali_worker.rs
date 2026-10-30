@@ -443,6 +443,7 @@ fn end_bus_health_probe_without_verdict(
     error: SemanticDaliError,
     counters: &DaliWorkerCounters,
 ) {
+    let error = error.held_as_preempted();
     if !error.is_preempted() {
         counters.bus_health_probe_failed.fetch_add(1, Ordering::Relaxed);
     }

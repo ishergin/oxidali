@@ -35,17 +35,20 @@ that half is limited to what [ADR-016](ADR-016-input-devices-and-rule-engine.md)
 
 `DaliPriority` names the ladder's purposes (`Transaction`, `UserAction`, `Configuration`,
 `Automatic`, `PeriodicQuery`) and carries both `min_settle_us` and `max_settle_us`.
-`TransactionPriority` holds the four classes allowed to open a transaction; priority 1 is
-not representable there, so §9.13.1's "shall not start a transaction at priority 1" is a
-type-system fact.
+`TransactionPriority` holds the classes a frame may open with. No `WIRE_CLASSES` row names
+priority 1, so §9.13.1's "shall not start a transaction at priority 1" holds for every
+command kind, and a table test keeps it so; the one frame that opens at priority 1 is the
+one a foreign `SEND TESTFRAME` asks for
+([ADR-030](ADR-030-controller-as-a-part-103-bus-unit.md)).
 
 The class is the fourth column of `WIRE_CLASSES`
 ([ADR-013](ADR-013-wire-priority-and-yield-granularity.md)'s table); how that table is
 kept and which purpose each kind announces are in [09](../09-dali-protocol-rules.md).
 `Origin` refines the class only for an HCL setpoint (`Automatic`). A Home Assistant
 command keeps its class even though its `WirePriority` differs — the two axes answer
-different questions. The raw diagnostic path is the one exception: its class is refined
-from the decoded opcode, because there the opcode is all the information there is.
+different questions. The raw diagnostic path is one exception: its class is refined from
+the decoded opcode, because there the opcode is all the information there is. A foreign
+`SEND TESTFRAME` is the other: its class is the one its `PPP` bits name.
 
 Within the window the settling time is drawn at random, as Table 22 footnote c "strongly
 recommends"; how every draw stays inside the band on the wire is in 09.

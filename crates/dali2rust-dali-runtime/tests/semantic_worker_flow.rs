@@ -500,7 +500,9 @@ fn quiescent_mode_is_refused_after_the_passive_gate_and_before_the_adapter_gate(
     let both = Arc::new(TestReadPort { passive: true, ..quiescent() });
     assert_eq!(request_refusal(both.clone(), 301, raw()), "controller_passive");
     assert_eq!(request_refusal(both.clone(), 302, probe()), "controller_quiescent", "the probe a passive controller may send");
-    assert_eq!(request_refusal(both, 304, test_frame()), "controller_quiescent", "the test frame a passive controller may send");
+    assert_eq!(request_refusal(both.clone(), 304, test_frame()), "controller_quiescent", "the test frame a passive controller may send");
+    let sixteen_bit = || m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0010_0101, dtr: [0xA5, 0x5A, 0] }.into();
+    assert_eq!(request_refusal(both, 305, sixteen_bit()), "controller_passive", "a 16-bit test frame is a command");
     let disabled = TestReadPort { enabled: false, ..quiescent() };
     assert_eq!(request_refusal(Arc::new(disabled), 303, raw()), "controller_quiescent");
 }

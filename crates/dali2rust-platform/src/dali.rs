@@ -40,6 +40,16 @@ pub enum ObservedItem {
     BusUnitTestFrame { data: u8, dtr: [u8; 3] },
 }
 
+impl ObservedItem {
+    #[must_use]
+    pub const fn resent_until_acknowledged(&self) -> bool {
+        match self {
+            Self::BusUnit(_) | Self::BusUnitQuiescence(_) => true,
+            Self::Frame(_) | Self::BusUnitTestFrame { .. } => false,
+        }
+    }
+}
+
 pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedItem>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

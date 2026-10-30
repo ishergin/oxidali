@@ -2,6 +2,21 @@ use super::*;
 
 use dali2rust_contracts::msg::DaliCommandPayload;
 
+use crate::runtime::executor::held_cause_of;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WireFailure {
+    Invalid,
+    Held(HoldCause),
+    Failed,
+}
+
+impl WireFailure {
+    fn of(error: &impl core::fmt::Debug) -> Self {
+        held_cause_of(error).map_or(Self::Failed, Self::Held)
+    }
+}
+
 pub(super) fn process_wire_payload(
     controller: &mut impl DaliApplicationController,
     publisher: &BusPublisher,
@@ -40,14 +55,17 @@ fn run_wire_payload(
             pl.repeat_count,
             pl.raw_expects_backward,
         )
-        .map_err(|_| "execution_failed")
     } else {
         process_typed_payload(controller, pl.wire_address, pl.command, pl.repeat_count)
     };
     match result {
         Ok(res) => Some(res),
-        Err(err) => {
-            if err == "invalid_command" {
+        Err(WireFailure::Held(cause)) => {
+            answer_each_failed(publisher, &[correlation_id], counters, (ErrorCode::Conflict, cause.message()));
+            None
+        }
+        Err(failure) => {
+            if failure == WireFailure::Invalid {
                 counters.invalid_command.fetch_add(1, Ordering::Relaxed);
             } else {
                 counters.execution_failed.fetch_add(1, Ordering::Relaxed);
@@ -64,29 +82,26 @@ fn process_raw_payload(
     command: u8,
     repeat_count: u8,
     raw_expects_backward: bool,
-) -> Result<(u8, DeliveryStatus), ()> {
+) -> Result<(u8, DeliveryStatus), WireFailure> {
     let frame = ForwardFrame::new(wire_address, command);
     let n = repeat_count.max(1);
     let answer = match n {
         2 => controller
             .send_raw_pair(frame, raw_expects_backward)
             .map(|(response, _)| response)
-            .map_err(|_| ())?,
+            .map_err(|error| WireFailure::of(&error))?,
         _ => controller
             .transaction(|controller| {
                 let mut answer = DaliResponse::NoAnswer;
                 for i in 0..n {
                     let expect = raw_expects_backward && i + 1 == n;
-                    let Ok(response) = controller.send_raw(frame, expect) else {
-                        return Err(());
-                    };
+                    let response = controller.send_raw(frame, expect).map_err(|error| WireFailure::of(&error))?;
                     if !matches!(response, DaliResponse::NoAnswer) {
                         answer = response;
                     }
                 }
                 Ok(answer)
-            })
-            .map_err(|_| ())?,
+            })?,
     };
     if raw_expects_backward {
         match answer {
@@ -105,13 +120,13 @@ fn process_typed_payload(
     wire_address: u8,
     command: u8,
     repeat_count: u8,
-) -> Result<(u8, DeliveryStatus), &'static str> {
+) -> Result<(u8, DeliveryStatus), WireFailure> {
     let cmd = dali_command_from_wire(wire_address, command, repeat_count)
-        .map_err(|_| "invalid_command")?;
+        .map_err(|_| WireFailure::Invalid)?;
 
     let response = controller
         .with_wire_class(Some(command_priority(&cmd)), |c| c.send_command(&cmd))
-        .map_err(|_| "execution_failed")?;
+        .map_err(|error| WireFailure::of(&error))?;
     let expects_backward = cmd.is_query();
 
     match response {

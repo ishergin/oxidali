@@ -90,6 +90,14 @@ impl SemanticDaliError {
             .any(|cause| self == Self::Conflict(cause.message()))
     }
 
+    pub fn held_as_preempted(self) -> Self {
+        if self.is_held() {
+            Self::OperationFailed(PREEMPTED_MESSAGE)
+        } else {
+            self
+        }
+    }
+
     pub fn is_device_absent(self) -> bool {
         matches!(self, Self::OperationFailed(DEVICE_ABSENT_MESSAGE))
     }
@@ -118,6 +126,10 @@ fn map_transport_error(error: &impl core::fmt::Debug) -> SemanticDaliError {
     } else {
         SemanticDaliError::OperationFailed("dali_transport_error")
     }
+}
+
+pub(crate) fn held_cause_of(error: &impl core::fmt::Debug) -> Option<HoldCause> {
+    held_cause_in(&format!("{error:?}"))
 }
 
 fn held_cause_in(rendered: &str) -> Option<HoldCause> {
@@ -513,10 +525,19 @@ pub(crate) fn program_with_verify_repair<C: DaliApplicationController, V: Copy>(
         if latest.is_some() {
             controller.note_workaround(ReadbackWorkaround::ProgramRepair);
         }
-        latest = drive(controller).unwrap_or(None);
+        latest = unanswered_unless_held(drive(controller))?;
         readback = latest.or(readback);
     }
     Ok(readback)
+}
+
+pub(crate) fn unanswered_unless_held<V>(
+    read: Result<Option<V>, SemanticDaliError>,
+) -> Result<Option<V>, SemanticDaliError> {
+    match read {
+        Err(error) if error.is_held() => Err(error),
+        read => Ok(read.unwrap_or(None)),
+    }
 }
 
 pub(crate) fn confirm_observed_query<C, F, T>(

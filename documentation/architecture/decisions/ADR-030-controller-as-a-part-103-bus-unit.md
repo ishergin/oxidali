@@ -175,8 +175,10 @@ answer to any next one, and the slot no longer waits for a task.
   last `START`, and a power-on clears it.
 - The gate is read before every frame, not only when a command starts: a command already
   on the wire when quiescence begins, or when the controller is made passive, stops at
-  its next frame with the same refusal, and a started transaction finishes, because
-  nothing yields inside one.
+  its next frame with the same refusal. A started transaction or step finishes, because
+  nothing yields inside one; our own Part 103 commissioning is one transaction from its
+  `START QUIESCENT MODE` to its `STOP QUIESCENT MODE`, so it ends the quiescence it began
+  even when the controller is made passive mid-run.
 - The model reports each `START` with its deadline and each end, and the registry holds
   the deadline in RAM; the gate, the poller and the HCL scheduler read it, and it lapses
   at that deadline even if the report of a `STOP` is lost.
@@ -206,12 +208,16 @@ answer to any next one, and the slot no longer waits for a task.
 
 103 §9.9.1 forbids a passive controller every forward frame but the power notification,
 yet test 12.3.16 sends `SEND TESTFRAME` after `DISABLE APPLICATION CONTROLLER`
-(§12.14.1, §12.14.3) and expects the frame. The test is followed: the frame is executed in
-both roles and refused in quiescent mode. The DALI worker's one gate admits it by command
-kind, beside the arbitration probe and the power notification.
+(§12.14.1, §12.14.3) and expects the frame. The test is followed for the 24-bit frame the
+tests use: it is executed in both roles and refused in quiescent mode. The 16-bit form
+is a command to gear and a passive controller refuses it. The DALI worker's one gate
+admits the 24-bit form by command kind, beside the arbitration probe and the power
+notification.
 
 The model accepts the instruction and the sniffer translator carries it to the DALI worker
-as a command; a sniffed frame never becomes one. The frame is announced at the priority
+as a command; a sniffed frame never becomes one. The model drops the instruction while it
+has seen another controller start quiescent mode, so the request never waits on the
+registry learning it. The frame is announced at the priority
 its `PPP` bits name, which replaces the command kind's class for that unit, so priority 1
 opens a frame only here: no command kind's class opens at it (101 Table 22).
 

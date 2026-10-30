@@ -1270,11 +1270,14 @@ fn push_observed_raw_frame(
     };
     if tx.try_send(ObservedItem::Frame(frame)).is_err() {
         log::warn!("DALI sniff: observed-frame channel full; frame dropped");
-        // SAFETY: `inner` is valid for the transport lifetime (see above).
-        if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
-            sink.dropped
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        }
+        count_sniff_drop(inner);
+    }
+}
+
+fn count_sniff_drop(inner: *mut TransportInner) {
+    // SAFETY: `inner` is valid for the transport lifetime (see `dali_sniffer_loop`).
+    if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
+        sink.dropped.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -1284,9 +1287,16 @@ fn push_bus_unit_reports(inner: *mut TransportInner, reports: UnitReports) {
         return;
     };
     for item in reports.items() {
-        if tx.try_send(item).is_err() {
-            log::warn!("DALI sniff: observed-frame channel full; bus-unit report waits for its resend");
+        let resent = item.resent_until_acknowledged();
+        if tx.try_send(item).is_ok() {
+            continue;
         }
+        if resent {
+            log::warn!("DALI sniff: observed-frame channel full; bus-unit report waits for its resend");
+            continue;
+        }
+        log::warn!("DALI sniff: observed-frame channel full; SEND TESTFRAME dropped");
+        count_sniff_drop(inner);
     }
 }
 

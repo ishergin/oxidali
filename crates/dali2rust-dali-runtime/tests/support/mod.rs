@@ -275,17 +275,32 @@ pub struct ReadPortDouble {
     pub held_after: Option<HeldAfter>,
 }
 
+#[derive(Clone, Copy)]
+pub enum SentFrames {
+    Of24(usize),
+    Of16(usize),
+    AfterQueries(usize),
+}
+
 pub struct HeldAfter {
     pub transport: Arc<Mutex<MockDaliTransport>>,
-    pub frames24: usize,
+    pub sent: SentFrames,
     pub passive: bool,
+    pub queries: std::sync::atomic::AtomicUsize,
 }
 
 impl ReadPortDouble {
     fn held(&self, passive: bool) -> bool {
         self.held_after.as_ref().is_some_and(|held| {
-            held.passive == passive
-                && held.transport.lock().expect("mock lock").sent_frames24().len() >= held.frames24
+            if held.passive != passive {
+                return false;
+            }
+            let mock = held.transport.lock().expect("mock lock");
+            match held.sent {
+                SentFrames::Of24(frames) => mock.sent_frames24().len() >= frames,
+                SentFrames::Of16(frames) => mock.sent_frames().len() >= frames,
+                SentFrames::AfterQueries(queries) => held.queries.fetch_add(1, Ordering::SeqCst) >= queries,
+            }
         })
     }
 }
