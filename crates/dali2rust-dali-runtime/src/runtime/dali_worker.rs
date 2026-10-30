@@ -345,6 +345,9 @@ dali2rust_contracts::dispatch_bus_commands! {
         counters,
     ),
     Dali103TestFrameCommand(test) => handle_test_frame(controller, publisher, correlation_id, test, counters),
+    Dali103PowerNotificationCommand(notification) => {
+        handle_power_notification(controller, publisher, correlation_id, notification, counters)
+    },
     DaliBusHealthProbeCommand(probe) => handle_bus_health_probe(
         controller,
         publisher,
@@ -495,6 +498,7 @@ fn stand_down_after_handover(
         dt8_rgbwaf_control_assert: false,
         application_active: false,
         device_short_address: u8::MAX,
+        power_cycle_notification: false,
     };
     let ce = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -549,12 +553,29 @@ fn handle_test_frame(
     counters: &DaliWorkerCounters,
 ) {
     let request = TestFrame { data: cmd.data, dtr: cmd.dtr };
-    if bus_unit::send_test_frame(controller, request).is_err() {
+    let sent = bus_unit::send_test_frame(controller, request).is_ok();
+    confirm_sent(sent, publisher, correlation_id, counters);
+}
+
+// IEC 62386-103 §9.12.2
+fn handle_power_notification(
+    controller: &mut impl DaliApplicationController,
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    cmd: &dali2rust_contracts::msg::Dali103PowerNotificationCommand,
+    counters: &DaliWorkerCounters,
+) {
+    let sent = controller.send_frame24(cmd.frame, false).is_ok();
+    confirm_sent(sent, publisher, correlation_id, counters);
+}
+
+fn confirm_sent(sent: bool, publisher: &BusPublisher, correlation_id: u64, counters: &DaliWorkerCounters) {
+    if sent {
+        publish_confirmation_ok(publisher, correlation_id, counters);
+    } else {
         counters.execution_failed.fetch_add(1, Ordering::Relaxed);
         emit_execution_failed(publisher, correlation_id, counters);
-        return;
     }
-    publish_confirmation_ok(publisher, correlation_id, counters);
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use super::*;
 
+use dali2rust_contracts::msg::{Dali103PowerNotificationCommand, Dali103TestFrameCommand};
 use dali2rust_domain::dali::dev103::bus_unit::{TestFrame, TestFrameBits};
 
 // IEC 62386-103 §9.9.1
@@ -99,11 +100,11 @@ fn refuse_every_frame(
 }
 
 // DiiA 351 §7
-// IEC 62386-103 §12.3.16
-// IEC 62386-103 §9.9.1, §12.3.16
+// IEC 62386-103 §9.9.1, §9.12.2, §12.3.16
 fn passive_allowed(payload: &BusCommandPayload) -> bool {
     match payload {
-        BusCommandPayload::Dali103ArbitrationProbeCommand(_) => true,
+        BusCommandPayload::Dali103ArbitrationProbeCommand(_)
+        | BusCommandPayload::Dali103PowerNotificationCommand(_) => true,
         BusCommandPayload::Dali103TestFrameCommand(test) => {
             matches!(TestFrame { data: test.data, dtr: test.dtr }.bits(), TestFrameBits::Forward24(_))
         }
@@ -185,6 +186,7 @@ fn blocked_refusal<'c>(ce: &CommandEnvelope, counters: &'c DaliWorkerCounters) -
         | BusCommandPayload::Dali103HandoverCommand(_)
         | BusCommandPayload::Dali103ArbitrationProbeCommand(_)
         | BusCommandPayload::Dali103TestFrameCommand(_)
+        | BusCommandPayload::Dali103PowerNotificationCommand(_)
         | BusCommandPayload::DaliBusHealthProbeCommand(_) => BlockedRefusal::Confirmation,
         _ => BlockedRefusal::NotGated,
     }
@@ -268,7 +270,11 @@ fn bus_unit_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::Dali103InstanceActionCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103ArbitrationProbeCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::Dali103HandoverCommand(cmd) => Some(cmd.registry_adapter_id),
-        BusCommandPayload::Dali103TestFrameCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::Dali103TestFrameCommand(Dali103TestFrameCommand { registry_adapter_id, .. })
+        | BusCommandPayload::Dali103PowerNotificationCommand(Dali103PowerNotificationCommand {
+            registry_adapter_id,
+            ..
+        }) => Some(*registry_adapter_id),
         _ => None,
     }
 }

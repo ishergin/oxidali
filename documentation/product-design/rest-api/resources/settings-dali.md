@@ -43,6 +43,9 @@ BDD — [`settings_dali`](../../../../tests/dali2rust-bdd/features/settings_dali
 - `device_short_address` (`0..63` или `null`) — собственный адрес контроллера как
   control device Part 103; на него отвечает модель блока, в том числе на зонд пира.
   `null` — отвечают широковещательная форма и форма broadcast unaddressed.
+- `power_cycle_notification` (по умолчанию `false`) — шлёт ли контроллер после загрузки
+  `POWER NOTIFICATION` со своим адресом и наименьшей группой (IEC 62386-103 §9.12.2):
+  один кадр на приоритете 2 через 1,3–5 с.
 
 Другой контроллер на шине может ввести этот в эксплуатацию (IEC 62386-103 §9.2.3): его
 `SET SHORT ADDRESS`, `ENABLE` / `DISABLE APPLICATION CONTROLLER` и остальные команды

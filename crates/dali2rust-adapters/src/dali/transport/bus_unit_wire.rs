@@ -1,5 +1,5 @@
 use std::hash::{BuildHasher, RandomState};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use dali2rust_dali_codec::rx_decode::SniffedFrame;
 use dali2rust_dali_phy::PHY_TICK_US;
@@ -22,13 +22,18 @@ pub struct UnitReports {
     pub nvm: Option<BusUnitEvidence>,
     pub quiescence: Option<BusUnitQuiescence>,
     pub test_frame: Option<TestFrame>,
+    pub power_notification: Option<[u8; 3]>,
 }
 
 impl UnitReports {
     pub fn items(self) -> impl Iterator<Item = ObservedItem> {
         let nvm = self.nvm.map(ObservedItem::BusUnit);
         let test_frame = self.test_frame.map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
-        nvm.into_iter().chain(self.quiescence.map(ObservedItem::BusUnitQuiescence)).chain(test_frame)
+        let power_notification = self.power_notification.map(ObservedItem::BusUnitPowerNotification);
+        nvm.into_iter()
+            .chain(self.quiescence.map(ObservedItem::BusUnitQuiescence))
+            .chain(test_frame)
+            .chain(power_notification)
     }
 }
 
@@ -70,6 +75,7 @@ impl BusUnitWire {
             nvm: if effects.nvm_changed { self.report_nvm(at_ms) } else { None },
             quiescence: effects.quiescent.map(|_| self.report_quiescence(at_ms)),
             test_frame: effects.test_frame,
+            power_notification: effects.power_notification,
         }
     }
 
@@ -77,11 +83,14 @@ impl BusUnitWire {
         if let Some(inputs) = adopt {
             self.hydrate(inputs);
         }
-        let lapsed = self.unit.tick(now_ms).quiescent.is_some();
+        let entropy = self.entropy;
+        let effects = self.unit.tick(now_ms, &mut || entropy());
+        let lapsed = effects.quiescent.is_some();
         UnitReports {
             nvm: self.resend_nvm(now_ms),
             quiescence: if lapsed { Some(self.report_quiescence(now_ms)) } else { self.resend_quiescence(now_ms) },
-            test_frame: None,
+            test_frame: effects.test_frame,
+            power_notification: effects.power_notification,
         }
     }
 
@@ -277,32 +286,62 @@ impl UnitTap {
 }
 
 #[derive(Debug, Default)]
-pub struct InjectedWire {
+struct InjectedState {
     tx: Option<ObservedFrameSender>,
     inputs: Option<Arc<AnswerInputs>>,
     tap: UnitTap,
     epoch: u8,
 }
 
+impl InjectedState {
+    fn poll(&mut self, at_ms: u32) {
+        let (reports, _) = self.tap.on_poll(self.inputs.as_deref(), at_ms, true);
+        self.send(reports);
+    }
+
+    fn send(&self, reports: UnitReports) {
+        let Some(tx) = self.tx.as_ref() else {
+            return;
+        };
+        for item in reports.items() {
+            let _ = tx.try_send(item);
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct InjectedWire {
+    state: Arc<Mutex<InjectedState>>,
+    #[cfg(not(target_os = "espidf"))]
+    pump: Option<std::sync::mpsc::Sender<()>>,
+}
+
 impl InjectedWire {
     pub fn set_sender(&mut self, tx: ObservedFrameSender) {
-        self.tx = Some(tx);
+        self.state().tx = Some(tx);
     }
 
     pub fn set_answer_inputs(&mut self, inputs: Arc<AnswerInputs>) {
-        self.inputs = Some(inputs);
+        self.state().inputs = Some(inputs);
     }
 
+    // IEC 62386-103 §9.12.2
     pub fn set_identity(&mut self, identity: &BusUnitIdentity) {
-        self.tap.attach(Some(identity), host_entropy);
+        self.state().tap.attach(Some(identity), host_entropy);
+        #[cfg(not(target_os = "espidf"))]
+        if self.pump.is_none() {
+            self.pump = Some(host_pump::start(Arc::clone(&self.state)));
+        }
     }
 
     pub fn note_own_forward(&mut self) {
-        self.epoch = self.epoch.wrapping_add(1);
+        let mut state = self.state();
+        state.epoch = state.epoch.wrapping_add(1);
     }
 
     pub fn inject(&mut self, bytes: [u8; 3], kind: ObservedRawFrameKind) -> bool {
-        let Some(tx) = self.tx.as_ref() else {
+        let mut state = self.state();
+        let Some(tx) = state.tx.clone() else {
             return false;
         };
         let at_ms = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
@@ -316,24 +355,51 @@ impl InjectedWire {
             .is_ok();
         let forward_length = !matches!(kind, ObservedRawFrameKind::Backward8);
         if forward_length {
-            self.epoch = self.epoch.wrapping_add(1);
+            state.epoch = state.epoch.wrapping_add(1);
         }
-        let (resend, _) = self.tap.on_poll(self.inputs.as_deref(), at_ms, true);
+        state.poll(at_ms);
         let frame = Some(unit_frame(kind, bytes));
-        let capture = Capture { after_gap: false, epoch: self.epoch, forward_length, frame, at_ms };
-        let observed = self.tap.on_capture(capture);
-        for item in resend.items().chain(observed.items()) {
-            let _ = tx.try_send(item);
-        }
+        let capture = Capture { after_gap: false, epoch: state.epoch, forward_length, frame, at_ms };
+        let observed = state.tap.on_capture(capture);
+        state.send(observed);
         sent
+    }
+
+    fn state(&self) -> MutexGuard<'_, InjectedState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+#[cfg(not(target_os = "espidf"))]
+mod host_pump {
+    use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::time::Duration;
+
+    use super::InjectedState;
+
+    const HOST_POLL: Duration = Duration::from_millis(10);
+
+    pub(super) fn start(state: Arc<Mutex<InjectedState>>) -> Sender<()> {
+        let (stop, stopped) = channel();
+        std::thread::spawn(move || {
+            while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(HOST_POLL) {
+                let at_ms = dali2rust_bsp::monotonic_clock::observation_stamp_ms();
+                state.lock().unwrap_or_else(PoisonError::into_inner).poll(at_ms);
+            }
+        });
+        stop
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::sync_channel;
+    use std::time::Duration;
 
-    use dali2rust_domain::dali::dev103::bus_unit::{FACTORY_NVM, QUIESCENT_MS};
+    use dali2rust_domain::dali::dev103::bus_unit::{
+        FACTORY_NVM, POWER_NOTIFICATION_EARLIEST_MS, POWER_NOTIFICATION_LATEST_MS, QUIESCENT_MS,
+    };
     use dali2rust_domain::dali::dev103::{Device103Address, Device103Command, Special103Command};
     use dali2rust_platform::bus_unit::BusUnitSnapshot;
     use dali2rust_platform::dali::DaliTransport;
@@ -352,6 +418,7 @@ mod tests {
     const OPERATOR_SHORT: u8 = 7;
     const WIRE_SHORT: u8 = 5;
     const ADOPTED_REVISION: u32 = 3;
+    const RESEND_WAIT_FACTOR: u64 = 3;
 
     const fn entropy() -> u32 {
         0x0012_3456
@@ -500,7 +567,7 @@ mod tests {
     #[test]
     fn reports_reach_the_channel_evidence_first() {
         let evidence = BusUnitEvidence { adopted: FACTORY_NVM, adopted_revision: 1, observed: FACTORY_NVM, wire_sequence: 1 };
-        let reports = UnitReports { nvm: Some(evidence), quiescence: quiescence(1, None), test_frame: None };
+        let reports = UnitReports { nvm: Some(evidence), quiescence: quiescence(1, None), ..UnitReports::default() };
         let items: Vec<_> = reports.items().collect();
         assert_eq!(items, [ObservedItem::BusUnit(evidence), ObservedItem::BusUnitQuiescence(quiescence(1, None).unwrap())]);
         assert_eq!(UnitReports::default().items().count(), 0);
@@ -540,6 +607,20 @@ mod tests {
         });
         let evidence = readdress(&mut wire).expect("the pair moved the address");
         assert_eq!((evidence.adopted, evidence.adopted_revision), (operator_nvm(), ADOPTED_REVISION));
+    }
+
+    // IEC 62386-103 §9.12.2
+    #[test]
+    fn the_poll_that_adopts_the_first_copy_starts_the_power_notification_delay() {
+        let notifying = BusUnitNvm { power_cycle_notification: true, ..operator_nvm() };
+        let inputs = inputs_at(notifying, ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        let completed = START_MS - 1;
+        let early = wire.poll(Some(&inputs), completed + POWER_NOTIFICATION_EARLIEST_MS - 1);
+        assert_eq!(early.items().count(), 0, "nothing before the window opens");
+        let due = wire.poll(Some(&inputs), completed + POWER_NOTIFICATION_LATEST_MS);
+        let named = [0xFE, 0xE0, 0x40 | OPERATOR_SHORT];
+        assert_eq!(due.items().collect::<Vec<_>>(), [ObservedItem::BusUnitPowerNotification(named)]);
     }
 
     #[test]
@@ -759,6 +840,19 @@ mod tests {
         assert_eq!(items.len(), frames.len() + 1, "{items:?}");
         assert!(items[..frames.len()].iter().all(|item| matches!(item, ObservedItem::Frame(_))));
         assert!(matches!(items[frames.len()], ObservedItem::BusUnit(_)), "{items:?}");
+    }
+
+    #[test]
+    fn the_host_wire_resends_an_unacknowledged_report_with_no_frame_to_wake_it() {
+        let (mut wire, rx) = injected();
+        for frame in [dtr0(WIRE_SHORT), set_short_address(), set_short_address()] {
+            inject(&mut wire, frame);
+        }
+        let reported = rx.try_iter().filter(|item| matches!(item, ObservedItem::BusUnit(_))).count();
+        assert_eq!(reported, 1);
+        let wait = Duration::from_millis(u64::from(BUS_UNIT_RESEND_MS) * RESEND_WAIT_FACTOR);
+        let resent = rx.recv_timeout(wait).expect("the wire polls its unit on its own");
+        assert!(matches!(resent, ObservedItem::BusUnit(_)), "{resent:?}");
     }
 
     #[test]

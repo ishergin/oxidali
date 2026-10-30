@@ -56,6 +56,7 @@ impl DaliSettingsReadPort for Role {
             dt8_rgbwaf_control_assert: false,
             application_active: self.active.load(Ordering::Relaxed),
             device_short_address: None,
+            power_cycle_notification: false,
         }
     }
 }

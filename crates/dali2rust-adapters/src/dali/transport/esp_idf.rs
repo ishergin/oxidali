@@ -1295,7 +1295,7 @@ fn push_bus_unit_reports(inner: *mut TransportInner, reports: UnitReports) {
             log::warn!("DALI sniff: observed-frame channel full; bus-unit report waits for its resend");
             continue;
         }
-        log::warn!("DALI sniff: observed-frame channel full; SEND TESTFRAME dropped");
+        log::warn!("DALI sniff: observed-frame channel full; a bus-unit frame request dropped");
         count_sniff_drop(inner);
     }
 }

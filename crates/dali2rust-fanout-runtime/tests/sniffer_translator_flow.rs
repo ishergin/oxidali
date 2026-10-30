@@ -840,6 +840,21 @@ fn a_testframe_the_bus_unit_accepted_goes_to_the_wire_owner_as_a_command() {
     assert_eq!(ce.meta.origin, Origin::Sniffer);
 }
 
+// IEC 62386-103 §9.12.2
+#[test]
+fn a_power_notification_the_bus_unit_raised_goes_to_the_wire_owner_as_a_command() {
+    let harness = spawn_harness();
+    harness.tx.0.send(ObservedItem::BusUnitPowerNotification([0xFE, 0xF1, 0x45])).expect("send");
+    let ce = recv_command_matching(&harness.cmd_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusCommandPayload::Dali103PowerNotificationCommand(_))
+    });
+    let BusCommandPayload::Dali103PowerNotificationCommand(body) = &ce.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    assert_eq!((body.registry_adapter_id, body.frame), (0, [0xFE, 0xF1, 0x45]));
+    assert_eq!(ce.meta.origin, Origin::Sniffer);
+}
+
 #[test]
 fn a_sniffed_send_testframe_is_no_command_of_its_own() {
     let harness = spawn_harness();

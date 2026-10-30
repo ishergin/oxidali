@@ -97,7 +97,8 @@ pub use kinds::Dali103InstanceAction;
 
 pub use commands::DaliSettingsUpdateCommand;
 pub use commands::{
-    Dali103ArbitrationProbeCommand, Dali103HandoverCommand, Dali103TestFrameCommand, PoliciesUpdateCommand,
+    Dali103ArbitrationProbeCommand, Dali103HandoverCommand, Dali103PowerNotificationCommand, Dali103TestFrameCommand,
+    PoliciesUpdateCommand,
     PolicyApplyExecuteCommand, PolicyException, PolicyExceptionList, RedundancySettingsUpdateCommand,
     RegistrySliceReloadCommand, MAX_POLICY_EXCEPTIONS,
 };

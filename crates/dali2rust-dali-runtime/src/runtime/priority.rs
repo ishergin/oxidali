@@ -182,6 +182,14 @@ const WIRE_CLASSES: &[WireClass] = &[
         false,
         TransactionPriority::UserAction,
     ),
+    // IEC 62386-103 §9.12.2
+    class(
+        "Dali103PowerNotificationCommand",
+        WirePriority::Attended,
+        YieldGranularity::Never,
+        false,
+        TransactionPriority::UserAction,
+    ),
     // IEC 62386-103 §9.13.1
     class(
         "DaliAddressingCommand",

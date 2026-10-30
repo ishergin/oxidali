@@ -102,3 +102,31 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     And the DALI mock transport should have received 1 forward frame
     And the DALI mock transport should have sent forward frame 0xA55A
     And forward frame 0xA55A should be sent at priority 3
+
+  @id:SET-DALI-015
+  Scenario: A controller another controller enabled for power cycle notification announces its next boot once at priority 2
+    Given in-memory slice persistence is enabled for the host stack
+    When a 24-bit frame FF FE 1F is observed on the bus
+    And a 24-bit frame FF FE 1F is observed on the bus
+    Then the JSON pointer "/power_cycle_notification" at "/api/v1/settings/dali" should eventually be "true"
+    When I restart the host stack
+    Then the mock transport 24-bit trace should be exactly "FE E0 00" within 6000 ms
+    And 24-bit forward frame 1 should be sent at priority 2
+    And the mock transport 24-bit trace should stay exactly "FE E0 00" for 1000 ms
+
+  @id:SET-DALI-016
+  Scenario: A controller at its factory power cycle notification setting announces no boot
+    Given in-memory slice persistence is enabled for the host stack
+    Then the JSON pointer "/power_cycle_notification" at "/api/v1/settings/dali" should eventually be "false"
+    When I restart the host stack
+    Then the mock transport 24-bit trace should stay exactly "" for 5500 ms
+
+  @id:SET-DALI-017
+  Scenario: An operator who enables power cycle notification makes the next boot announce the controller's address
+    Given in-memory slice persistence is enabled for the host stack
+    When I PATCH JSON {"device_short_address":5,"power_cycle_notification":true} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    And the JSON boolean field "power_cycle_notification" should be true
+    When I restart the host stack
+    Then the mock transport 24-bit trace should be exactly "FE E0 45" within 6000 ms
+    And 24-bit forward frame 1 should be sent at priority 2

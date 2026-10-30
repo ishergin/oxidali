@@ -7,6 +7,7 @@ pub use dali2rust_platform::bus_unit::{BusUnitIdentity, BusUnitNvm, BusUnitSnaps
 
 use crate::dali::dev103::address::{Device103Address, MAX_SHORT_ADDRESS};
 use crate::dali::dev103::command::{Device103Command, Special103Command};
+use crate::dali::dev103::event::power_notification;
 use crate::dali::dev103::frame::ForwardFrame24;
 use crate::dali::frame::send_twice_span_ms;
 
@@ -19,6 +20,9 @@ pub const INITIALISATION_MS: u32 = 15 * 60 * 1_000;
 pub const QUIESCENT_MS: u32 = 15 * 60 * 1_000;
 // IEC 62386-103 §11.4.2
 pub const IDENTIFY_MS: u32 = 10_000;
+// IEC 62386-103 §9.12.2
+pub const POWER_NOTIFICATION_EARLIEST_MS: u32 = 1_300;
+pub const POWER_NOTIFICATION_LATEST_MS: u32 = 4_500;
 pub const SEND_TWICE_SPAN_MS: u32 = send_twice_span_ms(ForwardFrame24::DATA_BITS);
 // IEC 62386-101 §4.2
 pub const VERSION_2_0: u8 = 0x08;
@@ -131,6 +135,14 @@ pub struct UnitEffects {
     pub identify: Option<bool>,
     pub quiescent: Option<bool>,
     pub test_frame: Option<TestFrame>,
+    pub power_notification: Option<[u8; 3]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PowerOn {
+    Pending,
+    Notifying { at_ms: u32 },
+    Done,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +159,7 @@ pub struct Device103Unit {
     identify_until_ms: Option<u32>,
     write_enabled: bool,
     power_cycle_seen: bool,
+    power_on: PowerOn,
     pending_twice: Option<([u8; 3], u32)>,
 }
 
@@ -167,6 +180,7 @@ impl Device103Unit {
             identify_until_ms: None,
             write_enabled: false,
             power_cycle_seen: true,
+            power_on: PowerOn::Pending,
             pending_twice: None,
         }
     }
@@ -234,8 +248,9 @@ impl Device103Unit {
         self.pending_twice = None;
     }
 
-    pub fn tick(&mut self, now_ms: u32) -> UnitEffects {
-        let mut effects = UnitEffects::default();
+    pub fn tick(&mut self, now_ms: u32, entropy: &mut dyn FnMut() -> u32) -> UnitEffects {
+        let power_notification = self.power_on_step(now_ms, entropy);
+        let mut effects = UnitEffects { power_notification, ..UnitEffects::default() };
         if self.initialising() && passed(now_ms, self.initialisation_until_ms) {
             self.initialisation = InitialisationState::Disabled;
         }
@@ -248,6 +263,24 @@ impl Device103Unit {
             effects.identify = Some(false);
         }
         effects
+    }
+
+    // IEC 62386-103 §9.12.2
+    fn power_on_step(&mut self, now_ms: u32, entropy: &mut dyn FnMut() -> u32) -> Option<[u8; 3]> {
+        match self.power_on {
+            PowerOn::Pending if self.is_hydrated() => {
+                let at_ms = now_ms.wrapping_add(power_notification_delay(entropy()));
+                self.power_on = PowerOn::Notifying { at_ms };
+                None
+            }
+            PowerOn::Notifying { at_ms } if passed(now_ms, at_ms) => {
+                self.power_on = PowerOn::Done;
+                let nvm = self.nvm;
+                nvm.power_cycle_notification
+                    .then(|| power_notification(nvm.short_address, nvm.device_groups).as_bytes())
+            }
+            _ => None,
+        }
     }
 
     pub fn feed(
@@ -594,6 +627,9 @@ impl Step<'_> {
         if start || self.unit.quiescent() {
             self.effects.quiescent = Some(start);
         }
+        if start {
+            self.unit.power_on = PowerOn::Done;
+        }
         self.unit.quiescent_until_ms = start.then(|| self.now_ms.wrapping_add(QUIESCENT_MS));
     }
 
@@ -757,6 +793,11 @@ const fn passed(now_ms: u32, until_ms: u32) -> bool {
     now_ms.wrapping_sub(until_ms) < u32::MAX / 2
 }
 
+const fn power_notification_delay(draw: u32) -> u32 {
+    let span = POWER_NOTIFICATION_LATEST_MS - POWER_NOTIFICATION_EARLIEST_MS + 1;
+    POWER_NOTIFICATION_EARLIEST_MS + draw % span
+}
+
 #[must_use]
 pub const fn remaining_until(until_ms: u32, now_ms: u32) -> Option<u32> {
     if passed(now_ms, until_ms) {
@@ -901,6 +942,7 @@ mod tests {
             identify: new.identify.or(old.identify),
             quiescent: new.quiescent.or(old.quiescent),
             test_frame: new.test_frame.or(old.test_frame),
+            power_notification: new.power_notification.or(old.power_notification),
         }
     }
 
@@ -1166,9 +1208,9 @@ mod tests {
         bench.now_ms += INITIALISATION_MS / 2;
         bench.special(Special103Command::Initialise, INITIALISE_ALL);
         let restarted = bench.now_ms;
-        bench.unit.tick(restarted + INITIALISATION_MS - 1);
+        bench.unit.tick(restarted + INITIALISATION_MS - 1, &mut || ENTROPY);
         assert_eq!(bench.unit.initialisation(), InitialisationState::Enabled, "the second INITIALISE restarted it");
-        bench.unit.tick(restarted + INITIALISATION_MS);
+        bench.unit.tick(restarted + INITIALISATION_MS, &mut || ENTROPY);
         assert_eq!(bench.unit.initialisation(), InitialisationState::Disabled);
     }
 
@@ -1237,8 +1279,8 @@ mod tests {
         assert_eq!(bench.effects.quiescent, Some(true));
         assert_eq!(bench.broadcast(Device103Command::QueryQuiescentMode), yes());
         let started = bench.now_ms;
-        assert_eq!(bench.unit.tick(started + QUIESCENT_MS - 1).quiescent, None);
-        assert_eq!(bench.unit.tick(started + QUIESCENT_MS).quiescent, Some(false));
+        assert_eq!(bench.unit.tick(started + QUIESCENT_MS - 1, &mut || ENTROPY).quiescent, None);
+        assert_eq!(bench.unit.tick(started + QUIESCENT_MS, &mut || ENTROPY).quiescent, Some(false));
         bench.device(Device103Address::Broadcast, Device103Command::StartQuiescentMode);
         bench.device(Device103Address::Broadcast, Device103Command::StopQuiescentMode);
         assert!(!bench.unit.quiescent());
@@ -1257,7 +1299,7 @@ mod tests {
         let second = bench.now_ms;
         assert_eq!(bench.effects.quiescent, Some(true));
         assert_eq!(bench.unit.quiescent_remaining_ms(second), Some(QUIESCENT_MS));
-        assert_eq!(bench.unit.tick(first + QUIESCENT_MS).quiescent, None);
+        assert_eq!(bench.unit.tick(first + QUIESCENT_MS, &mut || ENTROPY).quiescent, None);
         assert_eq!(bench.unit.quiescent_remaining_ms(second + QUIESCENT_MS - 1), Some(1));
         assert_eq!(bench.unit.quiescent_remaining_ms(second + QUIESCENT_MS), None);
     }
@@ -1431,7 +1473,7 @@ mod tests {
         };
         identify(&mut bench);
         let started = bench.now_ms;
-        assert_eq!(bench.unit.tick(started + IDENTIFY_MS).identify, Some(false));
+        assert_eq!(bench.unit.tick(started + IDENTIFY_MS, &mut || ENTROPY).identify, Some(false));
         identify(&mut bench);
         bench.special(Special103Command::Initialise, INITIALISE_ALL);
         bench.special(Special103Command::Compare, 0);
@@ -1570,5 +1612,85 @@ mod tests {
         let event_frame = [Device103Address::Short(2).encode() & !COMMAND_BIT, DEVICE_INSTANCE, 0x17];
         bench.twice(event_frame);
         assert!(bench.unit.nvm().application_active);
+    }
+
+    const NOTIFYING: BusUnitNvm = BusUnitNvm {
+        short_address: Some(5),
+        device_groups: 0b0110_0100,
+        power_cycle_notification: true,
+        ..FACTORY_NVM
+    };
+    const NAMED_NOTIFICATION: [u8; 3] = [0xFE, 0xF1, 0x45];
+    const LAST_DRAW: u32 = POWER_NOTIFICATION_LATEST_MS - POWER_NOTIFICATION_EARLIEST_MS;
+
+    fn power_on(nvm: BusUnitNvm, draw: u32) -> (Bench, u32) {
+        let mut bench = Bench::hydrated(nvm);
+        let completed = bench.now_ms;
+        let armed = bench.unit.tick(completed, &mut || draw);
+        assert_eq!(armed.power_notification, None, "the delay starts when the power-on procedure ends");
+        (bench, completed)
+    }
+
+    fn notification_at(bench: &mut Bench, now_ms: u32) -> Option<[u8; 3]> {
+        bench.unit.tick(now_ms, &mut || ENTROPY).power_notification
+    }
+
+    // IEC 62386-103 §9.12.2
+    #[test]
+    fn a_power_notification_waits_its_drawn_delay_and_is_sent_once() {
+        for (draw, delay) in [
+            (0, POWER_NOTIFICATION_EARLIEST_MS),
+            (LAST_DRAW, POWER_NOTIFICATION_LATEST_MS),
+            (LAST_DRAW + 1, POWER_NOTIFICATION_EARLIEST_MS),
+        ] {
+            let (mut bench, completed) = power_on(NOTIFYING, draw);
+            assert_eq!(notification_at(&mut bench, completed + delay - 1), None, "draw {draw}");
+            assert_eq!(notification_at(&mut bench, completed + delay), Some(NAMED_NOTIFICATION), "draw {draw}");
+            assert_eq!(notification_at(&mut bench, completed + delay + 1), None, "sent once");
+        }
+    }
+
+    #[test]
+    fn a_unit_at_its_factory_notification_setting_announces_no_power_cycle() {
+        let (mut bench, completed) = power_on(FACTORY_NVM, 0);
+        assert_eq!(notification_at(&mut bench, completed + POWER_NOTIFICATION_LATEST_MS), None);
+    }
+
+    // IEC 62386-103 §9.9.3
+    #[test]
+    fn quiescent_mode_started_inside_the_delay_suppresses_the_notification_for_good() {
+        let (mut bench, completed) = power_on(NOTIFYING, LAST_DRAW);
+        bench
+            .device(Device103Address::Broadcast, Device103Command::StartQuiescentMode)
+            .device(Device103Address::Broadcast, Device103Command::StopQuiescentMode);
+        assert_eq!(notification_at(&mut bench, completed + POWER_NOTIFICATION_LATEST_MS), None);
+    }
+
+    #[test]
+    fn a_notification_disabled_inside_the_delay_is_not_sent() {
+        let (mut bench, completed) = power_on(NOTIFYING, LAST_DRAW);
+        bench.device(Device103Address::Broadcast, Device103Command::DisablePowerCycleNotification);
+        assert_eq!(notification_at(&mut bench, completed + POWER_NOTIFICATION_LATEST_MS), None);
+    }
+
+    #[test]
+    fn a_later_hydration_is_not_a_power_cycle() {
+        let (mut bench, completed) = power_on(NOTIFYING, 0);
+        let sent_at = completed + POWER_NOTIFICATION_EARLIEST_MS;
+        assert_eq!(notification_at(&mut bench, sent_at), Some(NAMED_NOTIFICATION));
+        assert!(bench.unit.hydrate(&snapshot(NOTIFYING, 2, 0)));
+        assert_eq!(notification_at(&mut bench, sent_at + 1), None);
+        assert_eq!(notification_at(&mut bench, sent_at + POWER_NOTIFICATION_LATEST_MS + 1), None);
+    }
+
+    #[test]
+    fn nothing_is_armed_before_the_unit_is_hydrated() {
+        let mut unit = Device103Unit::new(&IDENTITY);
+        assert_eq!(unit.tick(NOW, &mut || 0).power_notification, None);
+        assert!(unit.hydrate(&snapshot(NOTIFYING, 1, 0)));
+        let completed = NOW + POWER_NOTIFICATION_LATEST_MS;
+        assert_eq!(unit.tick(completed, &mut || 0).power_notification, None, "the delay starts here");
+        let early = completed + POWER_NOTIFICATION_EARLIEST_MS - 1;
+        assert_eq!(unit.tick(early, &mut || 0).power_notification, None);
     }
 }

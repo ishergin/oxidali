@@ -24,6 +24,7 @@ const ALLOWED_KEYS: &[&str] = &[
     "dt8_rgbwaf_control_assert",
     "application_active",
     "device_short_address",
+    "power_cycle_notification",
 ];
 
 declare_handler_shell! {
@@ -64,6 +65,18 @@ pub struct DaliSettingsPatchData {
     dt8_rgbwaf_control_assert: bool,
     application_active: bool,
     device_short_address: u8,
+    power_cycle_notification: bool,
+}
+
+fn parse_short_address(value: &serde_json::Value) -> Result<u8, HttpResponse> {
+    if value.is_null() {
+        return Ok(0xFF);
+    }
+    let n = value.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
+    if n > u64::from(MAX_SHORT_ADDRESS) {
+        return Err(json_err(422, "invalid_value"));
+    }
+    Ok(u8::try_from(n).unwrap_or(0xFF))
 }
 
 impl crate::http::handlers::common::MutatingHandler for DaliSettingsPatchHandler {
@@ -97,16 +110,11 @@ impl crate::http::handlers::common::MutatingHandler for DaliSettingsPatchHandler
         }
         if let Some(value) = obj.get("device_short_address") {
             data.patch_mask |= DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS;
-            data.device_short_address = match value {
-                serde_json::Value::Null => 0xFF,
-                other => {
-                    let n = other.as_u64().ok_or_else(|| json_err(422, "invalid_value"))?;
-                    if n > u64::from(MAX_SHORT_ADDRESS) {
-                        return Err(json_err(422, "invalid_value"));
-                    }
-                    u8::try_from(n).unwrap_or(0xFF)
-                }
-            };
+            data.device_short_address = parse_short_address(value)?;
+        }
+        if let Some(value) = parse_bool_field(obj, "power_cycle_notification")? {
+            data.patch_mask |= DaliSettingsUpdateCommand::PATCH_POWER_CYCLE_NOTIFICATION;
+            data.power_cycle_notification = value;
         }
         Ok(data)
     }
@@ -127,6 +135,7 @@ impl crate::http::handlers::common::MutatingHandler for DaliSettingsPatchHandler
                 dt8_rgbwaf_control_assert: data.dt8_rgbwaf_control_assert,
                 application_active: data.application_active,
                 device_short_address: data.device_short_address,
+                power_cycle_notification: data.power_cycle_notification,
             },
         );
         let watch = Arc::clone(&self.apply_watch);

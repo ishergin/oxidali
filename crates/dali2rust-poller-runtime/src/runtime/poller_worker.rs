@@ -902,6 +902,7 @@ impl dali2rust_domain::registry::DaliSettingsReadPort for ActiveRole {
             dt8_rgbwaf_control_assert: false,
             application_active: true,
             device_short_address: None,
+            power_cycle_notification: false,
         }
     }
 }

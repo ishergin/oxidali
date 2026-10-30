@@ -9,6 +9,7 @@ pub struct DaliSettingsDto {
     pub dt8_rgbwaf_control_assert: bool,
     pub application_active: bool,
     pub device_short_address: Option<u8>,
+    pub power_cycle_notification: bool,
 }
 
 declare_settings_http_surface! {
@@ -31,5 +32,6 @@ pub fn dali_settings_view_to_dto(view: DaliSettingsView) -> DaliSettingsDto {
         dt8_rgbwaf_control_assert: view.dt8_rgbwaf_control_assert,
         application_active: view.application_active,
         device_short_address: view.device_short_address,
+        power_cycle_notification: view.power_cycle_notification,
     }
 }

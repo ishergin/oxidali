@@ -95,6 +95,7 @@ impl DaliSettingsRecord {
             dt8_rgbwaf_control_assert: self.dt8_rgbwaf_control_assert,
             application_active: self.application_active,
             device_short_address: self.device_short_address,
+            power_cycle_notification: self.power_cycle_notification,
         }
     }
 
@@ -146,6 +147,9 @@ impl DaliSettingsRecord {
         if body.patch_mask & DaliSettingsUpdateCommand::PATCH_DEVICE_SHORT_ADDRESS != 0 {
             self.device_short_address =
                 (body.device_short_address <= 63).then_some(body.device_short_address);
+        }
+        if body.patch_mask & DaliSettingsUpdateCommand::PATCH_POWER_CYCLE_NOTIFICATION != 0 {
+            self.power_cycle_notification = body.power_cycle_notification;
         }
         if self.application_active != was_active {
             self.application_active_moved_by = ApplicationActiveMover::Command;
@@ -519,6 +523,7 @@ mod bus_unit_evidence_tests {
             dt8_rgbwaf_control_assert: true,
             application_active: true,
             device_short_address: 9,
+            power_cycle_notification: false,
         };
         store.apply_dali_settings_from_command(&patch);
         assert_eq!(published(&sink), row(&store).bus_unit_snapshot(), "before the command is answered");
@@ -725,6 +730,7 @@ mod bus_unit_evidence_tests {
             dt8_rgbwaf_control_assert: true,
             application_active: true,
             device_short_address: 9,
+            power_cycle_notification: false,
         };
         store.apply_dali_settings_from_command(&patch);
         assert_eq!(row(&store).bus_unit_revision, 1);
@@ -741,6 +747,7 @@ mod bus_unit_evidence_tests {
             dt8_rgbwaf_control_assert: true,
             application_active: true,
             device_short_address: short_address,
+            power_cycle_notification: false,
         });
         row(store).bus_unit_revision
     }

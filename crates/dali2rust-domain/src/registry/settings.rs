@@ -45,6 +45,7 @@ pub struct DaliSettingsView {
     pub dt8_rgbwaf_control_assert: bool,
     pub application_active: bool,
     pub device_short_address: Option<u8>,
+    pub power_cycle_notification: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

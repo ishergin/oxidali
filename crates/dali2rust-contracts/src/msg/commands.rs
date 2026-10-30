@@ -746,6 +746,7 @@ declare_bus_payloads! {
         pub dt8_rgbwaf_control_assert: bool,
         pub application_active: bool,
         pub device_short_address: u8,
+        pub power_cycle_notification: bool,
     }
     budget = DaliSettingsUpdateCommand {
         patch_mask: u8::MAX,
@@ -753,6 +754,7 @@ declare_bus_payloads! {
         dt8_rgbwaf_control_assert: true,
         application_active: true,
         device_short_address: u8::MAX,
+        power_cycle_notification: true,
     };
 
     pub struct DaliBusHealthProbeCommand {
@@ -1137,6 +1139,15 @@ declare_bus_payloads! {
         data: u8::MAX,
         dtr: [u8::MAX; 3],
     };
+
+    pub struct Dali103PowerNotificationCommand {
+        pub registry_adapter_id: u8,
+        pub frame: [u8; 3],
+    }
+    budget = Dali103PowerNotificationCommand {
+        registry_adapter_id: u8::MAX,
+        frame: [u8::MAX; 3],
+    };
 }
 
 impl FirmwareUpdateBeginCommand {
@@ -1228,6 +1239,7 @@ impl DaliSettingsUpdateCommand {
     pub const PATCH_DT8_RGBWAF_CONTROL_ASSERT: u8 = 2;
     pub const PATCH_APPLICATION_ACTIVE: u8 = 4;
     pub const PATCH_DEVICE_SHORT_ADDRESS: u8 = 8;
+    pub const PATCH_POWER_CYCLE_NOTIFICATION: u8 = 16;
 }
 
 impl VirtualLampConfigUpdateCommand {

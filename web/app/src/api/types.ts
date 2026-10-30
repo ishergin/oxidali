@@ -408,6 +408,7 @@ export interface DaliSettings {
   dt8_rgbwaf_control_assert: boolean
   application_active: boolean
   device_short_address: number | null
+  power_cycle_notification: boolean
 }
 
 export interface PhysicalDevicePatch {

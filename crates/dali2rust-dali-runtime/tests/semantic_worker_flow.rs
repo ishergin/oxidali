@@ -411,8 +411,15 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
         m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into(),
         m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0000_0101, dtr: [0x07, 0xFE, 0x10] }.into(),
+        power_notification(),
         m::DaliBusHealthProbeCommand { registry_adapter_id: 0, query_power_failure: false }.into(),
     ]
+}
+
+const POWER_NOTIFICATION: [u8; 3] = [0xFE, 0xE0, 0x00];
+
+fn power_notification() -> BusCommandPayload {
+    m::Dali103PowerNotificationCommand { registry_adapter_id: 0, frame: POWER_NOTIFICATION }.into()
 }
 
 fn assert_nothing_reached_the_wire(harness: &WorkerHarness, kind: &str) {
@@ -502,9 +509,20 @@ fn quiescent_mode_is_refused_after_the_passive_gate_and_before_the_adapter_gate(
     assert_eq!(request_refusal(both.clone(), 302, probe()), "controller_quiescent", "the probe a passive controller may send");
     assert_eq!(request_refusal(both.clone(), 304, test_frame()), "controller_quiescent", "the test frame a passive controller may send");
     let sixteen_bit = || m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0010_0101, dtr: [0xA5, 0x5A, 0] }.into();
-    assert_eq!(request_refusal(both, 305, sixteen_bit()), "controller_passive", "a 16-bit test frame is a command");
+    assert_eq!(request_refusal(both.clone(), 305, sixteen_bit()), "controller_passive", "a 16-bit test frame is a command");
+    assert_eq!(request_refusal(both, 306, power_notification()), "controller_quiescent", "§9.9.3 holds every event");
     let disabled = TestReadPort { enabled: false, ..quiescent() };
     assert_eq!(request_refusal(Arc::new(disabled), 303, raw()), "controller_quiescent");
+}
+
+// IEC 62386-103 §9.9.1, §9.12.2
+#[test]
+fn a_passive_controller_still_sends_its_power_notification() {
+    let passive = Arc::new(TestReadPort { enabled: true, passive: true, ..Default::default() });
+    let harness = WorkerHarness::new(passive, ControllerMode::NoAnswer);
+    harness.publish(envelope_on_adapter_0(307, power_notification()));
+    assert_eq!(harness.recv_confirmation_for(307).status, DeliveryStatus::Ok);
+    assert_eq!(harness.sent_frames24.lock().unwrap().as_slice(), &[POWER_NOTIFICATION]);
 }
 
 #[test]
