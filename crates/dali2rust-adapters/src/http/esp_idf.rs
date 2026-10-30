@@ -1,11 +1,15 @@
 use std::io;
 use std::io::Write as StdWrite;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::http::server::{Configuration, EspHttpConnection, EspHttpServer, Method, Request};
 use esp_idf_svc::io::{EspIOError, Write};
-use esp_idf_svc::sys::{heap_caps_malloc, EspError, ESP_FAIL, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL};
+use esp_idf_svc::sys::{
+    heap_caps_malloc, httpd_get_client_list, EspError, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT,
+    MALLOC_CAP_INTERNAL,
+};
 
 use dali2rust_api::http::router::{BodyRefusal, Router, MAX_REQUEST_BODY_BYTES};
 use dali2rust_api::http::types::{HttpBody, HttpResponse};
@@ -15,6 +19,8 @@ use super::wire_method::wire_method;
 
 const HTTPD_TASK_STACK_BYTES: usize = 20 * 1024;
 const HTTPD_MAX_OPEN_SOCKETS: usize = 10;
+const SOCKETS_FULL_ENTRY_GAP_MS: u32 = 1_000;
+const SOCKETS_FULL_REPEAT_MS: u32 = 60_000;
 
 pub struct HttpdStackReserve(*mut core::ffi::c_void);
 
@@ -307,10 +313,45 @@ struct Phases {
     total_ms: u64,
 }
 
+fn open_sockets(conn: &EspHttpConnection<'_>) -> Option<usize> {
+    let mut fds = [0 as core::ffi::c_int; HTTPD_MAX_OPEN_SOCKETS];
+    let mut open = HTTPD_MAX_OPEN_SOCKETS;
+    // SAFETY: the live request's `handle` is its server, and the call writes at most `open` descriptors into `fds`.
+    let err = unsafe { httpd_get_client_list((*conn.handle()).handle, &mut open, fds.as_mut_ptr()) };
+    (err == ESP_OK).then_some(open)
+}
+
+fn note_socket_pressure(conn: &EspHttpConnection<'_>) {
+    let Some(open) = open_sockets(conn) else {
+        return;
+    };
+    if sockets_full_log_due(open >= HTTPD_MAX_OPEN_SOCKETS) {
+        log::warn!("HTTP: all {open} sockets open; the next connection closes the least recently used");
+    }
+}
+
+fn sockets_full_log_due(full: bool) -> bool {
+    static FULL: AtomicBool = AtomicBool::new(false);
+    static LAST_LOGGED_MS: AtomicU32 = AtomicU32::new(0);
+    let was_full = FULL.swap(full, Ordering::Relaxed);
+    if !full {
+        return false;
+    }
+    let gap_ms = if was_full { SOCKETS_FULL_REPEAT_MS } else { SOCKETS_FULL_ENTRY_GAP_MS };
+    let now_ms = dali2rust_platform::liveness::monotonic_ms().max(1);
+    let last = LAST_LOGGED_MS.load(Ordering::Relaxed);
+    if last != 0 && now_ms.wrapping_sub(last) < gap_ms {
+        return false;
+    }
+    LAST_LOGGED_MS.store(now_ms, Ordering::Relaxed);
+    true
+}
+
 fn handle_request(
     router: &Arc<Router>,
     mut req: Request<&mut EspHttpConnection<'_>>,
 ) -> Result<(), EspIOError> {
+    note_socket_pressure(req.connection());
     let method = wire_method(req.method());
     let uri = req.uri().to_string();
     match read_body(&mut req) {

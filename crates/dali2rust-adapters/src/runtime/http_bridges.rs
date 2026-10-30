@@ -392,12 +392,13 @@ declare_counter_mapping! {
     }
 
     mqtt_dto(c: dali2rust_mqtt_runtime::MqttCounters) -> MqttBridgeDto {
-        connected = c.is_connected(), connects_total, publishes_total,
+        connected = c.is_connected(), connects_total,
         publish_failures_total, commands_received_total, commands_dropped_total,
         commands_unroutable_total, commands_ingress_rejected_total,
         discovery_published_total, discovery_failed_total,
         terminal_event_publish_failed_total, terminal_event_publish_retried_total,
-        bus_discarded_total, bus_coalesced_total, rule_publishes_dropped_total,
+        bus_discarded_total, bus_coalesced_total, bus_backlog_peak,
+        rule_publishes_dropped_total,
     }
 }
 

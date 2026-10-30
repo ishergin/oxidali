@@ -304,7 +304,6 @@ pub struct WebSocketDto {
 pub struct MqttBridgeDto {
     pub connected: bool,
     pub connects_total: u32,
-    pub publishes_total: u32,
     pub publish_failures_total: u32,
     pub commands_received_total: u32,
     pub commands_dropped_total: u32,
@@ -316,6 +315,7 @@ pub struct MqttBridgeDto {
     pub terminal_event_publish_retried_total: u32,
     pub bus_discarded_total: u32,
     pub bus_coalesced_total: u32,
+    pub bus_backlog_peak: u32,
     pub rule_publishes_dropped_total: u32,
 }
 
@@ -459,11 +459,12 @@ declare_widest_dtos! {
         sniffer_dropped_total, logs_lines_total, logs_dropped_total,
     }
     MqttBridgeDto {
-        connected = false, connects_total, publishes_total, publish_failures_total,
+        connected = false, connects_total, publish_failures_total,
         commands_received_total, commands_dropped_total, commands_unroutable_total,
         commands_ingress_rejected_total, discovery_published_total, discovery_failed_total,
         terminal_event_publish_failed_total, terminal_event_publish_retried_total,
-        bus_discarded_total, bus_coalesced_total, rule_publishes_dropped_total,
+        bus_discarded_total, bus_coalesced_total, bus_backlog_peak,
+        rule_publishes_dropped_total,
     }
     ApplyOrchestratorDto {
         runs_started, cells_published, skips_published, cell_retries, outcome_timeouts,

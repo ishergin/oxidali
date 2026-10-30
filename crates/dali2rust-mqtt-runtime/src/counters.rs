@@ -22,6 +22,7 @@ pub struct MqttCounters {
     pub discovery_failed_total: AtomicU32,
     pub bus_discarded_total: AtomicU32,
     pub bus_coalesced_total: AtomicU32,
+    pub bus_backlog_peak: AtomicU32,
     pub terminal_event_publish_failed_total: AtomicU32,
     pub terminal_event_publish_retried_total: AtomicU32,
 }

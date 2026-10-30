@@ -960,7 +960,6 @@ export type OperationTrackerCounters = {
 export type MqttBridgeCounters = {
   connected: boolean
   connects_total: number
-  publishes_total: number
   publish_failures_total: number
   commands_received_total: number
   commands_dropped_total: number
@@ -972,6 +971,7 @@ export type MqttBridgeCounters = {
   terminal_event_publish_retried_total: number
   bus_discarded_total: number
   bus_coalesced_total: number
+  bus_backlog_peak: number
   rule_publishes_dropped_total: number
 }
 

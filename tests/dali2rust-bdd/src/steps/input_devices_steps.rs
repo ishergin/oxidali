@@ -175,7 +175,7 @@ async fn given_scan_with_ed1_feedback(world: &mut DaliWorld, types: String, capa
     seed_scan_with_feedback(world, &types, 0x2F, parse_hex_byte(&capability), None);
 }
 
-// INP-019 INP-070 INP-071 INP-073 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097 INP-084 INP-085 RED-027
+// INP-019 INP-070 INP-071 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097 INP-084 INP-085 RED-027
 #[when(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 #[given(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 async fn given_frame24_answer(
@@ -195,7 +195,7 @@ async fn given_frame24_answer(
     );
 }
 
-// INP-019 INP-070 INP-071 INP-073 INP-076 INP-079 INP-095 INP-097 INP-084 INP-085
+// INP-019 INP-070 INP-071 INP-076 INP-079 INP-095 INP-097 INP-084 INP-085
 #[when(regex = r#"^I PATCH JSON (.+?) to "([^"]+)" and the operation succeeds$"#)]
 async fn when_patch_and_operation_succeeds(world: &mut DaliWorld, body: String, path: String) {
     let before = fetch_json(world.server_port(), &detail_path_of(&path)).map(|v| v.to_string());
@@ -218,7 +218,7 @@ fn detail_path_of(patch_path: &str) -> String {
     }
 }
 
-// INP-019 INP-070 INP-073 INP-076 INP-095 INP-096 INP-097 INP-084 RED-027 RED-035
+// INP-019 INP-070 INP-076 INP-095 INP-096 INP-097 INP-084 RED-027 RED-035
 #[then(regex = r#"^the mock transport 24-bit trace should be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);
@@ -337,7 +337,7 @@ async fn when_clear_frames24(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear_sent_frames24();
 }
 
-// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094 INP-098
+// INP-030 INP-072 INP-078 ADP-025 INP-087 INP-089 INP-090 INP-091 INP-092 INP-094 INP-098 INP-073
 #[then("the mock transport should have sent no 24-bit frames")]
 async fn then_no_frames24(world: &mut DaliWorld) {
     let mock = world.dali_mock();

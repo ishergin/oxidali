@@ -17,6 +17,8 @@ const RULES_GAUGES = ['log_lines'] as const
 
 const WEBSOCKET_GAUGES = ['clients'] as const
 
+const MQTT_GAUGES = ['bus_backlog_peak'] as const
+
 const POLLER_GAUGES = ['targets_excluded'] as const
 
 const PERSISTENCE_GAUGES = ['unread_slices'] as const
@@ -122,7 +124,13 @@ function MqttCard({ mqtt, deltas }: { mqtt: MqttBridgeCounters; deltas: Flat }) 
         <span class={`v${connected ? '' : ' fault'}`}>{connected ? 'yes' : 'no'}</span>
         <span class="delta" />
       </div>
-      <CounterRows block={totals} path="mqtt" deltas={deltas} isFault={isFault} />
+      <CounterRows
+        block={totals}
+        path="mqtt"
+        deltas={deltas}
+        gauges={MQTT_GAUGES}
+        isFault={isFault}
+      />
     </Card>
   )
 }
