@@ -92,6 +92,10 @@ impl ConfiguredFeedback {
         .iter()
         .any(Option::is_some)
     }
+
+    pub fn learned_map(&self, sent_map: u8) -> bool {
+        self.map_code != sent_map && FeedbackOpcodeMap::from_code(self.map_code).is_some()
+    }
 }
 
 const fn commands_of(field: FeedbackPatchField) -> (Feedback332Command, Feedback332Command) {
@@ -130,7 +134,7 @@ pub fn configure_feedback(
         return Err(SemanticDaliError::OperationFailed("feedback_not_supported"));
     };
     proved.map_code = map_code;
-    // IEC 62386-332:2017 Table 5
+    // IEC 62386-332 Table 5
     if matches!(map, FeedbackOpcodeMap::Ed1) {
         return Err(SemanticDaliError::OperationFailed(FEEDBACK_UNVERIFIABLE));
     }
@@ -245,12 +249,12 @@ mod tests {
             matches!(outcome, Err(SemanticDaliError::OperationFailed(FEEDBACK_UNVERIFIABLE))),
             "{outcome:?}"
         );
-        let frames = transport.lock().expect("mock lock").sent_frames24();
-        let set = Feedback332Command::SetActiveBrightness
-            .frame(address, feature, FeedbackOpcodeMap::Ed1)
+        let corrected_capability = Feedback332Command::QueryCapability
+            .frame(address, feature, FeedbackOpcodeMap::DiiaCorrected)
             .as_bytes();
-        assert!(frames.contains(&ed1_capability), "the probe must have found ed1: {frames:02X?}");
-        assert!(!frames.contains(&set), "a SET reached the wire: {frames:02X?}");
+        let frames = transport.lock().expect("mock lock").sent_frames24();
+        assert_eq!(frames, [corrected_capability, ed1_capability], "only the probe may reach the wire");
+        assert!(proved.learned_map(cmd.opcode_map), "the probed map must be recorded");
         assert!(!proved.proved_any());
     }
 

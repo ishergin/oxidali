@@ -4,14 +4,17 @@ use std::time::Duration;
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, CorrelationIdAllocator};
-use dali2rust_contracts::msg::{Dali103ScanCommand, Origin};
+use dali2rust_contracts::msg::{
+    Dali103FeedbackConfigureCommand, Dali103ScanCommand, FeedbackPatchField, Origin,
+};
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
     DALI_WORKER_HANDLED_COMMANDS,
 };
 use dali2rust_domain::dali::dev103::{
-    Device103Address, Device103Command, Instance103Command, InstanceAddress,
+    feedback_capability, Device103Address, Device103Command, Feedback332Command,
+    FeedbackOpcodeMap, Instance103Command, InstanceAddress,
 };
 use dali2rust_platform::dali::WireActivity;
 use dali2rust_platform::liveness::LivenessBeat;
@@ -27,6 +30,7 @@ const INSTANCE_COUNT: u8 = 10;
 const SILENT_INSTANCE: u8 = 1;
 const LAST_INSTANCE: u8 = INSTANCE_COUNT - 1;
 const SCAN_CORRELATION: u64 = 120;
+const FEEDBACK_CORRELATION: u64 = 121;
 const WAIT: Duration = Duration::from_secs(20);
 const LIVENESS_BUDGET_MS: u32 = 60_000;
 
@@ -54,6 +58,8 @@ struct Stack {
     store: Arc<RegistryStore>,
     registry_counters: Arc<RegistryWorkerCounters>,
     dali_counters: Arc<DaliWorkerCounters>,
+    publisher: dali2rust_bus::BusPublisher,
+    transport: Arc<Mutex<MockDaliTransport>>,
     _host: BusHost,
 }
 
@@ -85,7 +91,7 @@ fn scan_the_panel() -> Stack {
     let dali_counters = Arc::new(DaliWorkerCounters::default());
     spawn_dali_worker(
         dali_rx,
-        DaliController::new(transport, Box::new(StdClock::new())),
+        DaliController::new(Arc::clone(&transport), Box::new(StdClock::new())),
         DaliRuntimeConfig::default(),
         Arc::clone(&store) as _,
         publisher.clone(),
@@ -102,7 +108,7 @@ fn scan_the_panel() -> Stack {
         Dali103ScanCommand { registry_adapter_id: 0 },
     );
     publish_queued(&publisher, BusChannel::Commands, BusFrame::command(scan));
-    Stack { store, registry_counters, dali_counters, _host: host }
+    Stack { store, registry_counters, dali_counters, publisher, transport, _host: host }
 }
 
 #[test]
@@ -138,4 +144,46 @@ fn every_instance_type_lands_on_its_own_number() {
         Some(instance_type(LAST_INSTANCE)),
         "a type past the eighth instance reaches the registry"
     );
+}
+
+fn feedback_probe(stack: &Stack, instance_number: u8) -> Option<u8> {
+    let detail = stack.store.input_device_detail(0, PANEL)?;
+    let instance = detail.instances.iter().find(|i| i.instance_number == instance_number)?;
+    instance.feedback_probe
+}
+
+#[test]
+fn a_feedback_write_that_finds_the_2017_map_leaves_it_for_the_next_write() {
+    let stack = scan_the_panel();
+    wait_until(|| feedback_probe(&stack, 0) == Some(FeedbackOpcodeMap::ABSENT_CODE), WAIT);
+    let ed1_capability = Feedback332Command::QueryCapability
+        .frame(Device103Address::Short(PANEL), InstanceAddress::FeatureNumber(0), FeedbackOpcodeMap::Ed1)
+        .as_bytes();
+    stack
+        .transport
+        .lock()
+        .expect("mock lock")
+        .script_frame24_answer(ed1_capability, feedback_capability::VISIBLE);
+    let mut write = Dali103FeedbackConfigureCommand {
+        registry_adapter_id: 0,
+        short_address: PANEL,
+        instance_number: 0,
+        patch_mask: 0,
+        timing: 0,
+        active_brightness: 0,
+        active_colour: 0,
+        inactive_brightness: 0,
+        inactive_colour: 0,
+        opcode_map: FeedbackOpcodeMap::ABSENT_CODE,
+    };
+    write.patch(FeedbackPatchField::ActiveBrightness, 1);
+    let envelope = dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        FEEDBACK_CORRELATION,
+        BusId::default().0,
+        Some(Origin::Api),
+        write,
+    );
+    publish_queued(&stack.publisher, BusChannel::Commands, BusFrame::command(envelope));
+    wait_until(|| feedback_probe(&stack, 0) == Some(FeedbackOpcodeMap::Ed1.code()), WAIT);
 }

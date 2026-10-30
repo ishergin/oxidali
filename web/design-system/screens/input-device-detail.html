@@ -66,7 +66,7 @@ h2:first-of-type { margin-top: 0; }
    The device has its own screen, in the physical device's shape: same crumbs,
    same `EditableName` heading, same `Card` + `.attr` rows, same `.ptabs` bar.
 
-   THREE DECISIONS.
+   FOUR DECISIONS.
 
    1. A ROW IS A LINK, NOT AN ACCORDION. Eight instances stacked is a scroll;
       eight tabs is a choice. The instance number lives in the URL
@@ -83,7 +83,12 @@ h2:first-of-type { margin-top: 0; }
    3. THE STATUS BYTES LOOK LIKE THE PHYSICAL DEVICE'S. `BitChips` in a
       wrapping cluster with the raw hex beside it — the same component as the
       Status card in Physical devices, which is the only way two screens stay
-      identical. */
+      identical.
+
+   4. A 2017-MAP PANEL SHOWS ITS INDICATOR AND TAKES NO WRITE. Its read-back
+      query has the bytes of a `SELECT FEEDBACK`, so the write is refused
+      (`422 feedback_unverifiable`): the brightness inputs are disabled and the
+      row's `.rowhint` reads "2017 opcode map: writes are refused (422)". */
 .crumbs { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; }
 .crumbs a { color: var(--text-muted); text-decoration: none; }
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }

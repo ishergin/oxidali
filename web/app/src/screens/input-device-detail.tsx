@@ -147,6 +147,7 @@ function InstancePanel({
       api.configureInputInstance(a, short, inst.instance_number, { enabled }),
     ).then(refresh)
   }
+  const ed1 = inst.feedback.opcode_map === 'ed1'
   const commitFeedback = (raw: string, field: string) => {
     const value = Number(raw)
     if (!Number.isInteger(value) || value < 0 || value > 255) return
@@ -373,7 +374,7 @@ function InstancePanel({
             controls
             k="Brightness"
             title="Active / inactive brightness live in the panel's NVM; the lit-or-not state is re-asserted by rules after every panel power cycle."
-            hint={inst.feedback.opcode_map === 'ed1' ? 'answers the 2017 opcode map' : undefined}
+            hint={ed1 ? '2017 opcode map: writes are refused (422)' : undefined}
           >
             <span class="fbctl">
               {inst.feedback.active_colour !== null && (
@@ -391,6 +392,7 @@ function InstancePanel({
                 }
                 placeholder="active"
                 inputMode="numeric"
+                disabled={ed1}
                 onCommit={(raw) => commitFeedback(raw, 'active_brightness')}
               />
               <EditableText
@@ -401,6 +403,7 @@ function InstancePanel({
                 }
                 placeholder="inactive"
                 inputMode="numeric"
+                disabled={ed1}
                 onCommit={(raw) => commitFeedback(raw, 'inactive_brightness')}
               />
               {inst.feedback.capability === null ? (
