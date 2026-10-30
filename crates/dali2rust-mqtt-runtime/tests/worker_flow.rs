@@ -342,21 +342,22 @@ fn a_burst_of_commits_for_one_lamp_is_coalesced_before_the_broker_sees_it() {
         );
     }
 
+    let held_and_latest = BRIDGE_COALESCE_FROM + 1;
     let counters = Arc::clone(&h.counters);
     wait_until(
-        move || counters.bus_coalesced_total.load(Ordering::Relaxed) > 0,
+        move || {
+            let peak = counters.bus_backlog_peak.load(Ordering::Relaxed);
+            counters.bus_coalesced_total.load(Ordering::Relaxed) > 0
+                && usize::try_from(peak).unwrap_or(usize::MAX) >= held_and_latest
+        },
         WAIT_S,
     );
-    assert!(
-        h.counters.bus_coalesced_total.load(Ordering::Relaxed) > 0,
-        "sixty commits for one lamp must supersede each other, not queue"
-    );
     let peak = h.counters.bus_backlog_peak.load(Ordering::Relaxed);
-    let peak = usize::try_from(peak).unwrap_or(usize::MAX);
-    assert!(
-        (BRIDGE_COALESCE_FROM..=usize::from(COMMITS)).contains(&peak),
-        "the bridge merges only behind a backlog of {BRIDGE_COALESCE_FROM}, so its peak says \
-         how far it fell behind: {peak}"
+    assert_eq!(
+        usize::try_from(peak).unwrap_or(usize::MAX),
+        held_and_latest,
+        "the bridge merges only behind {BRIDGE_COALESCE_FROM} held frames, so one lamp's burst \
+         peaks at those plus its latest commit"
     );
     let mock = Arc::clone(&h.mock);
     wait_until(
