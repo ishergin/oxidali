@@ -25,7 +25,17 @@ fn translator_counter(world: &DaliWorld, name: &str) -> Option<u64> {
 // INP-001 INP-002 INP-003 INP-004 INP-005 RULE-020 RULE-023 INP-006 MQTT-025
 #[when(regex = r"^a 24-bit input event frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
-    let bytes = [parse_hex_byte(&b0), parse_hex_byte(&b1), parse_hex_byte(&b2)];
+    inject_forward24(world, [&b0, &b1, &b2]);
+}
+
+// SET-DALI-007 SET-DALI-008 SET-DALI-009
+#[when(regex = r"^a 24-bit frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
+async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
+    inject_forward24(world, [&b0, &b1, &b2]);
+}
+
+fn inject_forward24(world: &DaliWorld, text: [&str; 3]) {
+    let bytes = text.map(parse_hex_byte);
     let injected = world
         .dali_mock()
         .lock()

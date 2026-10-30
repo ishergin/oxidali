@@ -896,7 +896,6 @@ dependencies = [
  "dali2rust-bsp",
  "dali2rust-bus",
  "dali2rust-contracts",
- "dali2rust-dali-phy",
  "dali2rust-domain",
  "dali2rust-platform",
  "dali2rust-test-support",

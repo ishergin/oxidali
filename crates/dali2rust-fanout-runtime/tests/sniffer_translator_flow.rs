@@ -8,16 +8,25 @@ use dali2rust_bus::{BusConfig, BusHost, BusId, BusSubscriberRx};
 use std::sync::atomic::Ordering::Relaxed;
 
 use dali2rust_contracts::msg::{
-    BusEventPayload, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
-    DaliTargetScope, DecodeStatus, DeviceCommandScope, InputDeviceLifecycleKind, InputEventKind,
+    BusEventPayload, BusUnitNvmRow, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
+    DaliTargetScope, DecodeStatus, InputDeviceLifecycleKind, InputEventKind,
     LevelTransition, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
-use dali2rust_platform::dali::{ObservedRawFrame, ObservedRawFrameKind};
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm};
+use dali2rust_platform::dali::{ObservedItem, ObservedRawFrame, ObservedRawFrameKind};
 use dali2rust_test_support::{recv_event_matching, try_recv_event_matching_envelope, wait_until};
 
+struct FrameTx(std::sync::mpsc::SyncSender<ObservedItem>);
+
+impl FrameTx {
+    fn send(&self, frame: ObservedRawFrame) -> Result<(), std::sync::mpsc::SendError<ObservedItem>> {
+        self.0.send(ObservedItem::Frame(frame))
+    }
+}
+
 struct Harness {
-    tx: std::sync::mpsc::SyncSender<ObservedRawFrame>,
+    tx: FrameTx,
     ev_tap: BusSubscriberRx,
     cmd_tap: BusSubscriberRx,
     counters: Arc<SnifferTranslatorCounters>,
@@ -55,7 +64,7 @@ fn spawn_harness_knowing(instance_type: Option<u8>) -> Harness {
         Arc::new(StubInstanceTypes(instance_type)),
     );
     Harness {
-        tx,
+        tx: FrameTx(tx),
         ev_tap,
         cmd_tap,
         counters,
@@ -645,117 +654,6 @@ fn input_events_publish_no_commands_snif046() {
     );
 }
 
-fn forward24_at(bytes: [u8; 3], mono_ms: u32) -> ObservedRawFrame {
-    ObservedRawFrame {
-        bytes,
-        kind: ObservedRawFrameKind::Forward24,
-        observed_at_ms: 42,
-        observed_at_mono_ms: mono_ms,
-    }
-}
-
-fn recv_app_control(
-    harness: &Harness,
-) -> dali2rust_contracts::msg::Dali103ApplicationControlObservedEvent {
-    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
-        matches!(
-            payload,
-            BusEventPayload::Dali103ApplicationControlObservedEvent(_)
-        )
-    });
-    let BusEventPayload::Dali103ApplicationControlObservedEvent(body) = &ev.payload else {
-        unreachable!("predicate selected this variant");
-    };
-    body.clone()
-}
-
-#[test]
-fn an_application_control_pair_is_published_only_when_confirmed() {
-    let harness = spawn_harness();
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_000)).expect("send");
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_050)).expect("send");
-    let body = recv_app_control(&harness);
-    assert_eq!(body.scope, DeviceCommandScope::Broadcast);
-    assert!(!body.enable, "0x17 is DISABLE");
-    assert_eq!(
-        harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
-        1,
-        "exactly one confirmed pair"
-    );
-}
-
-#[test]
-fn an_application_control_pair_is_judged_by_its_settling_not_its_stamps() {
-    let harness = spawn_harness();
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_000)).expect("send");
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x17], 1_115)).expect("send");
-    let _ = recv_app_control(&harness);
-    assert_eq!(
-        harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
-        1,
-        "94 ms of settling and a 20,8 ms frame put the stamps 115 ms apart"
-    );
-}
-
-#[test]
-fn a_pair_split_past_the_window_is_two_singles() {
-    let harness = spawn_harness();
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x16], 1_000)).expect("send");
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x16], 1_200)).expect("send");
-    harness.tx.send(forward24_at([0xFF, 0xFE, 0x16], 1_240)).expect("send");
-    let _ = recv_app_control(&harness);
-    assert_eq!(
-        harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
-        1,
-        "the split pair must not have counted"
-    );
-}
-
-#[test]
-fn a_short_addressed_pair_reports_the_address_without_judging_it() {
-    let harness = spawn_harness();
-    harness.tx.send(forward24_at([0x0B, 0xFE, 0x16], 2_000)).expect("send");
-    harness.tx.send(forward24_at([0x0B, 0xFE, 0x16], 2_040)).expect("send");
-    let body = recv_app_control(&harness);
-    assert_eq!(body.scope, DeviceCommandScope::Short(5));
-    assert!(body.enable);
-}
-
-#[test]
-fn an_unaddressed_pair_is_reported_as_unaddressed() {
-    let harness = spawn_harness();
-    harness.tx.send(forward24_at([0xFD, 0xFE, 0x17], 3_000)).expect("send");
-    harness.tx.send(forward24_at([0xFD, 0xFE, 0x17], 3_040)).expect("send");
-    let body = recv_app_control(&harness);
-    assert_eq!(
-        body.scope,
-        DeviceCommandScope::Unaddressed,
-        "0xFD reaches only a device without a short address, and the registry knows ours"
-    );
-}
-
-#[test]
-fn any_frame_between_the_two_halves_splits_the_pair() {
-    let harness = spawn_harness();
-    let enable = [0xFF, 0xFE, 0x16];
-    let disable = [0xFF, 0xFE, 0x17];
-    harness.tx.send(forward24_at(enable, 4_000)).expect("send");
-    harness.tx.send(forward16([0x07, 0x90])).expect("send");
-    harness.tx.send(forward24_at(enable, 4_050)).expect("send");
-    harness.tx.send(forward24_at(disable, 4_100)).expect("send");
-    harness.tx.send(forward24_at(disable, 4_140)).expect("send");
-    let body = recv_app_control(&harness);
-    assert!(
-        !body.enable,
-        "IEC 62386-101 §9.3: the frame between the two ENABLE halves makes them two singles, \
-         so the first pair to reach the registry is the unbroken DISABLE"
-    );
-    assert_eq!(
-        harness.counters.app_control_pairs.load(std::sync::atomic::Ordering::Relaxed),
-        1
-    );
-}
-
 #[test]
 fn a_foreign_step_up_is_published_as_a_verb() {
     let h = spawn_harness();
@@ -865,4 +763,46 @@ fn an_unaddressed_scene_pair_touches_no_registered_gear() {
         1,
         "the pair is one command, dropped once"
     );
+}
+
+#[test]
+fn a_bus_unit_report_reaches_the_registry_with_every_field() {
+    let harness = spawn_harness();
+    let adopted = BusUnitNvm {
+        short_address: Some(3),
+        random_address: 0x0012_3456,
+        device_groups: 0x0000_0010,
+        operating_mode: 0x81,
+        power_cycle_notification: false,
+        application_active: true,
+    };
+    let observed = BusUnitNvm {
+        short_address: Some(17),
+        random_address: 0x00AB_CDEF,
+        device_groups: 0x8000_0001,
+        operating_mode: 0x80,
+        power_cycle_notification: true,
+        application_active: false,
+    };
+    let evidence = BusUnitEvidence { adopted, adopted_revision: 9, observed, wire_sequence: 4 };
+    harness.tx.0.send(ObservedItem::BusUnit(evidence)).expect("send");
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusEventPayload::BusUnitNvmObservedEvent(_))
+    });
+    let BusEventPayload::BusUnitNvmObservedEvent(body) = &ev.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    let row = |nvm: BusUnitNvm| BusUnitNvmRow {
+        short_address: nvm.short_address,
+        random_address: nvm.random_address,
+        device_groups: nvm.device_groups,
+        operating_mode: nvm.operating_mode,
+        power_cycle_notification: nvm.power_cycle_notification,
+        application_active: nvm.application_active,
+    };
+    assert_eq!(body.adopted, row(adopted));
+    assert_eq!(body.observed, row(observed));
+    assert_eq!((body.adopted_revision, body.wire_sequence), (9, 4));
+    assert_eq!(ev.meta.origin, Origin::Sniffer);
+    assert_eq!(harness.counters.bus_unit_reports.load(Relaxed), 1);
 }

@@ -287,7 +287,7 @@ fn spawn_fanout_workers(
     publisher: &BusPublisher,
     bus_id: BusId,
     store: &Arc<RegistryStore>,
-    observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
+    observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedItem>,
     sniffer_tap: Arc<SnifferTap>,
 ) -> FanoutWorkers {
     let projector_counters = Arc::new(ProjectorCounters::default());
@@ -741,7 +741,7 @@ fn spawn_bridge_and_display(
 
 fn spawn_service_workers(
     inputs: ServiceInputs,
-    observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
+    observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedItem>,
     display_seams: DisplaySeams,
     beats: &RedundancyBeats,
 ) -> (OperationsWorkers, FanoutWorkers, PeriodicWorkers, BridgeAndDisplay) {
@@ -816,6 +816,7 @@ pub(crate) struct WorkerSpawnInputs {
     pub correlation: Arc<dali2rust_bus::CorrelationIdAllocator>,
     pub ota: Option<OtaWorkerDeps>,
     pub persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
+    pub bus_unit_identity: dali2rust_platform::bus_unit::BusUnitIdentity,
 }
 
 pub(crate) struct OtaWorkerDeps {
@@ -828,7 +829,8 @@ pub(crate) fn spawn_bus_workers<T: DaliTransport + Send + 'static>(
     transport: Arc<Mutex<T>>,
     inputs: WorkerSpawnInputs,
 ) -> (SpawnedWorkers, RuntimeCounterHandles) {
-    let wire = wire_seams(&transport);
+    let wire = wire_seams(&transport, inputs.bus_unit_identity);
+    inputs.registry.store.install_bus_unit_sink(Arc::clone(&wire.arbitration));
     let beats = RedundancyBeats::new();
     let (pipeline_inputs, mut services) = inputs.split();
     let pipeline_wire = PipelineWire {
@@ -1052,12 +1054,15 @@ fn spawn_mqtt_if_configured(
 
 struct WireSeams {
     arbitration: Arc<dali2rust_platform::arbitration::AnswerInputs>,
-    observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
+    observed_rx: std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedItem>,
     phy_sniffer: Arc<dali2rust_platform::dali::PhySnifferCounters>,
     dali: Arc<dali2rust_platform::dali::DaliWireCounters>,
 }
 
-fn wire_seams<T: DaliTransport + Send + 'static>(transport: &Arc<Mutex<T>>) -> WireSeams {
+fn wire_seams<T: DaliTransport + Send + 'static>(
+    transport: &Arc<Mutex<T>>,
+    identity: dali2rust_platform::bus_unit::BusUnitIdentity,
+) -> WireSeams {
     let (observed_rx, phy_sniffer) = wire_sniffer_seam(transport);
     let dali = Arc::new(dali2rust_platform::dali::DaliWireCounters::default());
     let arbitration = Arc::new(dali2rust_platform::arbitration::AnswerInputs::new());
@@ -1065,6 +1070,7 @@ fn wire_seams<T: DaliTransport + Send + 'static>(transport: &Arc<Mutex<T>>) -> W
         let mut t = transport.lock().expect("transport lock");
         t.set_wire_counters(Arc::clone(&dali));
         t.set_answer_inputs(Arc::clone(&arbitration));
+        t.set_bus_unit_identity(identity);
     }
     WireSeams {
         observed_rx,
@@ -1077,7 +1083,7 @@ fn wire_seams<T: DaliTransport + Send + 'static>(transport: &Arc<Mutex<T>>) -> W
 fn wire_sniffer_seam<T: DaliTransport + Send + 'static>(
     transport: &Arc<Mutex<T>>,
 ) -> (
-    std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedRawFrame>,
+    std::sync::mpsc::Receiver<dali2rust_platform::dali::ObservedItem>,
     Arc<dali2rust_platform::dali::PhySnifferCounters>,
 ) {
     let (observed_tx, observed_rx) = std::sync::mpsc::sync_channel(SNIFFER_CHANNEL_CAPACITY);

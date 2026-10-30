@@ -55,6 +55,28 @@ pub enum DeviceCommandScope {
     Short(u8),
 }
 
+// IEC 62386-103 Table 17
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BusUnitNvmRow {
+    pub short_address: Option<u8>,
+    pub random_address: u32,
+    pub device_groups: u32,
+    pub operating_mode: u8,
+    pub power_cycle_notification: bool,
+    pub application_active: bool,
+}
+
+impl BusUnitNvmRow {
+    pub const WIDEST: Self = Self {
+        short_address: Some(u8::MAX),
+        random_address: u32::MAX,
+        device_groups: u32::MAX,
+        operating_mode: u8::MAX,
+        power_cycle_notification: true,
+        application_active: true,
+    };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DaliTargetScope {

@@ -82,7 +82,7 @@ pub struct RxCompletedEvent {
     pub rx_tick: u32,
     pub max_sample_gap_us: u32,
     pub timing_degraded: bool,
-    pub sniff_seq: u8,
+    pub sniff_seq: u32,
     pub isr_decode: IsrDecode,
 }
 

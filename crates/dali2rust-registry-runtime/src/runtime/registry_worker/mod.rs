@@ -179,7 +179,7 @@ pub struct RegistryEventsCounters {
     pub input_events_applied: AtomicU32,
     pub input_events_unattributed: AtomicU32,
     pub input_power_cycles_seen: AtomicU32,
-    pub app_control_applied: AtomicU32,
+    pub bus_unit_evidence_applied: AtomicU32,
     pub discovery_progress_applied: AtomicU32,
     pub discovery_progress_rejected: AtomicU32,
     pub discovery_scan_reconciled_applied: AtomicU32,

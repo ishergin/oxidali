@@ -24,6 +24,7 @@ pub use dali2rust_ws_runtime::{
     WsWorkerPorts, MAX_WS_CLIENTS,
 };
 
+use crate::dali::transport::bus_unit_wire::controller_identity;
 use crate::dali::transport::mock::MockDaliTransport;
 
 pub use bus_stack::BusStackRuntime;
@@ -253,6 +254,7 @@ fn worker_inputs(
         correlation: Arc::clone(&booted.scheduling.poller.correlation),
         ota: ota_worker_deps(rest, booted),
         persisted: Arc::clone(&booted.persisted),
+        bus_unit_identity: booted.bus_unit_identity,
     }
 }
 
@@ -308,6 +310,7 @@ struct BootedStack {
     mqtt_counters: Arc<dali2rust_mqtt_runtime::MqttCounters>,
     ota: OtaShared,
     persisted: Arc<PersistedConfigMark>,
+    bus_unit_identity: dali2rust_platform::bus_unit::BusUnitIdentity,
 }
 
 #[derive(Clone)]
@@ -453,6 +456,7 @@ fn boot_stack(args: BootArgs) -> Box<BootedStack> {
         mqtt_counters: Arc::new(dali2rust_mqtt_runtime::MqttCounters::default()),
         ota,
         persisted,
+        bus_unit_identity: controller_identity(args.version, args.controller_hardware_id),
     })
 }
 

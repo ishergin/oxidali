@@ -46,19 +46,19 @@ REST — [`settings-redundancy`](../../rest-api/resources/settings-redundancy.md
 
 ## Ответ
 
-Первичный обязан ответить в окне Table 20. Супервизор публикует входы блока
-(`dali2rust-platform::arbitration::AnswerInputs`): `applicationActive` и короткий адрес.
-Сниффер на каждом опросе строит из них таблицу ответов
-(`dali2rust-domain::dali::dev103::unit`), а прерывание PHY само декодирует 24-битный
-запрос и отвечает из неё —
+Первичный обязан ответить в окне Table 20. Отвечает модель блока Part 103
+(`dali2rust-domain::dali::dev103::bus_unit`): её переменные публикует реестр из настроек
+DALI (`dali2rust-platform::arbitration::AnswerInputs`), супервизор — только лизу. Сниффер
+кормит модель каждым кадром шины и после опроса публикует таблицу ответов, а прерывание
+PHY само декодирует 24-битный запрос и отвечает из неё —
 [`../../../architecture/08-dali-phy-and-transport.md`](../../../architecture/08-dali-phy-and-transport.md)
-§Answering inside Table 20. В таблице это `QUERY APPLICATION CONTROLLER ENABLED` в
-широковещательной форме и по собственному адресу, а без короткого адреса — в форме
-broadcast unaddressed.
+§Answering inside Table 20. Зонд — `QUERY APPLICATION CONTROLLER ENABLED` в
+широковещательной форме; модель отвечает на него и по собственному адресу, а без
+короткого адреса — в форме broadcast unaddressed.
 
-`applicationActive = false` даёт **пустую** таблицу, а не ответ NO: NO в DALI — это
-отсутствие кадра, и потому два стэндбая не могут ответить друг другу и застыть оба
-пассивными.
+`applicationActive = false` оставляет зонд **без ответа**, а не с ответом NO: NO в DALI —
+это отсутствие кадра, и потому два стэндбая не могут ответить друг другу и застыть оба
+пассивными. На остальные запросы пассивный блок отвечает (103 §9.9.1).
 
 ## Лиза живости
 

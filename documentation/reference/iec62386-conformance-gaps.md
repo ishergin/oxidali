@@ -118,10 +118,14 @@ inherits the prelude-routing rule for opcodes shared with DT8 and Part 218.
 
 101 §4.6.5 requires a multi-master application controller to conform to Part 103.
 Built: 24-bit transmit and receive; commissioning, instance configuration, event
-decoding and Part 332 feedback for input devices; and, for the controller itself, an
-answer to `QUERY APPLICATION CONTROLLER ENABLED` (DiiA 351 §7's arbitration probe) while
-`applicationActive`, obedience to `ENABLE` / `DISABLE APPLICATION CONTROLLER` from
-another controller, and a short address set in `/api/v1/settings/dali`.
+decoding and Part 332 feedback for input devices; and the controller itself as a bus
+unit ([ADR-030](../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)):
+one model fed every frame on the segment answers the device queries (status,
+capabilities, version, DTR content, memory bank 0 without a GTIN) and the special
+queries from the interrupt, executes another controller's commissioning (`INITIALISE`,
+`RANDOMISE`, address search, `COMPARE`, address programming) and its `ENABLE` /
+`DISABLE APPLICATION CONTROLLER`, and hands every NVM change to the registry, which
+persists it beside the short address set in `/api/v1/settings/dali`.
 
 Two deviations are `ACCEPTED`, both decided in
 [ADR-018](../architecture/decisions/ADR-018-controller-redundancy.md): a passive standby
@@ -130,16 +134,12 @@ still sends the arbitration probe, which is how it finds an unowned bus, althoug
 answer lapses with the liveness lease, so a wedged controller stops holding the bus,
 although 103 §11.6.16 ties it to `applicationActive` alone.
 
-Not built for the controller as a bus unit: `QUERY DEVICE STATUS` and the other device
-queries — status, capabilities, version, DTR content (answering with bits it cannot
-vouch for would be worse than silence); memory bank 0 with its identity per logical
-unit, and DiiA 351's bank 201 (§8.2: device type and the type B arbitration byte, which
-is never written `0x00`: that value disables arbitration; ADR-030 proposes omitting the
-bank, since 103:2014 §9.10.9 reserves banks 200–255); being commissioned by another
-controller (`INITIALISE`, `RANDOMISE`, address search, `COMPARE`, address programming);
-`POWER NOTIFICATION`; and quiescent mode. DALI-2 certification is out of reach until
-they are. The design to build them from, and the decisions it owes, is
-[ADR-030](../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md).
+Not built for the controller as a bus unit: quiescent mode holding back our own forward
+frames (the model already answers `QUERY QUIESCENT MODE`); `POWER NOTIFICATION`;
+`SEND TESTFRAME`; the identification screen of `IDENTIFY DEVICE`; the settings surface
+naming who set each bus-unit variable; and the switchover's read-back of its peer.
+DiiA 351's bank 201 is omitted by decision, since 103:2014 §9.10.9 reserves banks
+200–255. DALI-2 certification is out of reach until the rest is built.
 
 ## 9. Parts not implemented
 

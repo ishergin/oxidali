@@ -3,6 +3,7 @@ use dali2rust_platform::answer_table::{
     AnswerEntry, AnswerTableImage, COMPARE_ENTRY, NO_SHORT_ADDRESS, QUERY_SHORT_ADDRESS_ENTRY,
     VERIFY_SHORT_ADDRESS_ENTRY,
 };
+pub use dali2rust_platform::bus_unit::{BusUnitIdentity, BusUnitNvm, BusUnitSnapshot};
 
 use crate::dali::dev103::address::{Device103Address, MAX_SHORT_ADDRESS};
 use crate::dali::dev103::command::{Device103Command, Special103Command};
@@ -34,7 +35,7 @@ const INITIALISE_UNADDRESSED: u8 = 0x7F;
 const INITIALISE_ALL: u8 = 0xFF;
 const LAST_MEMORY_LOCATION: u8 = 0xFF;
 const CAPABILITY_APPLICATION_CONTROLLER: u8 = 0x01;
-const STANDARD_OPERATING_MODE: u8 = 0x00;
+pub const STANDARD_OPERATING_MODE: u8 = 0x00;
 const MANUFACTURER_MODES_FROM: u8 = 0x80;
 const UPPER_GROUPS_SHIFT: u32 = 16;
 // IEC 62386-103 Table 15
@@ -57,41 +58,15 @@ const TESTFRAME_RESERVED: u8 = 0x80;
 const TESTFRAME_PRIORITY: u8 = 0x07;
 const TESTFRAME_PRIORITIES: core::ops::RangeInclusive<u8> = 1..=5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BusUnitNvm {
-    pub short_address: Option<u8>,
-    pub random_address: u32,
-    pub device_groups: u32,
-    pub operating_mode: u8,
-    pub power_cycle_notification: bool,
-    pub application_active: bool,
-}
-
-impl BusUnitNvm {
-    // IEC 62386-103 Table 17
-    pub const FACTORY: Self = Self {
-        short_address: None,
-        random_address: FACTORY_RANDOM_ADDRESS,
-        device_groups: 0,
-        operating_mode: STANDARD_OPERATING_MODE,
-        power_cycle_notification: false,
-        application_active: true,
-    };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BusUnitSnapshot {
-    pub nvm: BusUnitNvm,
-    pub revision: u32,
-    pub acknowledged_wire_sequence: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BusUnitIdentity {
-    pub firmware_version: [u8; 2],
-    pub hardware_version: [u8; 2],
-    pub identification_number: [u8; 8],
-}
+// IEC 62386-103 Table 17
+pub const FACTORY_NVM: BusUnitNvm = BusUnitNvm {
+    short_address: None,
+    random_address: FACTORY_RANDOM_ADDRESS,
+    device_groups: 0,
+    operating_mode: STANDARD_OPERATING_MODE,
+    power_cycle_notification: false,
+    application_active: true,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitialisationState {
@@ -142,7 +117,7 @@ impl Device103Unit {
     #[must_use]
     pub fn new(identity: &BusUnitIdentity) -> Self {
         Self {
-            nvm: BusUnitNvm::FACTORY,
+            nvm: FACTORY_NVM,
             revision: None,
             wire_sequence: 0,
             bank0: bank0(identity),
@@ -186,6 +161,11 @@ impl Device103Unit {
     #[must_use]
     pub const fn wire_sequence(&self) -> u32 {
         self.wire_sequence
+    }
+
+    #[must_use]
+    pub const fn adopted_revision(&self) -> Option<u32> {
+        self.revision
     }
 
     pub fn hydrate(&mut self, snapshot: &BusUnitSnapshot) -> bool {
@@ -237,10 +217,11 @@ impl Device103Unit {
             self.pending_twice = None;
             return UnitEffects::default();
         };
-        let twice = self.second_of_pair(bytes, now_ms);
         if !self.is_hydrated() {
+            self.lost_capture();
             return UnitEffects::default();
         }
+        let twice = self.second_of_pair(bytes, now_ms);
         let mut step = Step { unit: self, now_ms, twice, effects: UnitEffects::default() };
         step.frame(bytes, entropy);
         step.effects
@@ -726,7 +707,7 @@ const fn passed(now_ms: u32, until_ms: u32) -> bool {
     now_ms.wrapping_sub(until_ms) < u32::MAX / 2
 }
 
-const fn is_newer(candidate: u32, adopted: u32) -> bool {
+pub const fn is_newer(candidate: u32, adopted: u32) -> bool {
     let ahead = candidate.wrapping_sub(adopted);
     ahead != 0 && ahead < u32::MAX / 2
 }
@@ -784,7 +765,6 @@ fn bank0(identity: &BusUnitIdentity) -> [Option<u8>; BANK0_LOCATIONS] {
 mod tests {
     use super::*;
     use crate::dali::dev103::address::InstanceAddress;
-    use crate::dali::dev103::unit::answer_table;
     use dali2rust_dali_phy::{AnswerTableCell, TableLookup};
 
     const NOW: u32 = 1_000;
@@ -867,7 +847,7 @@ mod tests {
 
     fn ask_table(image: &AnswerTableImage, bytes: [u8; 3], lease_alive: bool) -> TableLookup {
         let cell = AnswerTableCell::new();
-        cell.publish(image, 0);
+        cell.publish(image, 0, NOW);
         cell.set_lease_until_tick(if lease_alive { NOW + 1 } else { NOW });
         cell.lookup(bytes, 0, NOW)
     }
@@ -877,7 +857,7 @@ mod tests {
     }
 
     fn at(short: u8) -> BusUnitNvm {
-        BusUnitNvm { short_address: Some(short), ..BusUnitNvm::FACTORY }
+        BusUnitNvm { short_address: Some(short), ..FACTORY_NVM }
     }
 
     fn yes() -> TableLookup {
@@ -893,7 +873,7 @@ mod tests {
     }
 
     fn commissioned() -> Bench {
-        let mut bench = Bench::hydrated(BusUnitNvm::FACTORY);
+        let mut bench = Bench::hydrated(FACTORY_NVM);
         bench.special(Special103Command::Initialise, INITIALISE_ALL);
         bench.special(Special103Command::Randomise, 0);
         bench
@@ -906,15 +886,48 @@ mod tests {
             .frame(Device103Address::Broadcast)
             .as_bytes();
         assert_eq!(ask_table(&unit.answer_table(), capabilities, true), TableLookup::Silent);
-        let set = Special103Command::Dtr0.frame(5).as_bytes();
-        unit.feed(UnitFrame::Forward24(set), NOW, &mut || ENTROPY);
-        assert!(unit.hydrate(&snapshot(BusUnitNvm::FACTORY, 1, 0)));
-        let dtr0 = Device103Command::QueryContentDtr0.frame(Device103Address::Broadcast).as_bytes();
-        assert_eq!(ask_table(&unit.answer_table(), dtr0, true), TableLookup::Answer(0));
+        let disable = Device103Command::DisableApplicationController
+            .frame(Device103Address::Broadcast)
+            .as_bytes();
+        unit.feed(UnitFrame::Forward24(disable), NOW, &mut || ENTROPY);
+        assert!(unit.hydrate(&snapshot(FACTORY_NVM, 1, 0)));
+        let second = unit.feed(UnitFrame::Forward24(disable), NOW + 1, &mut || ENTROPY);
+        assert!(!second.nvm_changed, "the first half reached a unit that could not act on it");
+        assert!(unit.nvm().application_active);
     }
 
     #[test]
-    fn the_arbitration_answer_matches_the_table_it_replaces() {
+    fn a_frame_before_hydration_leaves_the_registers_it_may_have_moved_unknown() {
+        let dtr0 = Device103Command::QueryContentDtr0.frame(Device103Address::Broadcast).as_bytes();
+        let mut quiet = Device103Unit::new(&IDENTITY);
+        assert!(quiet.hydrate(&snapshot(FACTORY_NVM, 1, 0)));
+        assert_eq!(ask_table(&quiet.answer_table(), dtr0, true), TableLookup::Answer(0));
+        let mut unit = Device103Unit::new(&IDENTITY);
+        let set = Special103Command::Dtr0.frame(5).as_bytes();
+        unit.feed(UnitFrame::Forward24(set), NOW, &mut || ENTROPY);
+        assert!(unit.hydrate(&snapshot(FACTORY_NVM, 1, 0)));
+        assert_eq!(ask_table(&unit.answer_table(), dtr0, true), TableLookup::Silent);
+    }
+
+    // IEC 62386-103 §11.6.16
+    fn qace_reply(nvm: BusUnitNvm, address: Device103Address, lease_alive: bool) -> TableLookup {
+        let configured = nvm.short_address.filter(|short| *short <= MAX_SHORT_ADDRESS);
+        let addressed = match address {
+            Device103Address::Broadcast => true,
+            Device103Address::BroadcastUnaddressed => configured.is_none(),
+            Device103Address::Short(short) => configured == Some(short),
+            Device103Address::Group(_) | Device103Address::Special(_) => false,
+        };
+        match (addressed, nvm.application_active, lease_alive) {
+            (false, _, _) => TableLookup::NotAddressed,
+            (true, false, _) => TableLookup::Silent,
+            (true, true, true) => TableLookup::Answer(ANSWER_YES),
+            (true, true, false) => TableLookup::LeaseLapsed,
+        }
+    }
+
+    #[test]
+    fn application_control_enabled_is_answered_yes_only_while_active_and_leased() {
         let qace = Device103Command::QueryApplicationControlEnabled;
         let addresses = [
             Device103Address::Broadcast,
@@ -925,15 +938,13 @@ mod tests {
         ];
         for active in [true, false] {
             for short in [None, Some(0), Some(7), Some(63), Some(200)] {
-                let nvm = BusUnitNvm { short_address: short, application_active: active, ..BusUnitNvm::FACTORY };
-                let model = Bench::hydrated(nvm).unit.answer_table();
-                let old = answer_table(active, short);
+                let nvm = BusUnitNvm { short_address: short, application_active: active, ..FACTORY_NVM };
+                let table = Bench::hydrated(nvm).unit.answer_table();
                 for address in addresses {
-                    let bytes = qace.frame(address).as_bytes();
                     for lease in [true, false] {
                         assert_eq!(
-                            ask_table(&model, bytes, lease),
-                            ask_table(&old, bytes, lease),
+                            ask_table(&table, qace.frame(address).as_bytes(), lease),
+                            qace_reply(nvm, address, lease),
                             "{active} {short:?} {address:?} lease {lease}"
                         );
                     }
@@ -1011,7 +1022,7 @@ mod tests {
 
     #[test]
     fn an_unaddressed_broadcast_reaches_a_unit_without_a_short_address() {
-        let mut bench = Bench::hydrated(BusUnitNvm::FACTORY);
+        let mut bench = Bench::hydrated(FACTORY_NVM);
         bench.device(Device103Address::BroadcastUnaddressed, Device103Command::DisableApplicationController);
         assert!(!bench.unit.nvm().application_active);
         assert_eq!(bench.query(Device103Address::BroadcastUnaddressed, Device103Command::QueryMissingShortAddress), yes());
@@ -1044,7 +1055,7 @@ mod tests {
 
     #[test]
     fn randomise_needs_its_pair_and_program_needs_the_unit_selected() {
-        let mut bench = Bench::hydrated(BusUnitNvm::FACTORY);
+        let mut bench = Bench::hydrated(FACTORY_NVM);
         bench.special(Special103Command::Initialise, INITIALISE_ALL);
         bench.send(Special103Command::Randomise.frame(0).as_bytes());
         assert_eq!(bench.unit.nvm().random_address, FACTORY_RANDOM_ADDRESS, "one frame is not a pair");
@@ -1060,11 +1071,11 @@ mod tests {
 
     #[test]
     fn initialisation_commands_are_ignored_outside_the_initialisation_state() {
-        let mut bench = Bench::hydrated(BusUnitNvm::FACTORY);
+        let mut bench = Bench::hydrated(FACTORY_NVM);
         bench.special(Special103Command::Randomise, 0);
         select(&mut bench, FACTORY_RANDOM_ADDRESS);
         bench.special(Special103Command::ProgramShortAddress, 3);
-        assert_eq!(bench.unit.nvm(), BusUnitNvm::FACTORY);
+        assert_eq!(bench.unit.nvm(), FACTORY_NVM);
         assert_eq!(bench.ask(Special103Command::Compare.frame(0).as_bytes()), TableLookup::Silent);
         assert_eq!(bench.ask(Special103Command::VerifyShortAddress.frame(0xFF).as_bytes()), TableLookup::Silent);
     }
@@ -1080,7 +1091,7 @@ mod tests {
             (Some(5), INITIALISE_ALL, true),
             (Some(5), 0x80, false),
         ] {
-            let mut bench = Bench::hydrated(BusUnitNvm { short_address: short, ..BusUnitNvm::FACTORY });
+            let mut bench = Bench::hydrated(BusUnitNvm { short_address: short, ..FACTORY_NVM });
             bench.send(Special103Command::Initialise.frame(data).as_bytes());
             assert_eq!(bench.unit.initialisation(), InitialisationState::Disabled, "one frame is not a pair");
             bench.send(Special103Command::Initialise.frame(data).as_bytes());
@@ -1091,7 +1102,7 @@ mod tests {
 
     #[test]
     fn the_initialisation_state_ends_fifteen_minutes_after_the_last_initialise() {
-        let mut bench = Bench::hydrated(BusUnitNvm::FACTORY);
+        let mut bench = Bench::hydrated(FACTORY_NVM);
         bench.special(Special103Command::Initialise, INITIALISE_ALL);
         bench.now_ms += INITIALISATION_MS / 2;
         bench.special(Special103Command::Initialise, INITIALISE_ALL);
@@ -1151,7 +1162,7 @@ mod tests {
 
     #[test]
     fn the_capabilities_name_an_application_controller_without_instances() {
-        let bench = Bench::hydrated(BusUnitNvm::FACTORY);
+        let bench = Bench::hydrated(FACTORY_NVM);
         assert_eq!(bench.broadcast(Device103Command::QueryDeviceCapabilities), TableLookup::Answer(1));
         assert_eq!(bench.broadcast(Device103Command::QueryNumberOfInstances), TableLookup::Answer(0));
         assert_eq!(bench.broadcast(Device103Command::QueryVersionNumber), TableLookup::Answer(VERSION_2_0));

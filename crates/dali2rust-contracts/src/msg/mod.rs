@@ -25,7 +25,7 @@ pub use observation_order::{observation_supersedes, OBSERVATION_ORDER_WINDOW_MS}
 pub use kinds::{
     AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup,
     DaliTargetScope,
-    DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
+    BusUnitNvmRow, DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
     LevelTransition,
     MemoryBankReadPreset,
     CommissioningStep, IdentifyMechanism, InitialiseScope, InputDeviceLifecycleKind,
@@ -116,7 +116,8 @@ pub use events::{
 };
 pub use events::{ConfigSlicePersistedEvent, PeerConfigChangedEvent};
 pub use events::{
-    BusHealthVerdict, Dali103ApplicationControlObservedEvent, Dali103InstanceConfiguredEvent,
+    BusHealthVerdict, BusUnitNvmObservedEvent, Dali103ApplicationControlObservedEvent,
+    Dali103InstanceConfiguredEvent,
     Dali103ScanProgressEvent,
     Dali103ScanStartedEvent,
     DaliBusHealthProbedEvent, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,

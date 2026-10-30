@@ -140,16 +140,23 @@ dali2rust_contracts::dispatch_bus_events! {
     DaliDeviceReplacedEvent(body) => {
         commit_device_replacement(publisher, corr, store, counters, body);
     },
-    Dali103ApplicationControlObservedEvent(body) => {
-        if let Some(applied) = store.apply_application_control(body.scope, body.enable) {
-            counters.app_control_applied.fetch_add(1, Ordering::Relaxed);
-            crate::runtime::registry::publish::publish_dali_settings_changed(
-                publisher,
-                corr,
-                0,
-                &applied,
-                dali2rust_contracts::msg::APPLICATION_ACTIVE_MOVED_BY_WIRE,
-            );
+    BusUnitNvmObservedEvent(body) => {
+        if let Some(applied) = store.apply_bus_unit_evidence(body) {
+            counters.bus_unit_evidence_applied.fetch_add(1, Ordering::Relaxed);
+            if applied.nvm_changed {
+                log::info!("registry: the wire moved the bus-unit settings (wire sequence {})", body.wire_sequence);
+                crate::runtime::registry::publish::publish_dali_settings_changed(
+                    publisher,
+                    corr,
+                    0,
+                    &applied.record,
+                    if applied.application_active_moved {
+                        dali2rust_contracts::msg::APPLICATION_ACTIVE_MOVED_BY_WIRE
+                    } else {
+                        dali2rust_contracts::msg::APPLICATION_ACTIVE_UNMOVED
+                    },
+                );
+            }
         }
     },
     Dali103InstanceConfiguredEvent(body) => {

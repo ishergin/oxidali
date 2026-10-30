@@ -6,8 +6,8 @@ use super::commands::{
 };
 use super::errors::CompactErrorPayload;
 use super::kinds::{
-    AttributeGroupReadOutcome, ColorMode, DaliTargetScope, DecodeStatus, DeviceCommandScope,
-    DeviceType, DeviceTypeSet,
+    AttributeGroupReadOutcome, BusUnitNvmRow, ColorMode, DaliTargetScope, DecodeStatus,
+    DeviceCommandScope, DeviceType, DeviceTypeSet,
     IdentifyMechanism, InputDeviceLifecycleKind, InputEventKind, ObservedFrameWidth, ObservedKind,
     OperationStatus, OperationType, OperationWorkerSignal, RuntimeSource,
 };
@@ -863,6 +863,19 @@ declare_bus_payloads! {
 
     pub struct PeerConfigChangedEvent {}
     budget = PeerConfigChangedEvent {};
+
+    pub struct BusUnitNvmObservedEvent {
+        pub adopted: BusUnitNvmRow,
+        pub adopted_revision: u32,
+        pub observed: BusUnitNvmRow,
+        pub wire_sequence: u32,
+    }
+    budget = BusUnitNvmObservedEvent {
+        adopted: BusUnitNvmRow::WIDEST,
+        adopted_revision: u32::MAX,
+        observed: BusUnitNvmRow::WIDEST,
+        wire_sequence: u32::MAX,
+    };
 
 }
 

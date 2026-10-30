@@ -185,7 +185,7 @@ impl HeldCapture {
 }
 
 struct TablePath {
-    sniff_seq: AtomicU8,
+    sniff_seq: AtomicU32,
     held: UnsafeCell<HeldCapture>,
     table: AnswerTableCell,
     counts: TableCounters,
@@ -194,7 +194,7 @@ struct TablePath {
 impl TablePath {
     const fn new() -> Self {
         Self {
-            sniff_seq: AtomicU8::new(0),
+            sniff_seq: AtomicU32::new(0),
             held: UnsafeCell::new(HeldCapture::new()),
             table: AnswerTableCell::new(),
             counts: TableCounters::new(),
@@ -884,6 +884,7 @@ impl PhyIsrCore {
             unsafe { self.report_collision_or_restart(phy) };
         } else if poll == TxPollResult::Yielded {
             self.active_expects_backward.store(false, Ordering::Release);
+            self.bus_epoch.fetch_sub(1, Ordering::Relaxed);
             self.tx.yields.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -1122,15 +1123,20 @@ impl PhyIsrCore {
         self.answer.stage(rx_epoch, hb)
     }
 
-    pub fn publish_answer_table(&self, image: &AnswerTableImage, accounts_for: u8) {
-        self.table_path.table.publish(image, accounts_for);
+    pub fn latest_capture(&self) -> u32 {
+        self.table_path.sniff_seq.load(Ordering::Acquire)
+    }
+
+    pub fn publish_answer_table(&self, image: &AnswerTableImage, accounts_for: u32) {
+        let now = self.wire_ticks_total.load(Ordering::Relaxed);
+        self.table_path.table.publish(image, accounts_for, now);
     }
 
     pub fn set_answer_lease_for_ms(&self, now_tick: u32, remaining_ms: u32) {
         self.table_path.table.set_lease_for_ms(now_tick, remaining_ms);
     }
 
-    pub fn lookup_answer(&self, frame: [u8; 3], previous_capture: u8) -> TableLookup {
+    pub fn lookup_answer(&self, frame: [u8; 3], previous_capture: u32) -> TableLookup {
         let now = self.wire_ticks_total.load(Ordering::Relaxed);
         self.table_path.table.lookup(frame, previous_capture, now)
     }
@@ -1352,6 +1358,7 @@ pub unsafe extern "C" fn dali_phy_alarm_isr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::answer_table::TABLE_MAX_AGE_TICKS;
     use crate::frame_length::{FORWARD24_LENGTH_MIN_SAMPLES, FORWARD_LENGTH_MIN_SAMPLES};
     use crate::fsm::{PHY_TICK_US, TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS};
     use dali2rust_platform::arbitration::LEASE_TTL_MS;
@@ -2319,6 +2326,26 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_of_ours_that_yields_in_its_lead_is_not_counted_on_the_line() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        let before = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        let gate = u8::MAX;
+        drive(&core, input_ptr, 0b0010, u32::from(gate));
+        assert!(core.submit_tx(&test_forward_frame(), 16, false, TxGates::settle(gate)));
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { core.tick() };
+        // SAFETY: same provenance as the pointer the core reads through.
+        unsafe { *input_ptr = 0; core.tick() };
+        assert_eq!(core.tx_yields(), 1);
+        let after = latest_capture_epoch(&core, input_ptr, &SIXTEEN_BITS);
+        assert_eq!(after, before.wrapping_add(1), "only the foreign frame went by");
+    }
+
+    #[test]
     fn a_backward_capture_before_the_slot_neither_voids_the_answer_nor_moves_its_slot() {
         let (mut set, mut clr) = (0u32, 0u32);
         let mut input = 0b0010u32;
@@ -3017,7 +3044,7 @@ mod tests {
         image
     }
 
-    fn arm_table(core: &PhyIsrCore, accounts_for: u8) {
+    fn arm_table(core: &PhyIsrCore, accounts_for: u32) {
         core.publish_answer_table(&qace_table(), accounts_for);
         core.set_answer_lease_for_ms(core.wire_tick_counts().0, LEASE_TTL_MS);
     }
@@ -3048,6 +3075,40 @@ mod tests {
             panic!("a 24-bit capture carries the interrupt's decode");
         };
         assert_eq!((decode.bit_len, &decode.data[..3]), (24, &QACE_BROADCAST[..]));
+    }
+
+    #[test]
+    fn a_table_published_late_in_the_uptime_is_as_fresh_as_the_tick_it_was_published_at() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { tick_n(&core, usize::try_from(2 * TABLE_MAX_AGE_TICKS).expect("fits")) };
+        arm_table(&core, 0);
+
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: same.
+        unsafe { tick_n(&core, 160) };
+
+        assert_eq!(core.answer_table_counts().answered, 1);
+        assert_eq!(core.answer_table_counts().behind, 0);
+    }
+
+    #[test]
+    fn the_latest_capture_is_the_one_the_ring_hands_out_last() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        assert_eq!(core.latest_capture(), 0);
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        receive_foreign_frame(&core, input_ptr, &EIGHT_BITS);
+        let captured = drain_rx(&core);
+        assert_eq!(captured.len(), 2);
+        assert_eq!(core.latest_capture(), captured[1].sniff_seq);
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 
 use dali2rust_domain::registry::DaliSettingsReadPort;
-use dali2rust_platform::arbitration::{AnswerInputs, UnitInputs};
+use dali2rust_platform::arbitration::AnswerInputs;
 use dali2rust_platform::liveness::LivenessWatch;
 
 pub use dali2rust_platform::arbitration::LEASE_TTL_MS;
@@ -86,11 +86,9 @@ pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> Supervisor
     let turn = supervisor_turn(settings.application_active, stale_worker);
     match turn {
         SupervisorTurn::Defend => {
-            inputs.answer_inputs.publish_unit(unit_inputs(&settings));
             inputs.answer_inputs.extend_lease(now_ms, inputs.config.lease_ttl_ms);
         }
         SupervisorTurn::StandDown(StandDownReason::Passive) => {
-            inputs.answer_inputs.publish_unit(unit_inputs(&settings));
             inputs.answer_inputs.revoke_lease(now_ms);
         }
         SupervisorTurn::StandDown(StandDownReason::WorkerStale(name)) => {
@@ -109,13 +107,6 @@ pub fn run_supervisor_tick(inputs: &SupervisorInputs, now_ms: u32) -> Supervisor
     }
     inputs.counters.record(turn);
     turn
-}
-
-fn unit_inputs(settings: &dali2rust_domain::registry::DaliSettingsView) -> UnitInputs {
-    UnitInputs {
-        application_active: settings.application_active,
-        device_short_address: settings.device_short_address,
-    }
 }
 
 pub const SUPERVISOR_HANDLED_EVENTS: &[&str] = &["DaliSettingsChangedEvent"];
@@ -145,8 +136,6 @@ fn supervisor_loop(ev_rx: &dali2rust_bus::BusSubscriberRx, inputs: &SupervisorIn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_dali_phy::{AnswerTableCell, TableLookup};
-    use dali2rust_domain::dali::dev103::unit::answer_table;
     use dali2rust_domain::registry::DaliSettingsView;
     use dali2rust_platform::liveness::LivenessBeat;
     use std::sync::atomic::AtomicBool;
@@ -154,7 +143,6 @@ mod tests {
 
     struct FakeSettings {
         active: AtomicBool,
-        short: Mutex<Option<u8>>,
         beat_while_read: Mutex<Option<(Arc<LivenessBeat>, u32)>>,
     }
 
@@ -167,7 +155,7 @@ mod tests {
                 dt8_auto_activation_repair: false,
                 dt8_rgbwaf_control_assert: false,
                 application_active: self.active.load(Ordering::Relaxed),
-                device_short_address: *self.short.lock().expect("short address"),
+                device_short_address: Some(7),
             }
         }
     }
@@ -181,7 +169,6 @@ mod tests {
     fn rig(active: bool) -> Rig {
         let settings = Arc::new(FakeSettings {
             active: AtomicBool::new(active),
-            short: Mutex::new(Some(7)),
             beat_while_read: Mutex::new(None),
         });
         let registry = Arc::new(LivenessBeat::new("registry", WORKER_STALE_AFTER_MS));
@@ -201,28 +188,13 @@ mod tests {
         }
     }
 
-    const QUERY_BROADCAST: [u8; 3] = [0xFF, 0xFE, 0x3D];
     const NOW: u32 = 1_000;
 
-    fn answer(inputs: &AnswerInputs, frame: [u8; 3], now_ms: u32) -> Option<u8> {
-        let unit = inputs.unit()?;
-        let cell = AnswerTableCell::new();
-        cell.publish(&answer_table(unit.application_active, unit.device_short_address), 0);
-        cell.set_lease_for_ms(0, inputs.lease_remaining_ms(now_ms));
-        match cell.lookup(frame, 0, 0) {
-            TableLookup::Answer(byte) => Some(byte),
-            _ => None,
-        }
-    }
-
     #[test]
-    fn an_active_controller_with_healthy_workers_publishes_and_renews() {
+    fn an_active_controller_with_healthy_workers_renews_the_lease() {
         let r = rig(true);
         assert_eq!(run_supervisor_tick(&r.inputs, NOW), SupervisorTurn::Defend);
-        assert_eq!(
-            answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 1_000),
-            Some(0xFF)
-        );
+        assert!(r.inputs.answer_inputs.lease_alive(NOW));
         assert_eq!(r.inputs.counters.defended.load(Ordering::Relaxed), 1);
     }
 
@@ -237,7 +209,6 @@ mod tests {
             SupervisorTurn::StandDown(StandDownReason::WorkerStale("registry"))
         );
         assert!(!r.inputs.answer_inputs.lease_alive(5_000));
-        assert_eq!(answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 5_000), None);
         assert_eq!(
             r.inputs
                 .counters
@@ -255,20 +226,17 @@ mod tests {
 
         r.registry.beat(5_100);
         assert_eq!(run_supervisor_tick(&r.inputs, 5_100), SupervisorTurn::Defend);
-        assert_eq!(
-            answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 5_100),
-            Some(0xFF)
-        );
+        assert!(r.inputs.answer_inputs.lease_alive(5_100));
     }
 
     #[test]
-    fn a_passive_controller_publishes_nothing_and_says_passive_not_stale() {
+    fn a_passive_controller_holds_no_lease_and_says_passive_not_stale() {
         let r = rig(false);
         assert_eq!(
             run_supervisor_tick(&r.inputs, NOW),
             SupervisorTurn::StandDown(StandDownReason::Passive)
         );
-        assert_eq!(answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 1_000), None);
+        assert!(!r.inputs.answer_inputs.lease_alive(NOW));
         assert_eq!(
             r.inputs
                 .counters
@@ -285,26 +253,6 @@ mod tests {
         r.settings.active.store(false, Ordering::Relaxed);
         run_supervisor_tick(&r.inputs, NOW);
         assert!(!r.inputs.answer_inputs.lease_alive(1_000));
-        assert_eq!(answer(&r.inputs.answer_inputs, QUERY_BROADCAST, 1_000), None);
-    }
-
-    #[test]
-    fn a_changed_short_address_stops_being_answered_on() {
-        let r = rig(true);
-        run_supervisor_tick(&r.inputs, NOW);
-        let old_addressed = [(7 << 1) | 1, 0xFE, 0x3D];
-        assert_eq!(
-            answer(&r.inputs.answer_inputs, old_addressed, 1_000),
-            Some(0xFF)
-        );
-
-        *r.settings.short.lock().expect("short address") = Some(9);
-        run_supervisor_tick(&r.inputs, NOW);
-        assert_eq!(answer(&r.inputs.answer_inputs, old_addressed, 1_000), None);
-        assert_eq!(
-            answer(&r.inputs.answer_inputs, [(9 << 1) | 1, 0xFE, 0x3D], 1_000),
-            Some(0xFF)
-        );
     }
 
     #[test]

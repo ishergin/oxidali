@@ -41,18 +41,25 @@ this reaches it.
   `operatingMode`, `powerCycleNotification`, `applicationActive`). It takes every frame
   the sniffer captured, in wire order — 16-bit, 24-bit and backward, so a frame between two halves
   splits a send-twice pair — and returns its effects and the answer table for the next
-  frame. Our own frames never feed it.
-- The model answers nothing and executes nothing until it is hydrated from the registry.
-  The wire is now a mutating ingress, so the boot order keeps hydration before it as it
-  does before HTTP; an early `QUERY SHORT ADDRESS` answered with MASK would invite another
-  master to assign a new address.
+  frame. Our own frames never feed it, but one sent between two captures splits a pair
+  all the same: the interrupt counts every forward frame on the line, ours included but
+  not one that yielded before its first edge, and a capture whose count shows one of ours
+  passed reaches the model after a frame it cannot read.
+- The model answers nothing and executes nothing until it is hydrated from the registry,
+  and a frame that reaches it before then leaves the RAM variables it may have moved
+  unknown. The wire is now a mutating ingress, so the boot order keeps hydration before it
+  as it does before HTTP; an early `QUERY SHORT ADDRESS` answered with MASK would invite
+  another master to assign a new address. The model takes a newer copy only at a poll that
+  finds no capture waiting, so each frame is judged under the copy whose table was live
+  when it went by, and evidence names that copy.
 - **The task decides before the frame, the interrupt answers it.** After every capture
   the `dali-sniff` drain feeds the model and publishes the table the model returns; the
   interrupt answers the next query from that table on its own. The arbitration table of
   ADR-018 becomes part of it. A capture is still routed by its length.
-- **A lost capture invalidates the state it would have changed.** A dropped ring entry
-  (`take_sniff_dropped`) clears the `DTR`s, the search address and write enable and ends
-  initialisation, and answers that depend on them stay silent until they are set again.
+- **A lost capture invalidates the state it would have changed.** A capture the drain sees
+  missing (a jump in `sniff_seq`) clears the `DTR`s, the search address and write enable,
+  ends initialisation and splits a send-twice pair, and answers that depend on them stay
+  silent until they are set again.
 
 ### An answer starts in its slot, whatever else is on the line
 
@@ -101,10 +108,10 @@ answer to any next one, and the slot no longer waits for a task.
 - **The check names one capture, not all of them.** A capture lost to a full ring moves
   `sniff_seq` without reaching the drain, so the drain sees the loss only as a jump in
   `sniff_seq`, and a table that carries state decides on that jump before it publishes.
-  `sniff_seq` is eight bits: a drain stalled across a multiple of 256 captures passes the
-  check. A stalled drain also freezes the lease, so an answer the lease gates lapses within
-  one lease of the stall and one given regardless of the lease does not; a table that
-  carries state needs a freshness bound that does not rest on the eight bits alone.
+  `sniff_seq` is 32 bits wide, so no stall the drain survives wraps it. The table also
+  carries the tick it was published at, the drain republishes it at every poll, and the
+  interrupt treats a table older than a few polls as behind: a stalled drain, whose model's
+  timers stand still too, answers nothing, whether or not the lease gates the answer.
 - **The lease is read at answer time.** `applicationControllerError` changes without any
   frame, so the table carries the lease's expiry in interrupt ticks and the interrupt
   applies it to the status byte and the arbitration answer.
@@ -133,6 +140,16 @@ answer to any next one, and the slot no longer waits for a task.
 - The model answers from its own copy at once (101 §9.8.5 executes a command before the
   next frame) and publishes each NVM change as evidence for the registry, so the registry
   stays the single writer; the model hydrates from the DALI settings slice.
+- The registry is the only publisher of the unit's NVM copy to the drain: it publishes the
+  copy, its revision and the last wire change it acknowledged, at hydration, before an
+  operator's change is confirmed and after each piece of evidence. The model adopts a newer
+  revision only once every wire change it reported is acknowledged, so the copy it answers
+  from never drops a change the registry has not seen.
+- Evidence names the revision the model's copy came from, and the registry moves only the
+  fields that differ from that copy, so an operator's change to another field meanwhile is
+  kept. A field the operator set holds against a wire change the model made before it
+  adopted that value; a wire change made after it replaces it.
+  Evidence not yet acknowledged is sent again every second.
   `SAVE PERSISTENT VARIABLES` adds nothing: every change is already on its way to flash.
 - The bus-unit variables live in the DALI settings slice, which is not transferable: a
   standby never clones the active unit's short address, random address or groups.

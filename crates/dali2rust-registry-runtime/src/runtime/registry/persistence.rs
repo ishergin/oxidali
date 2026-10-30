@@ -13,6 +13,7 @@ use crate::runtime::registry::input_devices::{
     hydrate_input_devices_bank_inner, rebank_input_devices, PersistableInputDevicesSlice,
 };
 
+use super::dali_settings::decode_dali_settings_slice;
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
 use super::persistence_slices::{
     PersistableAdapterSlice, PersistableGroupsSlice, PersistableHclSchedulesSlice,
@@ -248,6 +249,7 @@ impl crate::runtime::registry::store::RegistryStore {
         self.hydrate_globals(slices, reading, sink);
         let unread = self.unread_slices(adapter_count);
         self.persist_counters.unread_slices.store(unread, Ordering::Relaxed);
+        self.publish_bus_unit();
     }
 
     fn hydrate_globals(
@@ -706,9 +708,7 @@ fn validate_kind(kind: &PersistenceSliceKind, bytes: &[u8]) -> Result<(), StoreE
             bytes,
             HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
         ),
-        PersistenceSliceKind::DaliSettings => {
-            decodes::<PersistableDaliSettingsSlice>(bytes, DALI_SETTINGS_SLICE_VERSION)
-        }
+        PersistenceSliceKind::DaliSettings => decode_dali_settings(bytes).map(drop),
         PersistenceSliceKind::RedundancySettings => {
             decodes::<PersistableRedundancySettingsSlice>(bytes, REDUNDANCY_SETTINGS_SLICE_VERSION)
         }
@@ -721,6 +721,10 @@ fn validate_kind(kind: &PersistenceSliceKind, bytes: &[u8]) -> Result<(), StoreE
 
 fn decodes<T: serde::de::DeserializeOwned>(bytes: &[u8], version: u32) -> Result<(), StoreError> {
     decode_slice::<T>(bytes, version).map(drop)
+}
+
+fn decode_dali_settings(bytes: &[u8]) -> Result<PersistableDaliSettingsSlice, StoreError> {
+    decode_dali_settings_slice(bytes).map_err(|e| StoreError::Backend(e.to_string()))
 }
 
 enum HydrateSink<'a> {
@@ -965,9 +969,17 @@ macro_rules! hydrate_wrappers {
     (global: $(
         $name:ident => $kind:expr, $label:literal, $default_log:literal, $slice:ty, $version:path,
             $apply:path;
+    )*) => {
+        hydrate_wrappers! { decoded: $(
+            $name => $kind, $label, $default_log,
+                |bytes: &[u8]| decode_slice::<$slice>(bytes, $version), $apply;
+        )* }
+    };
+    (decoded: $(
+        $name:ident => $kind:expr, $label:literal, $default_log:literal, $decode:expr, $apply:path;
     )*) => {$(
         fn $name(store: &RegistryStore, slices: &dyn SliceStore, sink: &mut HydrateSink<'_>) {
-            let decode = |bytes: &[u8]| decode_slice::<$slice>(bytes, $version);
+            let decode = $decode;
             match hydrate_stored_slice(store, slices, $kind, sink, decode, $apply) {
                 SlotOutcome::Loaded => info!("persistence: loaded {}", $label),
                 SlotOutcome::Missing => info!("persistence: {}", $default_log),
@@ -999,13 +1011,6 @@ hydrate_wrappers! { global:
         PersistablePollerSettingsSlice,
         POLLER_SETTINGS_SLICE_VERSION,
         crate::runtime::registry::poller_settings::hydrate_poller_settings_inner;
-    hydrate_dali_settings_slice =>
-        PersistenceSliceKind::DaliSettings,
-        "dali settings",
-        "no dali settings stored",
-        PersistableDaliSettingsSlice,
-        DALI_SETTINGS_SLICE_VERSION,
-        crate::runtime::registry::dali_settings::hydrate_dali_settings_inner;
     hydrate_redundancy_settings_slice =>
         PersistenceSliceKind::RedundancySettings,
         "redundancy settings",
@@ -1020,6 +1025,15 @@ hydrate_wrappers! { global:
         PersistablePoliciesSlice,
         POLICIES_SLICE_VERSION,
         crate::runtime::registry::policies::hydrate_policies_inner;
+}
+
+hydrate_wrappers! { decoded:
+    hydrate_dali_settings_slice =>
+        PersistenceSliceKind::DaliSettings,
+        "dali settings",
+        "no dali settings stored",
+        decode_dali_settings,
+        crate::runtime::registry::dali_settings::hydrate_dali_settings_inner;
 }
 
 type GlobalHydrate = fn(&RegistryStore, &dyn SliceStore, &mut HydrateSink<'_>);

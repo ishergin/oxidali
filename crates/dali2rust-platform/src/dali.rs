@@ -32,7 +32,13 @@ pub struct ObservedRawFrame {
     pub observed_at_mono_ms: u32,
 }
 
-pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedRawFrame>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedItem {
+    Frame(ObservedRawFrame),
+    BusUnit(crate::bus_unit::BusUnitEvidence),
+}
+
+pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedItem>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameDirection {
@@ -622,6 +628,8 @@ pub trait DaliTransport {
         _inputs: std::sync::Arc<crate::arbitration::AnswerInputs>,
     ) {
     }
+
+    fn set_bus_unit_identity(&mut self, _identity: crate::bus_unit::BusUnitIdentity) {}
 }
 
 #[derive(Debug)]

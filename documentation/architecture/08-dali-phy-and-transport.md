@@ -144,22 +144,31 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
   decoded. The other lengths are decoded by the drain.
 - Every capture pushed to the sniffer ring, or dropped because it was full, moves
-  `sniff_seq`, and the capture carries it; our own frames do not move it.
+  `sniff_seq`, and the capture carries it; our own frames do not move it. The bus epoch
+  moves on every forward capture and every forward frame we start that does not yield
+  before its first edge, and a backward capture carries it unchanged, so the drain sees
+  from a capture's epoch that a frame of ours passed before it.
 - The `dali-sniff` task drains captures, decodes, logs, publishes and republishes the
   answer table. It polls every 10 ms and runs one priority step above the worker pool.
 
 ## Answering inside Table 20
 
-- The task decides before the frame, the interrupt answers it (ADR-030). After each poll
-  the drain builds the answer table from the supervisor's `AnswerInputs`
-  (`dali2rust-domain::dali::dev103::unit`) and publishes it (`dali-phy::answer_table`)
-  naming the last capture it consumed.
+- The task decides before the frame, the interrupt answers it (ADR-030). The drain feeds
+  every capture it decodes, in wire order, to the bus-unit model
+  (`dali2rust-domain::dali::dev103::bus_unit`) and after each poll publishes the table the
+  model returns (`dali-phy::answer_table`), naming the last capture it consumed. A model
+  the registry has not hydrated publishes no table; it takes the registry's copy only at a
+  poll that finds no capture waiting. A frame of ours between two captures
+  reaches the model as a frame it cannot read, which splits a send-twice pair.
 - The interrupt answers a decoded 24-bit capture only from a table published after the
   drain took the capture just before it. A table that is behind answers nothing, and every
   query it has an entry for (a device query addressed to the unit, or a special query)
   that meets it is counted (`answer_table_behind_total`), whether or not the entry holds
   an answer: the count measures the drain's lag. A capture lost to a full ring reaches
-  the drain only as a jump in `sniff_seq`. The table
+  the drain only as a jump in `sniff_seq`, on which the model drops the state that capture
+  could have changed. `sniff_seq` is 32 bits, so no stall wraps it; the table carries the
+  tick it was published at, and one older than `TABLE_MAX_AGE_TICKS` is behind, so a
+  stalled drain answers nothing. The table
   is double-buffered under a sequence check, so the interrupt never answers from half of
   one and counts a torn read instead.
 - The lease reaches the interrupt as an expiry in its own ticks, never more than

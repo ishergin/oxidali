@@ -806,7 +806,7 @@ export type SnifferTranslatorCounters = {
   input_events_ambiguous_scheme: number
   input_lifecycle: number
   fact_publish_retried: number
-  app_control_pairs: number
+  bus_unit_reports: number
 }
 
 export type RulesWorkerCounters = {

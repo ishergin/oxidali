@@ -8,6 +8,7 @@ use dali2rust_bsp::unix_clock::unix_wall_clock_millis;
 use dali2rust_contracts::msg::fixed_text_64;
 use dali2rust_domain::dali::banks::IdentityRead;
 use dali2rust_domain::registry::{HaInputInstanceView, RegistryReadPort};
+use dali2rust_platform::arbitration::AnswerInputs;
 
 use super::adapters::AdapterRow;
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
@@ -439,6 +440,7 @@ pub struct RegistryStore {
     pub(crate) flush_buf: std::sync::Mutex<Vec<u8>>,
     pub(crate) import_stage: super::import_stage::ImportStage,
     pub(crate) announcements: super::replaced_slices::PendingAnnouncements,
+    pub(crate) bus_unit_sink: std::sync::OnceLock<std::sync::Arc<AnswerInputs>>,
 }
 
 impl RegistryStore {
@@ -581,6 +583,7 @@ impl RegistryStore {
             )),
             import_stage: super::import_stage::ImportStage::default(),
             announcements: super::replaced_slices::PendingAnnouncements::default(),
+            bus_unit_sink: std::sync::OnceLock::new(),
         }
     }
 
