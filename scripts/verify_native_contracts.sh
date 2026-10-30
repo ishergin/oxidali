@@ -14,7 +14,7 @@ if [[ ! -d "$ROOT/crates/dali2rust-contracts/src/msg" ]]; then
   die "missing native contracts dir: $ROOT/crates/dali2rust-contracts/src/msg"
 fi
 
-if rg -n 'flatbuffers' "$ROOT/crates" -g 'Cargo.toml' --glob '!**/target/**' 2>/dev/null | grep -q .; then
+if rg -n 'flatbuffers' "$ROOT/crates" -g 'Cargo.toml' --glob '!**/target/**' 2>/dev/null | grep . >/dev/null; then
   die "flatbuffers must not appear in workspace crate Cargo.toml files"
 fi
 
