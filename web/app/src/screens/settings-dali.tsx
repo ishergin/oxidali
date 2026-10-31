@@ -35,7 +35,9 @@ export function SettingsDali() {
 
   if (!data) return <div class="empty">Loading DALI settings…</div>
   const s = fieldsOnScreen(edits ?? {}, data)
-  const edit = (change: Partial<DaliSettings>) => setEdits(withFieldEdit(edits ?? {}, change, data))
+  const edit = (change: Partial<DaliSettings>) => {
+    if (!busy) setEdits(withFieldEdit(edits ?? {}, change, data))
+  }
   const discard = () => setEdits(null)
   const dirty = edits !== null && Object.keys(fieldPatch(edits, data)).length > 0
 

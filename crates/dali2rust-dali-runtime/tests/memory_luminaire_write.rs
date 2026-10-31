@@ -9,9 +9,7 @@ use dali2rust_contracts::msg::{DaliWriteMemoryLuminaireCommand, OperationWorkerS
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliRuntimeConfig, DaliWorkerCounters};
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
-use dali2rust_dali_runtime::runtime::controller::{
-    DaliController, PHY_TICK_US, TRANSACTION_BUDGET_MS, TX_ARM_LEAD_TICKS,
-};
+use dali2rust_dali_runtime::runtime::controller::{DaliController, TRANSACTION_BUDGET_MS};
 use dali2rust_dali_runtime::runtime::executor::{
     write_memory_luminaire, LuminaireWriteFailure, HEADER_SUBJECT, IDENTITY_CHANGED, IDENTITY_SUBJECT,
     LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
@@ -1250,7 +1248,7 @@ fn recorded_write(writes: &[FieldWrite]) -> (Vec<Exchange>, Arc<DaliWireCounters
 }
 
 fn on_wire_settle_us(exchange: &Exchange) -> u32 {
-    exchange.settle_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US
+    support::on_wire_settle_us(exchange.settle_us)
 }
 
 // IEC 62386-101 Table 22

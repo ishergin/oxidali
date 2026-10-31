@@ -15,6 +15,7 @@ use dali2rust_contracts::msg::{
     DaliTargetScope, ErrorCode, LightSetpoint, MemoryBankReadPreset, OperationWorkerSignal,
     OperationWorkerSignalEvent, Origin, PowerState,
 };
+use dali2rust_dali_runtime::runtime::controller::{PHY_TICK_US, TX_ARM_LEAD_TICKS};
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
     DALI_WORKER_HANDLED_COMMANDS,
@@ -37,6 +38,10 @@ pub const SIGNAL_DEADLINE: Duration = Duration::from_secs(10);
 const HELD_EVENTS_INGRESS: usize = 4;
 const WORKER_INBOX: usize = 16;
 const SIGNAL_INBOX: usize = 64;
+
+pub fn on_wire_settle_us(requested_us: u32) -> u32 {
+    requested_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US
+}
 
 pub fn standard_frame(command: StandardCommand) -> u16 {
     DaliCommand::Standard {

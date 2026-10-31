@@ -22,7 +22,7 @@ export function withFieldEdit<T extends object>(
 export function withoutSent<T extends object>(edits: Partial<T>, sent: Partial<T>): Partial<T> | null {
   const kept: Partial<T> = {}
   for (const key of Object.keys(edits) as (keyof T)[]) {
-    if (!(key in sent) || sent[key] !== edits[key]) kept[key] = edits[key]
+    if (sent[key] !== edits[key]) kept[key] = edits[key]
   }
   return Object.keys(kept).length > 0 ? kept : null
 }

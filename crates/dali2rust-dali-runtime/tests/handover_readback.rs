@@ -1,7 +1,9 @@
+mod support;
+
 use std::sync::{Arc, Mutex};
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_dali_runtime::runtime::controller::{DaliController, PHY_TICK_US, TX_ARM_LEAD_TICKS};
+use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::arbitration::enable_peer_controller;
 use dali2rust_dali_runtime::runtime::executor::SemanticDaliError;
 use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
@@ -62,7 +64,7 @@ fn sent(bus: &Arc<Mutex<MockDaliTransport>>) -> Vec<[u8; 3]> {
 
 fn continues_the_transaction(bus: &Arc<Mutex<MockDaliTransport>>, frame: usize) -> bool {
     let settle_us = bus.lock().expect("bus").sent_frame24_settle_us()[frame];
-    DaliPriority::Transaction.contains_settle_us(settle_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US)
+    DaliPriority::Transaction.contains_settle_us(support::on_wire_settle_us(settle_us))
 }
 
 struct Free;
