@@ -28,12 +28,12 @@
 | Изменения реестра | `AdapterSettingsChangedEvent`, `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`, `GroupChangedEvent`, `GroupMatrixChangedEvent`, `SceneChangedEvent`, `SceneMatrixChangedEvent`, `InputDeviceChangedEvent` | registry worker | WS; MQTT (лампы, устройства, группы, матрица групп, сцены, устройства ввода); правила (лампы, устройства, группы, сцены, устройства ввода — перекомпиляция имён) | best-effort |
 | Расписания HCL | `HclScheduleChangedEvent` | registry worker | HCL, дисплей | best-effort |
 | Runtime | `RuntimeStateChangedEvent` | registry worker | WS, MQTT, HCL, правила | best-effort |
-| Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent` | registry worker | поллер; арбитраж, супервизор и правила; — ; воркер репликации; — | best-effort |
+| Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent` | registry worker | поллер; арбитраж и правила; — ; воркер репликации; — | best-effort |
 | Операции | `OperationStatusChangedEvent` | operation tracker | WS, дисплей | best-effort |
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
-| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `Dali103ApplicationControlObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
+| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
@@ -158,9 +158,14 @@
   схема 0 идентичности устройства не несёт
   ([`../../architecture/09-dali-protocol-rules.md`](../../architecture/09-dali-protocol-rules.md)).
 - `DaliInputDeviceLifecycleEvent` — power cycle устройства ввода.
-- `Dali103ApplicationControlObservedEvent` — подтверждённая send-twice пара чужого
-  `ENABLE` / `DISABLE APPLICATION CONTROLLER` и её `DeviceCommandScope`; реестр решает,
-  касается ли она нас: `Unaddressed` — только пока у контроллера нет короткого адреса.
+- `BusUnitNvmObservedEvent` — изменение NVM-переменных контроллера как блока Part 103,
+  сделанное с шины: копия, с которой шла модель, её ревизия, наблюдённые значения и номер
+  изменения. Реестр переносит только поля, отличающиеся от копии, и подтверждает номер
+  ([ADR-030](../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)).
+- `BusUnitQuiescenceObservedEvent` — другой контроллер начал или продлил quiescent mode
+  (остаток срока в мс) или закончил его (`null`), под номером отчёта. Реестр держит срок
+  в RAM, не персистит и подтверждает номер; повтор того же номера переносит срок на
+  оставшееся, более старый номер отвергается.
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
 реестр проецирует в записи устройств ввода; флаг Part 333 из
@@ -175,8 +180,8 @@ Part 333 не читается, флаг и триггер инертны: ед�
 - `Dali103ArbitrationProbedEvent` (best-effort, воркер арбитража) — вердикт зонда
   ([`../runtime-modules/redundancy/README.md`](../runtime-modules/redundancy/README.md)
   §Обнаружение).
-- `Dali103HandoverSentEvent` (best-effort, воркер арбитража) — пара `ENABLE` пиру
-  отправлена, можно уходить в пассив.
+- `Dali103HandoverSentEvent` (best-effort, воркер арбитража) — пир включён и ответил
+  чистым кадром на `QUERY APPLICATION CONTROLLER ENABLED`, можно уходить в пассив.
 - `RedundancyTransitionEvent` (best-effort, правила: `controller becomes active`) —
   смена роли с причиной и метками; журнал переходов хранит сам воркер арбитража и
   отдаёт REST.
@@ -211,8 +216,8 @@ Part 333 не читается, флаг и триггер инертны: ед�
 
 - `PollerSettingsChangedEvent` и `DaliSettingsChangedEvent` — **снимки** применённых
   значений. Поллер перенастраивается по своему событию без рестарта; `DaliWorker` читает
-  настройки DALI из read-port в момент применения, а событие будит арбитраж,
-  супервизор и правила.
+  настройки DALI из read-port в момент применения, а событие будит арбитраж и
+  правила.
 - `HomeAssistantSettingsChangedEvent` — уведомление без секрета, только `enabled`. Мост
   на него сознательно не подписан (`ADR-015`).
 - `RedundancySettingsChangedEvent` будит простаивающий воркер репликации — свежий

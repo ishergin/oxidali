@@ -125,6 +125,7 @@ struct TestReadPort {
     gear_features: HashMap<(u8, u8), u8>,
     repair_forbidden: std::collections::HashSet<(u8, u8)>,
     passive: bool,
+    quiescent: bool,
     instance_types: HashMap<(u8, u8, u8), u8>,
 }
 
@@ -137,6 +138,10 @@ impl InputInstanceTypeReadPort for TestReadPort {
 impl RegistryReadPort for TestReadPort {
     fn application_controller_active(&self) -> bool {
         !self.passive
+    }
+
+    fn controller_quiescent(&self) -> bool {
+        self.quiescent
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {
@@ -405,8 +410,16 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::Dali103InstanceActionCommand { registry_adapter_id: 0, short_address: 5, instance_number: 2, action: m::Dali103InstanceAction::CancelHoldTimer }.into(),
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
         m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into(),
+        m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0000_0101, dtr: [0x07, 0xFE, 0x10] }.into(),
+        power_notification(),
         m::DaliBusHealthProbeCommand { registry_adapter_id: 0, query_power_failure: false }.into(),
     ]
+}
+
+const POWER_NOTIFICATION: [u8; 3] = [0xFE, 0xE0, 0x00];
+
+fn power_notification() -> BusCommandPayload {
+    m::Dali103PowerNotificationCommand { registry_adapter_id: 0, short_address: None, device_groups: 0 }.into()
 }
 
 fn assert_nothing_reached_the_wire(harness: &WorkerHarness, kind: &str) {
@@ -414,21 +427,20 @@ fn assert_nothing_reached_the_wire(harness: &WorkerHarness, kind: &str) {
     assert!(harness.sent_frames24.lock().unwrap().is_empty(), "{kind} sent a 24-bit frame");
 }
 
-fn assert_adapter_disabled(code: ErrorCode, message: &str, kind: &str) {
+fn assert_refused(code: ErrorCode, message: &str, cause: &str, kind: &str) {
     assert_eq!(code, ErrorCode::Conflict, "{kind}");
-    assert_eq!(message, "adapter_disabled", "{kind}");
+    assert_eq!(message, cause, "{kind}");
 }
 
 fn envelope_on_adapter_0(corr: u64, payload: BusCommandPayload) -> dali2rust_contracts::msg::CommandEnvelope {
     dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), payload)
 }
 
-#[test]
-fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
-    let disabled: Arc<dyn RegistryReadPort> = Arc::new(TestReadPort::default());
-    for (corr, payload) in (81u64..).zip(refused_operations()) {
+fn every_operation_is_refused(read_port: TestReadPort, cause: &str, first_corr: u64) {
+    let read_port: Arc<dyn RegistryReadPort> = Arc::new(read_port);
+    for (corr, payload) in (first_corr..).zip(refused_operations()) {
         let kind = payload.variant_name();
-        let harness = WorkerHarness::new(Arc::clone(&disabled), ControllerMode::NoAnswer);
+        let harness = WorkerHarness::new(Arc::clone(&read_port), ControllerMode::NoAnswer);
         harness.publish(envelope_on_adapter_0(corr, payload));
         let ev = harness.recv_event_matching(corr, |payload| {
             matches!(payload, BusEventPayload::OperationWorkerSignalEvent(_))
@@ -438,24 +450,89 @@ fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
         };
         assert_eq!(body.signal, OperationWorkerSignal::WorkerFailed, "{kind}");
         let error = body.error.as_ref().expect("a refusal names its cause");
-        assert_adapter_disabled(error.code, error.message.as_str(), kind);
+        assert_refused(error.code, error.message.as_str(), cause, kind);
         assert_nothing_reached_the_wire(&harness, kind);
     }
 }
 
+fn request_refusal(read_port: Arc<dyn RegistryReadPort>, corr: u64, payload: BusCommandPayload) -> String {
+    let kind = payload.variant_name();
+    let harness = WorkerHarness::new(read_port, ControllerMode::NoAnswer);
+    harness.publish(envelope_on_adapter_0(corr, payload));
+    let conf = harness.recv_confirmation_for(corr);
+    assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{kind}");
+    let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+    assert_eq!(error.code, ErrorCode::Conflict, "{kind}");
+    assert_nothing_reached_the_wire(&harness, kind);
+    error.message.as_str().to_owned()
+}
+
+fn every_request_is_refused(read_port: TestReadPort, cause: &str, first_corr: u64) {
+    let read_port: Arc<dyn RegistryReadPort> = Arc::new(read_port);
+    for (corr, payload) in (first_corr..).zip(refused_requests()) {
+        let kind = payload.variant_name();
+        assert_eq!(request_refusal(Arc::clone(&read_port), corr, payload), cause, "{kind}");
+    }
+}
+
+#[test]
+fn adapter_disabled_semantic_commands_publish_worker_failed_signal() {
+    every_operation_is_refused(TestReadPort::default(), "adapter_disabled", 81);
+}
+
 #[test]
 fn adapter_disabled_requests_are_refused_by_confirmation_before_the_wire() {
-    let disabled: Arc<dyn RegistryReadPort> = Arc::new(TestReadPort::default());
-    for (corr, payload) in (121u64..).zip(refused_requests()) {
-        let kind = payload.variant_name();
-        let harness = WorkerHarness::new(Arc::clone(&disabled), ControllerMode::NoAnswer);
-        harness.publish(envelope_on_adapter_0(corr, payload));
-        let conf = harness.recv_confirmation_for(corr);
-        assert_eq!(conf.status, DeliveryStatus::ExecutionFailed, "{kind}");
-        let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
-        assert_adapter_disabled(error.code, error.message.as_str(), kind);
-        assert_nothing_reached_the_wire(&harness, kind);
-    }
+    every_request_is_refused(TestReadPort::default(), "adapter_disabled", 121);
+}
+
+fn quiescent() -> TestReadPort {
+    TestReadPort { enabled: true, quiescent: true, ..Default::default() }
+}
+
+#[test]
+fn another_controller_s_quiescent_mode_refuses_every_operation_before_the_wire() {
+    every_operation_is_refused(quiescent(), "controller_quiescent", 221);
+}
+
+#[test]
+fn another_controller_s_quiescent_mode_refuses_every_request_the_arbitration_probe_included() {
+    every_request_is_refused(quiescent(), "controller_quiescent", 261);
+}
+
+#[test]
+fn quiescent_mode_is_refused_after_the_passive_gate_and_before_the_adapter_gate() {
+    let raw = || m::DaliCommandPayload { wire_address: 0x01, command: 0xFE, repeat_count: 0, raw_mode: false, raw_expects_backward: false }.into();
+    let probe = || m::Dali103ArbitrationProbeCommand { registry_adapter_id: 0 }.into();
+    let test_frame = || m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0000_0101, dtr: [0x07, 0xFE, 0x10] }.into();
+    let both = Arc::new(TestReadPort { passive: true, ..quiescent() });
+    assert_eq!(request_refusal(both.clone(), 301, raw()), "controller_passive");
+    assert_eq!(request_refusal(both.clone(), 302, probe()), "controller_quiescent", "the probe a passive controller may send");
+    assert_eq!(request_refusal(both.clone(), 304, test_frame()), "controller_quiescent", "the test frame a passive controller may send");
+    let sixteen_bit = || m::Dali103TestFrameCommand { registry_adapter_id: 0, data: 0b0010_0101, dtr: [0xA5, 0x5A, 0] }.into();
+    assert_eq!(request_refusal(both.clone(), 305, sixteen_bit()), "controller_passive", "a 16-bit test frame is a command");
+    assert_eq!(request_refusal(both, 306, power_notification()), "controller_quiescent", "§9.9.3 holds every event");
+    let disabled = TestReadPort { enabled: false, ..quiescent() };
+    assert_eq!(request_refusal(Arc::new(disabled), 303, raw()), "controller_quiescent");
+}
+
+// IEC 62386-103 §9.9.1, §9.12.2
+#[test]
+fn a_passive_controller_still_sends_its_power_notification() {
+    let passive = Arc::new(TestReadPort { enabled: true, passive: true, ..Default::default() });
+    let harness = WorkerHarness::new(passive, ControllerMode::NoAnswer);
+    harness.publish(envelope_on_adapter_0(307, power_notification()));
+    assert_eq!(harness.recv_confirmation_for(307).status, DeliveryStatus::Ok);
+    assert_eq!(harness.sent_frames24.lock().unwrap().as_slice(), &[POWER_NOTIFICATION]);
+}
+
+// IEC 62386-103 §9.6.2, Table 7, §9.12.2
+#[test]
+fn a_power_notification_is_encoded_from_the_unit_s_address_and_lowest_group() {
+    let harness = WorkerHarness::new(Arc::new(TestReadPort { enabled: true, ..Default::default() }), ControllerMode::NoAnswer);
+    let named = m::Dali103PowerNotificationCommand { registry_adapter_id: 0, short_address: Some(5), device_groups: 0b0110_0100 };
+    harness.publish(envelope_on_adapter_0(308, named.into()));
+    assert_eq!(harness.recv_confirmation_for(308).status, DeliveryStatus::Ok);
+    assert_eq!(harness.sent_frames24.lock().unwrap().as_slice(), &[[0xFE, 0xF1, 0x45]]);
 }
 
 #[test]
@@ -1170,4 +1247,23 @@ fn a_passive_controller_refuses_an_instance_action_on_the_confirmation() {
     let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
     assert_eq!(error.message.as_str(), "controller_passive");
     assert_nothing_reached_the_wire(&harness, "an instance action");
+}
+
+#[test]
+fn a_background_read_the_gates_refuse_is_answered_by_the_poller_s_own_discipline() {
+    let read = m::DaliReadAttributesCommand { registry_adapter_id: 0, short_address: 5, attribute_groups_mask: 1 << 1, memory_banks: MemoryBankReadPreset::None };
+    let ports = [
+        (TestReadPort::default(), "adapter_disabled"),
+        (TestReadPort { enabled: true, passive: true, ..Default::default() }, "controller_passive"),
+        (quiescent(), "controller_quiescent"),
+    ];
+    for (corr, (read_port, cause)) in (321..).zip(ports) {
+        let harness = WorkerHarness::new(Arc::new(read_port), ControllerMode::NoAnswer);
+        let ce = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Poller), read.clone());
+        harness.publish(ce);
+        let conf = harness.recv_confirmation_for(corr);
+        let error = conf.confirmation.error.as_ref().expect("a refusal names its cause");
+        assert_eq!((error.code, error.message.as_str()), (ErrorCode::Conflict, cause));
+        assert_nothing_reached_the_wire(&harness, cause);
+    }
 }

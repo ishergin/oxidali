@@ -18,6 +18,8 @@ mod sniffer_diagnostics;
 )]
 mod answer_path;
 
+pub mod bus_unit_wire;
+
 #[cfg(target_os = "espidf")]
 pub mod phy_interrupt;
 

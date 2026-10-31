@@ -19,8 +19,8 @@ use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::commands::dali_command_from_wire;
 use dali2rust_domain::dali::commands::DaliResponse;
 use dali2rust_domain::dali::ses::command_priority;
-use dali2rust_domain::dali::controller::DaliApplicationController;
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_domain::registry::RegistryReadPort;
@@ -28,9 +28,13 @@ use dali2rust_platform::dali::{WirePriority, YieldGranularity};
 
 use crate::runtime::config::DaliRuntimeConfig;
 use dali2rust_domain::dali::devices::dt8_color::gear_features_automatic_activation;
+use dali2rust_domain::dali::dev103::bus_unit::TestFrame;
 
 use crate::runtime::required_publish::Kind as PublishKind;
 use crate::runtime::executor::arbitration;
+use crate::runtime::executor::bus_unit;
+use crate::runtime::executor::held_cause_of;
+use dali2rust_domain::dali::dev103::event::power_notification;
 use crate::runtime::executor::bus_health::probe_bus_health;
 use crate::runtime::executor::{
     apply_broadcast_target_state, apply_group_target_state, apply_short_target_state,
@@ -62,7 +66,7 @@ mod wire;
 mod write_attributes;
 
 use attribute_read::handle_read_attributes;
-use blocked::{adapter_command_blocked, controller_passive_blocked};
+use blocked::{adapter_command_blocked, controller_passive_blocked, controller_quiescent_blocked, GateHolds};
 use dev103::{
     handle_103_commission, handle_103_identify, handle_103_instance_configure, handle_103_scan,
 };
@@ -80,7 +84,7 @@ use memory_bank::{
 use program_outcome::{ProgramOutcomeSink, resolve_membership_short};
 pub use publish::DALI_WORKER_REQUIRED_EVENTS;
 use publish::{
-    answer_each_failed, answer_each_ok, answer_each_refused, count_lost_fact, Answer, emit_execution_failed,
+    answer_each_failed, answer_each_ok, answer_each_refused, count_failure, count_lost_fact, Answer, emit_execution_failed,
     emit_execution_failed_with_product_error, fail_operation_over_lost_fact, EXECUTION_FAILED,
     publish_closing_fact_or_fail, publish_confirmation_ok, publish_confirmation_typed,
     publish_event_required, publish_event_typed, publish_operation_worker_signal,
@@ -163,6 +167,7 @@ fn refused_by_gates(
 ) -> bool {
     let answer = Answer { correlation_id: ce.meta.correlation_id, riders };
     controller_passive_blocked(ce, read_port, adapter_id, answer, publisher, counters)
+        || controller_quiescent_blocked(ce, read_port, adapter_id, answer, publisher, counters)
         || adapter_command_blocked(ce, read_port, adapter_id, answer, publisher, counters)
 }
 
@@ -341,6 +346,10 @@ dali2rust_contracts::dispatch_bus_commands! {
         probe,
         counters,
     ),
+    Dali103TestFrameCommand(test) => handle_test_frame(controller, publisher, correlation_id, test, counters),
+    Dali103PowerNotificationCommand(notification) => {
+        handle_power_notification(controller, publisher, correlation_id, notification, counters)
+    },
     DaliBusHealthProbeCommand(probe) => handle_bus_health_probe(
         controller,
         publisher,
@@ -439,6 +448,7 @@ fn end_bus_health_probe_without_verdict(
     error: SemanticDaliError,
     counters: &DaliWorkerCounters,
 ) {
+    let error = error.held_as_preempted();
     if !error.is_preempted() {
         counters.bus_health_probe_failed.fetch_add(1, Ordering::Relaxed);
     }
@@ -454,7 +464,7 @@ fn handle_handover(
     counters: &DaliWorkerCounters,
 ) {
     if let Err(error) = arbitration::enable_peer_controller(controller, cmd.peer_short_address) {
-        counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+        count_failure(counters, error);
         emit_execution_failed_with_product_error(
             publisher,
             correlation_id,
@@ -490,6 +500,8 @@ fn stand_down_after_handover(
         dt8_rgbwaf_control_assert: false,
         application_active: false,
         device_short_address: u8::MAX,
+        power_cycle_notification: false,
+        by_redundancy: true,
     };
     let ce = dali2rust_contracts::bus::command_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -517,11 +529,14 @@ fn handle_arbitration_probe(
     cmd: &dali2rust_contracts::msg::Dali103ArbitrationProbeCommand,
     counters: &DaliWorkerCounters,
 ) {
-    let Ok(owned) = arbitration::probe_application_controller(controller) else {
-        counters
-            .arbitration_probe_failed
-            .fetch_add(1, Ordering::Relaxed);
-        return;
+    let owned = match arbitration::probe_application_controller(controller) {
+        Ok(owned) => owned,
+        Err(error) => {
+            if !error.is_held() {
+                counters.arbitration_probe_failed.fetch_add(1, Ordering::Relaxed);
+            }
+            return;
+        }
     };
     let ev = dali2rust_contracts::bus::event_envelope(
         SOURCE_ID_UNSPECIFIED,
@@ -534,6 +549,49 @@ fn handle_arbitration_probe(
         },
     );
     publish_event_typed(publisher, ev);
+}
+
+fn handle_test_frame(
+    controller: &mut impl DaliApplicationController,
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    cmd: &dali2rust_contracts::msg::Dali103TestFrameCommand,
+    counters: &DaliWorkerCounters,
+) {
+    let request = TestFrame { data: cmd.data, dtr: cmd.dtr };
+    let sent = bus_unit::send_test_frame(controller, request).map_err(|bus_unit::TestFrameFailed(held)| held);
+    confirm_sent(sent, publisher, correlation_id, counters);
+}
+
+// IEC 62386-103 §9.12.2
+fn handle_power_notification(
+    controller: &mut impl DaliApplicationController,
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    cmd: &dali2rust_contracts::msg::Dali103PowerNotificationCommand,
+    counters: &DaliWorkerCounters,
+) {
+    let frame = power_notification(cmd.short_address, cmd.device_groups).as_bytes();
+    let sent = controller.send_frame24(frame, false).map(drop).map_err(|error| held_cause_of(&error));
+    confirm_sent(sent, publisher, correlation_id, counters);
+}
+
+fn confirm_sent(
+    sent: Result<(), Option<HoldCause>>,
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    counters: &DaliWorkerCounters,
+) {
+    match sent {
+        Ok(()) => publish_confirmation_ok(publisher, correlation_id, counters),
+        Err(Some(cause)) => {
+            answer_each_refused(publisher, &[correlation_id], counters, (ErrorCode::Conflict, cause.message()));
+        }
+        Err(None) => {
+            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+            emit_execution_failed(publisher, correlation_id, counters);
+        }
+    }
 }
 
 #[cfg(test)]

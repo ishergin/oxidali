@@ -36,7 +36,7 @@ if [[ -n "$cards" ]]; then
   echo "verify_ui_follows_design: OK (web/app and its cards change together $SINCE)"
   exit 0
 fi
-if git log --format=%B "$BASE..HEAD" | grep -qxF "$TRAILER"; then
+if git log --format=%B "$BASE..HEAD" | grep -xF "$TRAILER" >/dev/null; then
   echo "verify_ui_follows_design: OK (a commit declares '$TRAILER' $SINCE)"
   exit 0
 fi

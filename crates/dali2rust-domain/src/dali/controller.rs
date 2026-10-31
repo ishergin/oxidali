@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use dali2rust_platform::dali::WireLease;
 
 use crate::dali::commands::{DaliCommand, DaliResponse};
-use crate::dali::frame::ForwardFrame;
+use crate::dali::frame::{ForwardFrame, HoldCause};
 use crate::dali::ses::{DaliSession, TransactionPriority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,6 +11,11 @@ pub enum Frame24Fault {
     Unsupported,
     Contended,
     Preempted,
+    Held(HoldCause),
+}
+
+pub trait WireHold: Send + Sync {
+    fn held(&self) -> Option<HoldCause>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +92,15 @@ pub trait DaliApplicationController: DaliProductController {
 
     fn with_wire_lease<R>(&mut self, lease: WireLease, run: impl FnOnce(&mut Self) -> R) -> R {
         let _ = lease;
+        run(self)
+    }
+
+    fn with_wire_hold<R>(
+        &mut self,
+        hold: Arc<dyn WireHold>,
+        run: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let _ = hold;
         run(self)
     }
 

@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use dali2rust_platform::dali::{
-    DaliTransport, ObservedFrameSender, ObservedRawFrame, ObservedRawFrameKind, TransferOutcome,
+    DaliTransport, ObservedFrameSender, ObservedRawFrameKind, TransferOutcome,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +58,7 @@ struct MockInner {
     blocked: Arc<AtomicBool>,
     block_timeout_ms: u64,
     foreign_activity: u32,
-    observed_tx: Option<ObservedFrameSender>,
+    wire: super::bus_unit_wire::InjectedWire,
     dtr: [u8; 3],
     last_tx_settle_ticks: Option<u16>,
 }
@@ -86,7 +86,7 @@ impl Default for MockInner {
             blocked: Arc::new(AtomicBool::new(false)),
             block_timeout_ms: 60_000,
             foreign_activity: 0,
-            observed_tx: None,
+            wire: super::bus_unit_wire::InjectedWire::default(),
             dtr: [0; 3],
             last_tx_settle_ticks: None,
         }
@@ -337,6 +337,7 @@ const DTR_QUERY_OPCODES: [u16; 3] = [0x98, 0x9C, 0x9D];
 
 fn record_forward_send(g: &mut MockInner, frame: u16, min_idle_us: u32) {
     g.sent_frames.push(frame);
+    g.wire.note_own_forward();
     g.sent_frame_min_idle_us.push(min_idle_us);
     g.sent_frame_times.push(Instant::now());
     if let Some(index) = DTR_WRITE_ADDRESS_BYTES
@@ -484,17 +485,7 @@ fn scripted_transfer_outcome(
 
 impl MockDaliTransport {
     pub fn inject_observed_frame(&self, bytes: [u8; 3], kind: ObservedRawFrameKind) -> bool {
-        let g = self.inner.lock().unwrap();
-        let Some(tx) = g.observed_tx.as_ref() else {
-            return false;
-        };
-        tx.try_send(ObservedRawFrame {
-            bytes,
-            kind,
-            observed_at_ms: dali2rust_bsp::unix_clock::unix_wall_clock_millis(),
-            observed_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
-        })
-        .is_ok()
+        self.inner.lock().unwrap().wire.inject(bytes, kind)
     }
 }
 
@@ -547,6 +538,7 @@ impl DaliTransport for MockDaliTransport {
         let mut g = self.wait_if_blocked(g);
         g.sent_frames24.push(frame);
         g.sent_frame24_min_idle_us.push(min_idle_us);
+        g.wire.note_own_forward();
         if let Some(outcome) = g.frame24_outcomes.pop_front() {
             return Ok(outcome);
         }
@@ -646,7 +638,15 @@ impl DaliTransport for MockDaliTransport {
     }
 
     fn set_observed_frame_sender(&mut self, sender: ObservedFrameSender) {
-        self.inner.lock().unwrap().observed_tx = Some(sender);
+        self.inner.lock().unwrap().wire.set_sender(sender);
+    }
+
+    fn set_answer_inputs(&mut self, inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>) {
+        self.inner.lock().unwrap().wire.set_answer_inputs(inputs);
+    }
+
+    fn set_bus_unit_identity(&mut self, identity: dali2rust_platform::bus_unit::BusUnitIdentity) {
+        self.inner.lock().unwrap().wire.set_identity(&identity);
     }
 }
 

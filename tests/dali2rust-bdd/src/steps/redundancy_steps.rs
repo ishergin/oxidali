@@ -19,7 +19,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-010 SET-DALI-011 RED-034 SET-DALI-015 SET-DALI-016 RED-035 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -51,7 +51,7 @@ async fn json_pointer_eventually_contains(
     assert!(holds(), "{path}{pointer} never contained {part:?}: {:?}", read());
 }
 
-// RED-029
+// RED-029 SET-DALI-010 SET-DALI-011 RED-034
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be greater than (\d+)$"#)]
 async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String, path: String, floor: u64) {
     let port = world.server_port();
@@ -100,7 +100,7 @@ async fn put_kept_body(world: &mut DaliWorld, path: String) {
 }
 
 
-// RED-021 RED-023 RED-024 RED-030 SYS-255
+// RED-021 RED-023 RED-024 RED-030 SYS-255 SET-DALI-010
 #[then(regex = r#"^the response header "([^"]+)" should be "([^"]*)"$"#)]
 async fn response_header_is(world: &mut DaliWorld, name: String, expected: String) {
     let response = world.last_response().expect("last response");
@@ -118,7 +118,7 @@ async fn response_header_is(world: &mut DaliWorld, name: String, expected: Strin
     );
 }
 
-// RED-023 RED-024 RED-025 RED-030 RED-031 RED-033
+// RED-023 RED-024 RED-025 RED-030 RED-031 RED-033 SET-DALI-011 RED-034 SET-DALI-013
 #[given("this controller has stood down")]
 async fn controller_stands_down(world: &mut DaliWorld) {
     world.send_http_request(
@@ -129,6 +129,36 @@ async fn controller_stands_down(world: &mut DaliWorld) {
     );
     let status = world.last_response().expect("last response").status;
     assert_eq!(status, 200, "standing the controller down should succeed");
+}
+
+fn supervisor_ticks(port: u16) -> Option<(u64, u64)> {
+    let json = fetch_json(port, "/api/v1/redundancy")?;
+    let count = |pointer: &str| json.pointer(pointer).and_then(serde_json::Value::as_u64);
+    Some((count("/arbitration/defended")?, count("/arbitration/worker_stale")?))
+}
+
+// RED-034
+#[when("I note the supervisor's defended and stale ticks")]
+async fn note_supervisor_ticks(world: &mut DaliWorld) {
+    world.remembered_pair = supervisor_ticks(world.server_port());
+    assert!(world.remembered_pair.is_some(), "/api/v1/redundancy has no arbitration tick counts");
+}
+
+// RED-034
+#[then(regex = r"^the supervisor should eventually have defended (\d+) more ticks with no stale worker$")]
+async fn supervisor_defended_more(world: &mut DaliWorld, more: u64) {
+    let (defended, stale) = world.remembered_pair.expect("noted supervisor ticks");
+    let port = world.server_port();
+    try_wait_until(
+        || supervisor_ticks(port).is_some_and(|(now, _)| now >= defended + more),
+        SUPERVISOR_TICKS_TIMEOUT,
+    );
+    let found = supervisor_ticks(port);
+    assert!(
+        found.is_some_and(|(now, now_stale)| now >= defended + more && now_stale == stale),
+        "(defended, worker_stale) went from {:?} to {found:?}, expected {more} more defended and no new stale",
+        (defended, stale)
+    );
 }
 
 const ARBITRATION_PROBE: [u8; 3] = [0xFF, 0xFE, 0x3D];

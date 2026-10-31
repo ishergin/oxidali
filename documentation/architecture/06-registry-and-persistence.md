@@ -214,10 +214,12 @@ filtered: they address one device.
   the stored bindings survive until the next virtual-lamp write, and a controller
   re-scanned and rebooted before any lamp edit gets them back. The re-bind is the worst
   case; marking the slice dirty would make it certain.
-- A bump of the DALI settings slice resets `applicationActive` to its default (active)
-  and would put a stood-down standby back on the wire after an update. Redundancy
-  settings keep a slice of their own, whose reset (`enabled: false`) only switches the
-  mechanism off.
+- A reset of the DALI settings slice would set `applicationActive` to its default
+  (active) and put a stood-down standby back on the wire, after an update or after a
+  rollback to the image before it. So that slice never bumps: it grows only at its tail,
+  an older image reads the fields it knows and ignores the rest, and a newer one starts a
+  field the stored slice lacks from its factory value. Redundancy settings keep a slice of
+  their own, whose reset (`enabled: false`) only switches the mechanism off.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

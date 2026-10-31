@@ -87,6 +87,7 @@ pub struct StatsDaliConsoleDto {
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct StatsDaliTaskTimingDto {
     pub answer_staged_total: u32,
+    pub answer_over_backward_total: u32,
     pub answer_table_behind_total: u32,
     pub answer_table_publish_max_ticks: u32,
     pub sniff_poll_late_total: u32,
@@ -195,7 +196,6 @@ pub struct StatsNetworkDto {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct StatsReportDto {
-    pub sample_ms: u64,
     pub controller: StatsControllerDto,
     pub bus: StatsBusDto,
     pub dali: StatsDaliDto,
@@ -250,7 +250,8 @@ declare_widest_dtos! {
         console_log_unavailable_total, console_uart_errors_total,
     }
     StatsDaliTaskTimingDto {
-        answer_staged_total, answer_table_behind_total, answer_table_publish_max_ticks,
+        answer_staged_total, answer_over_backward_total, answer_table_behind_total,
+        answer_table_publish_max_ticks,
         sniff_poll_late_total, sniff_poll_gap_max_us, persist_flush_total,
         persist_flush_slow_total, persist_flush_ms_total, persist_flush_max_ms,
         persist_gate_waits_total, persist_gate_timeouts_total,
@@ -288,7 +289,7 @@ declare_widest_dtos! {
         rx_ring_overruns_total, rx_fifo_overflows_total, link_up_events_total,
     }
     StatsReportDto {
-        sample_ms = u64::MAX, controller = StatsControllerDto::widest(),
+        controller = StatsControllerDto::widest(),
         bus = StatsBusDto::widest(), dali = StatsDaliDto::widest(),
         operations = StatsOperationsDto::widest(), websocket = StatsWebSocketDto::widest(),
         mqtt = StatsMqttDto::widest(), input = StatsInputDto::widest(),

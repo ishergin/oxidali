@@ -24,6 +24,9 @@ impl<T: DaliTransport + Send> DaliController<T> {
         }
         let mut contended = false;
         for attempt in 0..attempts {
+            if let Some(cause) = self.held_by() {
+                return Err(FrameError::Held(cause));
+            }
             if self.must_yield() {
                 return Err(FrameError::Preempted);
             }

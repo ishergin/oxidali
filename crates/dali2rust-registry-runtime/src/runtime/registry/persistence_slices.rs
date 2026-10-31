@@ -135,6 +135,19 @@ pub struct PersistableDaliSettingsSlice {
     pub dt8_rgbwaf_control_assert: bool,
     pub application_active: bool,
     pub device_short_address: Option<u8>,
+    pub random_address: u32,
+    pub device_groups: u32,
+    pub operating_mode: u8,
+    pub power_cycle_notification: bool,
+    pub set_by: dali2rust_domain::registry::BusUnitSetBy,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct DaliSettingsBeforeBusUnitSlice {
+    pub dt8_auto_activation_repair: bool,
+    pub dt8_rgbwaf_control_assert: bool,
+    pub application_active: bool,
+    pub device_short_address: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

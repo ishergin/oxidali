@@ -5,6 +5,7 @@ import { ago, hex2, lampState, LEVEL_MAX } from '../format'
 import { useVerifying } from '../observation'
 import { draftAfterPoll, draftAfterRefusal, type SliderDraft } from '../slider-draft'
 import { type CctRange, cctSliderView } from './cct-view'
+import { blurCommits } from './text-commit'
 
 const IME_PROCESS_KEY_CODE = 229
 
@@ -110,6 +111,7 @@ export function EditableText({
   const klass = cls ?? 'inp'
   const [draft, setDraft] = useState<string | null>(null)
   const cancelled = useRef(false)
+  const atFocus = useRef<string | null>(null)
   const didAutoFocus = useRef(false)
   return (
     <input
@@ -124,7 +126,10 @@ export function EditableText({
           el.focus()
         }
       }}
-      onFocus={(e) => setDraft(e.currentTarget.value)}
+      onFocus={(e) => {
+        atFocus.current = e.currentTarget.value
+        setDraft(e.currentTarget.value)
+      }}
       onInput={(e) => setDraft(e.currentTarget.value)}
       onKeyDown={(e) => {
         if (isImeComposing(e)) return
@@ -136,13 +141,12 @@ export function EditableText({
       }}
       onBlur={(e) => {
         const v = e.currentTarget.value
+        const commits = blurCommits(v, atFocus.current, cancelled.current)
         setDraft(null)
-        if (cancelled.current) {
-          cancelled.current = false
-          onCancel?.()
-          return
-        }
-        onCommit(v)
+        cancelled.current = false
+        atFocus.current = null
+        if (commits) onCommit(v)
+        else onCancel?.()
       }}
     />
   )

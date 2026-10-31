@@ -150,7 +150,8 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
 - Hydration joins before HTTP mounts, so no mutating request precedes it; a boot-order
   change keeps that or adds a gate.
 - Each persisted slice has its own version: bump only the slice whose shape moved and say
-  what the bump resets. A physical-devices bump orphans every virtual-lamp binding.
+  what the bump resets. A physical-devices bump orphans every virtual-lamp binding. The
+  DALI settings slice never bumps; it grows at its tail (06).
 - Bus and shared types live in `dali2rust-contracts/src/msg/`; no parallel DTOs. A
   payload is declared only in `declare_bus_payloads!` with a worst-case `budget`, and
   variant order is the wire discriminant, growing only at the end (ADR-005).
@@ -254,7 +255,8 @@ implemented: [conformance gaps](documentation/reference/iec62386-conformance-gap
   never the 16-bit `wire_address` + `command` pair. Part 103 and 102 encode addresses
   and operands differently; use the typed operands.
 - Priority comes from the command kind (`WIRE_CLASSES`: exhaustive, no default), never
-  the opcode, except on the raw diagnostic path (ADR-013).
+  the opcode, except on the raw diagnostic path (ADR-013) and for a foreign `SEND
+  TESTFRAME`, whose `PPP` bits name it (ADR-030).
 - Background work never delays an operator, and that is not a setting; a preempted read
   (`Preempted`) is routine, never shown as a failure (ADR-009).
 - A multi-frame unit is a transaction (`controller.transaction`; `controller.unit` when it

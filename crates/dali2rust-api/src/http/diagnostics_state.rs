@@ -148,7 +148,7 @@ pub struct SnifferTranslatorDto {
     pub input_events_ambiguous_scheme: u32,
     pub input_lifecycle: u32,
     pub fact_publish_retried: u32,
-    pub app_control_pairs: u32,
+    pub bus_unit_reports: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -402,7 +402,7 @@ declare_widest_dtos! {
         observed_published, unknown_seen, special_tracked, dt8_staged, backward_ignored,
         publish_failed, input_events_typed, input_events_generic,
         input_events_ambiguous_scheme, input_lifecycle, fact_publish_retried,
-        app_control_pairs,
+        bus_unit_reports,
     }
     RulesWorkerDto {
         commits_applied, commits_rejected, enable_toggles, hydrate_failed,

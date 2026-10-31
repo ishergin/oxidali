@@ -135,6 +135,10 @@ const OBSERVED_ONLY_EVENTS: &[(&str, &str)] = &[
         "PoliciesChangedEvent",
         "the policy is read from the port when it is applied, never latched from an event",
     ),
+    (
+        "Dali103ApplicationControlObservedEvent",
+        "retired: nothing publishes it; its slot keeps the wire order of the events after it",
+    ),
 ];
 
 fn owners_of<'a>(name: &str, tables: &'a [(&str, &[&str])]) -> Vec<&'a str> {

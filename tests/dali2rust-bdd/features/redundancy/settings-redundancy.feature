@@ -72,3 +72,27 @@ Feature: Redundancy — settings
     When I PATCH JSON {"peer_url":""} to "/api/v1/settings/redundancy"
     Then the response status should be 200
     And the JSON field "peer_url" should be ""
+
+  @id:RED-036
+  Scenario: An operator cannot name this controller's own short address as its peer's
+    When I PATCH JSON {"device_short_address":5} to "/api/v1/settings/dali"
+    Then the response status should be 200
+    When I PATCH JSON {"peer_device_short_address":5} to "/api/v1/settings/redundancy"
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON field "message" should be "peer_address_is_this_controller"
+    When I send a GET request to "/api/v1/settings/redundancy"
+    Then the JSON field "peer_device_short_address" should equal null
+
+  @id:RED-037
+  Scenario: A clash another controller made does not refuse a save that leaves the peer's address alone
+    When I PATCH JSON {"enabled":true,"role":"primary","peer_device_short_address":5} to "/api/v1/settings/redundancy"
+    Then the response status should be 200
+    When a 24-bit frame C1 30 05 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    And a 24-bit frame FF FE 14 is observed on the bus
+    Then the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
+    When I PATCH JSON {"enabled":false,"peer_device_short_address":5} to "/api/v1/settings/redundancy"
+    Then the response status should be 200
+    When I send a GET request to "/api/v1/settings/redundancy"
+    Then the JSON boolean field "enabled" should be false

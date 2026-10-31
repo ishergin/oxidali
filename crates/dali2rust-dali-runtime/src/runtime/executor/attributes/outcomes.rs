@@ -73,7 +73,7 @@ impl AttributeReadOutcomes {
 }
 
 pub fn classify_read_abort(error: SemanticDaliError) -> AttributeGroupReadOutcome {
-    if error.is_preempted() {
+    if error.is_preempted() || error.is_held() {
         return AttributeGroupReadOutcome::Preempted;
     }
     match error {

@@ -319,7 +319,7 @@ declare_counter_mapping! {
         observed_published, unknown_seen, special_tracked, dt8_staged, backward_ignored,
         publish_failed, input_events_typed, input_events_generic,
         input_events_ambiguous_scheme, input_lifecycle, fact_publish_retried,
-        app_control_pairs,
+        bus_unit_reports,
     }
 
     rules_worker_dto(c: dali2rust_rules_runtime::RulesWorkerCounters) -> RulesWorkerDto {
@@ -655,6 +655,7 @@ fn stats_task_timing_dto(h: &RuntimeCounterHandles) -> StatsDaliTaskTimingDto {
     let gate = dali2rust_platform::dali::persist_gate_stats();
     StatsDaliTaskTimingDto {
         answer_staged_total: s.answer_staged.load(Relaxed),
+        answer_over_backward_total: s.answer_over_backward.load(Relaxed),
         answer_table_behind_total: s.answer_table_behind.load(Relaxed),
         answer_table_publish_max_ticks: s.answer_table_publish_max_ticks.load(Relaxed),
         sniff_poll_late_total: s.sniff_poll_late.load(Relaxed),
@@ -688,7 +689,6 @@ impl StatsHttpState for StatsBridge {
 
     fn stats_dto_into(&self, out: &mut StatsReportDto) {
         let uptime_ms = self.uptime.elapsed_ms();
-        out.sample_ms = uptime_ms;
         out.controller = stats_controller_dto(uptime_ms, self.heap.as_ref().map(|h| h.snapshot()));
         out.bus = stats_bus_dto(
             &self.publisher.counters_snapshot(),
@@ -855,6 +855,10 @@ impl dali2rust_api::http::role::ControllerRolePort for RoleBridge {
     fn is_active(&self) -> bool {
         self.dali.dali_settings_view().application_active
     }
+
+    fn quiescent_remaining_ms(&self) -> Option<u32> {
+        self.dali.quiescent_remaining_ms()
+    }
 }
 
 pub(crate) struct RedundancyBridge {
@@ -949,6 +953,7 @@ impl dali2rust_api::http::redundancy_state::RedundancyHttpState for RedundancyBr
             now_ms: now,
             answering: inputs.is_answering(now),
             lease_remaining_ms: inputs.lease_remaining_ms(now),
+            quiescent_remaining_ms: self.dali.quiescent_remaining_ms(),
             enabled: view.enabled,
             role: role_name(view.standby_role),
             active: self.dali.dali_settings_view().application_active,

@@ -23,7 +23,7 @@ Scope: why the system is built this way. How it works is in the
 | [014](ADR-014-gear-model-and-second-dali-endpoint.md) | One gear model | Accepted | Shared model; host sim plays the foreign master |
 | [015](ADR-015-routed-event-delivery.md) | Routed events | Amended by 021 | Route by declared kind; undeclared is silent |
 | [016](ADR-016-input-devices-and-rule-engine.md) | Input devices, rule engine | Accepted | Part 103 on one transport; bounded rules from source |
-| [017](ADR-017-dali-transactions-and-frame-priority.md) | Transactions, frame priority | Amended by 020 | Priority by purpose; §9.2 transactions |
+| [017](ADR-017-dali-transactions-and-frame-priority.md) | Transactions, frame priority | Amended by 020, 030 | Priority by purpose; §9.2 transactions |
 | [018](ADR-018-controller-redundancy.md) | Controller redundancy | Amended by 030 | DiiA 351 arbitration; HTTP config pull |
 | [019](ADR-019-standby-dali-endpoint.md) | Host standby endpoint | Deferred | Coprocessor design; nothing built |
 | [020](ADR-020-violating-backward-frame-is-an-answer.md) | Violation is an answer | Accepted | Terminal; YES but no value |

@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering::Relaxed;
 use dali2rust_dali_phy::{
     AnswerCounts, AnswerTableCounts, PhyIsrCore, RxCompletedEvent, FORWARD24_BITS, PHY_TICK_US,
 };
-use dali2rust_domain::dali::dev103::unit::answer_table;
+use dali2rust_platform::answer_table::AnswerTableImage;
 use dali2rust_platform::arbitration::{AnswerInputs, ArbitrationAnswerCounters};
 use dali2rust_platform::dali::PhySnifferCounters;
 
@@ -32,8 +32,9 @@ pub const fn arbitration_answers(
     }
 }
 
-pub fn mirror_table_counts(sink: &PhySnifferCounters, table: &AnswerTableCounts) {
+pub fn mirror_answer_counts(sink: &PhySnifferCounters, sent: &AnswerCounts, table: &AnswerTableCounts) {
     sink.answer_staged.store(table.answered, Relaxed);
+    sink.answer_over_backward.store(sent.over_backward, Relaxed);
     sink.answer_table_behind.store(table.behind, Relaxed);
     sink.answer_table_torn.store(table.torn, Relaxed);
     sink.answer_decode_overrun.store(table.decode_overrun, Relaxed);
@@ -41,46 +42,41 @@ pub fn mirror_table_counts(sink: &PhySnifferCounters, table: &AnswerTableCounts)
 
 #[derive(Debug, Default)]
 pub struct AnswerPublisher {
-    accounts_for: u8,
+    accounts_for: u32,
     oldest_unpublished_tick: Option<u32>,
 }
 
 impl AnswerPublisher {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            accounts_for: 0,
-            oldest_unpublished_tick: None,
-        }
-    }
-
     pub fn drain(
         &mut self,
         mut pop: impl FnMut() -> Option<RxCompletedEvent>,
-        mut each: impl FnMut(&RxCompletedEvent),
+        mut each: impl FnMut(&RxCompletedEvent, bool),
     ) {
         while let Some(ev) = pop() {
+            let after_gap = ev.sniff_seq != self.accounts_for.wrapping_add(1);
             self.accounts_for = ev.sniff_seq;
             self.oldest_unpublished_tick.get_or_insert(ev.rx_tick);
-            each(&ev);
+            each(&ev, after_gap);
         }
+    }
+
+    #[must_use]
+    pub fn caught_up(&self, isr: &PhyIsrCore) -> bool {
+        isr.latest_capture() == self.accounts_for
     }
 
     pub fn publish(
         &mut self,
         isr: &PhyIsrCore,
         inputs: Option<&AnswerInputs>,
+        table: Option<&AnswerTableImage>,
         now_ms: u32,
     ) -> Option<u32> {
         let now_tick = isr.wire_tick_counts().0;
         let remaining_ms = inputs.map_or(0, |inputs| inputs.lease_remaining_ms(now_ms));
         isr.set_answer_lease_for_ms(now_tick, remaining_ms);
         let oldest = self.oldest_unpublished_tick.take();
-        let unit = inputs.and_then(AnswerInputs::unit)?;
-        isr.publish_answer_table(
-            &answer_table(unit.application_active, unit.device_short_address),
-            self.accounts_for,
-        );
+        isr.publish_answer_table(table?, self.accounts_for);
         oldest.map(|captured| now_tick.wrapping_sub(captured))
     }
 }
@@ -88,8 +84,10 @@ impl AnswerPublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dali::transport::bus_unit_wire::BusUnitWire;
     use dali2rust_dali_phy::{RegisterGpio, TableLookup};
-    use dali2rust_platform::arbitration::UnitInputs;
+    use dali2rust_domain::dali::dev103::bus_unit::FACTORY_NVM;
+    use dali2rust_platform::bus_unit::{BusUnitIdentity, BusUnitSnapshot};
 
     const QACE_BROADCAST: [u8; 3] = [0xFF, 0xFE, 0x3D];
     const NOW_MS: u32 = 1_000;
@@ -112,17 +110,47 @@ mod tests {
         PhyIsrCore::new(gpio)
     }
 
-    fn named(application_active: bool) -> AnswerInputs {
-        let inputs = AnswerInputs::new();
-        inputs.publish_unit(UnitInputs {
-            application_active,
-            device_short_address: Some(7),
-        });
-        inputs.extend_lease(NOW_MS, LEASE_MS);
-        inputs
+    const IDENTITY: BusUnitIdentity = BusUnitIdentity {
+        firmware_version: [0, 1],
+        hardware_version: [1, 0],
+        identification_number: [0; 8],
+    };
+
+    struct Named {
+        inputs: AnswerInputs,
+        wire: BusUnitWire,
     }
 
-    fn capture(sniff_seq: u8, rx_tick: u32, sample_count: u16) -> RxCompletedEvent {
+    impl Named {
+        fn new(application_active: bool) -> Self {
+            let inputs = AnswerInputs::new();
+            inputs.extend_lease(NOW_MS, LEASE_MS);
+            let mut named = Self { inputs, wire: BusUnitWire::new(&IDENTITY, || 0) };
+            named.rename(application_active, 1);
+            named
+        }
+
+        fn rename(&mut self, application_active: bool, revision: u32) {
+            let nvm = dali2rust_platform::bus_unit::BusUnitNvm {
+                short_address: Some(7),
+                application_active,
+                ..FACTORY_NVM
+            };
+            let snapshot = BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence: 0, acknowledged_quiescence: 0 };
+            self.inputs.publish_bus_unit(snapshot);
+            let _ = self.wire.poll(Some(&self.inputs), NOW_MS);
+        }
+
+        fn publish(&self, publisher: &mut AnswerPublisher, isr: &PhyIsrCore) -> Option<u32> {
+            self.publish_at(publisher, isr, NOW_MS)
+        }
+
+        fn publish_at(&self, publisher: &mut AnswerPublisher, isr: &PhyIsrCore, now_ms: u32) -> Option<u32> {
+            publisher.publish(isr, Some(&self.inputs), self.wire.answer_table().as_ref(), now_ms)
+        }
+    }
+
+    fn capture(sniff_seq: u32, rx_tick: u32, sample_count: u16) -> RxCompletedEvent {
         RxCompletedEvent {
             sniff_seq,
             rx_tick,
@@ -131,10 +159,10 @@ mod tests {
         }
     }
 
-    fn drain(publisher: &mut AnswerPublisher, captures: &[RxCompletedEvent]) -> Vec<u8> {
+    fn drain(publisher: &mut AnswerPublisher, captures: &[RxCompletedEvent]) -> Vec<(u32, bool)> {
         let mut queue = captures.iter().cloned();
         let mut handed = Vec::new();
-        publisher.drain(|| queue.next(), |ev| handed.push(ev.sniff_seq));
+        publisher.drain(|| queue.next(), |ev, after_gap| handed.push((ev.sniff_seq, after_gap)));
         handed
     }
 
@@ -145,6 +173,7 @@ mod tests {
         late: 4,
         rejected: 5,
         collided: 6,
+        over_backward: 7,
     };
     const TABLE: AnswerTableCounts = AnswerTableCounts {
         answered: 11,
@@ -173,14 +202,15 @@ mod tests {
     #[test]
     fn every_table_count_reaches_its_own_sniffer_counter() {
         let sink = PhySnifferCounters::default();
-        mirror_table_counts(&sink, &TABLE);
+        mirror_answer_counts(&sink, &SENT, &TABLE);
         let got = [
             sink.answer_staged.load(Relaxed),
             sink.answer_table_behind.load(Relaxed),
             sink.answer_table_torn.load(Relaxed),
             sink.answer_decode_overrun.load(Relaxed),
+            sink.answer_over_backward.load(Relaxed),
         ];
-        assert_eq!(got, [11, 13, 14, 16]);
+        assert_eq!(got, [11, 13, 14, 16, 7]);
     }
 
     #[test]
@@ -189,14 +219,16 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_published_before_the_supervisor_names_the_unit() {
+    fn nothing_is_published_before_the_unit_is_hydrated() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
-        let mut publisher = AnswerPublisher::new();
+        let mut publisher = AnswerPublisher::default();
         let inputs = AnswerInputs::new();
         inputs.extend_lease(NOW_MS, LEASE_MS);
+        let mut wire = BusUnitWire::new(&IDENTITY, || 0);
+        assert_eq!(wire.poll(Some(&inputs), NOW_MS).nvm, None);
         drain(&mut publisher, &[capture(1, 0, 27)]);
-        assert_eq!(publisher.publish(&isr, Some(&inputs), NOW_MS), None);
+        assert_eq!(publisher.publish(&isr, Some(&inputs), wire.answer_table().as_ref(), NOW_MS), None);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 1), TableLookup::NotPublished);
     }
 
@@ -204,37 +236,50 @@ mod tests {
     fn every_drained_capture_is_handed_on_and_accounted_for() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
-        let mut publisher = AnswerPublisher::new();
+        let mut publisher = AnswerPublisher::default();
         let handed = drain(
             &mut publisher,
-            &[capture(4, 0, 27), capture(5, 0, TOO_SHORT_TO_DECODE)],
+            &[capture(1, 0, 27), capture(2, 0, TOO_SHORT_TO_DECODE)],
         );
-        assert_eq!(handed, [4, 5]);
-        publisher.publish(&isr, Some(&named(true)), NOW_MS);
+        assert_eq!(handed, [(1, false), (2, false)]);
+        let handed = drain(&mut publisher, &[capture(4, 0, 27), capture(5, 0, 27)]);
+        assert_eq!(handed, [(4, true), (5, false)], "the capture after a lost one says so");
+        Named::new(true).publish(&mut publisher, &isr);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 5), TableLookup::Answer(0xFF));
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 4), TableLookup::Behind);
+    }
+
+    #[test]
+    fn the_drain_is_caught_up_only_with_the_last_capture_the_interrupt_numbered() {
+        let mut pins = Pins::IDLE;
+        let isr = core(&mut pins);
+        let mut publisher = AnswerPublisher::default();
+        assert!(publisher.caught_up(&isr));
+        drain(&mut publisher, &[capture(1, 0, 27)]);
+        assert!(!publisher.caught_up(&isr), "the drain names a capture the interrupt never numbered");
     }
 
     #[test]
     fn a_changed_unit_reaches_the_table_at_the_next_poll() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
-        let mut publisher = AnswerPublisher::new();
-        publisher.publish(&isr, Some(&named(true)), NOW_MS);
+        let mut publisher = AnswerPublisher::default();
+        let mut named = Named::new(true);
+        named.publish(&mut publisher, &isr);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 0), TableLookup::Answer(0xFF));
-        publisher.publish(&isr, Some(&named(false)), NOW_MS);
+        named.rename(false, 2);
+        named.publish(&mut publisher, &isr);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 0), TableLookup::Silent);
     }
 
     #[test]
-    fn a_revoked_lease_reaches_the_interrupt_at_the_next_poll() {
+    fn a_lapsed_lease_reaches_the_interrupt_at_the_next_poll() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
-        let mut publisher = AnswerPublisher::new();
-        let inputs = named(true);
-        publisher.publish(&isr, Some(&inputs), NOW_MS);
-        inputs.revoke_lease(NOW_MS);
-        publisher.publish(&isr, Some(&inputs), NOW_MS);
+        let mut publisher = AnswerPublisher::default();
+        let named = Named::new(true);
+        named.publish(&mut publisher, &isr);
+        named.publish_at(&mut publisher, &isr, NOW_MS + LEASE_MS);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 0), TableLookup::LeaseLapsed);
     }
 
@@ -242,24 +287,24 @@ mod tests {
     fn the_delay_runs_from_the_oldest_capture_the_publish_accounts_for() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
-        let mut publisher = AnswerPublisher::new();
-        let inputs = named(true);
+        let mut publisher = AnswerPublisher::default();
+        let named = Named::new(true);
         drain(
             &mut publisher,
             &[capture(1, u32::MAX - 4, 27), capture(2, u32::MAX - 1, 27)],
         );
-        assert_eq!(publisher.publish(&isr, Some(&inputs), NOW_MS), Some(5));
-        assert_eq!(publisher.publish(&isr, Some(&inputs), NOW_MS), None);
+        assert_eq!(named.publish(&mut publisher, &isr), Some(5));
+        assert_eq!(named.publish(&mut publisher, &isr), None);
     }
 
     #[test]
     fn captures_before_the_unit_is_named_carry_no_delay_forward() {
         let mut pins = Pins::IDLE;
         let isr = core(&mut pins);
-        let mut publisher = AnswerPublisher::new();
+        let mut publisher = AnswerPublisher::default();
         drain(&mut publisher, &[capture(1, u32::MAX - 4, 27)]);
-        assert_eq!(publisher.publish(&isr, Some(&AnswerInputs::new()), NOW_MS), None);
-        assert_eq!(publisher.publish(&isr, Some(&named(true)), NOW_MS), None);
+        assert_eq!(publisher.publish(&isr, Some(&AnswerInputs::new()), None, NOW_MS), None);
+        assert_eq!(Named::new(true).publish(&mut publisher, &isr), None);
         assert_eq!(isr.lookup_answer(QACE_BROADCAST, 1), TableLookup::Answer(0xFF));
     }
 }

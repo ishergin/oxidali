@@ -15,6 +15,7 @@ use dali2rust_contracts::msg::{
     DaliTargetScope, ErrorCode, LightSetpoint, MemoryBankReadPreset, OperationWorkerSignal,
     OperationWorkerSignalEvent, Origin, PowerState,
 };
+use dali2rust_dali_runtime::runtime::controller::{PHY_TICK_US, TX_ARM_LEAD_TICKS};
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
     DALI_WORKER_HANDLED_COMMANDS,
@@ -37,6 +38,10 @@ pub const SIGNAL_DEADLINE: Duration = Duration::from_secs(10);
 const HELD_EVENTS_INGRESS: usize = 4;
 const WORKER_INBOX: usize = 16;
 const SIGNAL_INBOX: usize = 64;
+
+pub fn on_wire_settle_us(requested_us: u32) -> u32 {
+    requested_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US
+}
 
 pub fn standard_frame(command: StandardCommand) -> u16 {
     DaliCommand::Standard {
@@ -272,6 +277,39 @@ pub struct ReadPortDouble {
     pub policy_armed: bool,
     pub known_shorts: Vec<u8>,
     pub identity: IdentityRead,
+    pub held_after: Option<HeldAfter>,
+}
+
+#[derive(Clone, Copy)]
+pub enum SentFrames {
+    Of24(usize),
+    Of16(usize),
+    AfterQueries(usize),
+    AtQuery(usize),
+}
+
+pub struct HeldAfter {
+    pub transport: Arc<Mutex<MockDaliTransport>>,
+    pub sent: SentFrames,
+    pub passive: bool,
+    pub queries: std::sync::atomic::AtomicUsize,
+}
+
+impl ReadPortDouble {
+    fn held(&self, passive: bool) -> bool {
+        self.held_after.as_ref().is_some_and(|held| {
+            if held.passive != passive {
+                return false;
+            }
+            let mock = held.transport.lock().expect("mock lock");
+            match held.sent {
+                SentFrames::Of24(frames) => mock.sent_frames24().len() >= frames,
+                SentFrames::Of16(frames) => mock.sent_frames().len() >= frames,
+                SentFrames::AfterQueries(queries) => held.queries.fetch_add(1, Ordering::SeqCst) >= queries,
+                SentFrames::AtQuery(query) => held.queries.fetch_add(1, Ordering::SeqCst) == query,
+            }
+        })
+    }
 }
 
 impl InputInstanceTypeReadPort for ReadPortDouble {
@@ -282,7 +320,11 @@ impl InputInstanceTypeReadPort for ReadPortDouble {
 
 impl RegistryReadPort for ReadPortDouble {
     fn application_controller_active(&self) -> bool {
-        true
+        !self.held(true)
+    }
+
+    fn controller_quiescent(&self) -> bool {
+        self.held(false)
     }
 
     fn virtual_lamp_snapshot(&self, _adapter_id: u8, _virtual_lamp_id: u8) -> VirtualLampSnapshot {

@@ -39,12 +39,47 @@ pub struct PollerSettingsView {
     pub power_cycle_watch: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DaliSettingsView {
     pub dt8_auto_activation_repair: bool,
     pub dt8_rgbwaf_control_assert: bool,
     pub application_active: bool,
     pub device_short_address: Option<u8>,
+    pub power_cycle_notification: bool,
+    pub random_address: u32,
+    pub device_groups: u32,
+    pub operating_mode: u8,
+    pub set_by: BusUnitSetBy,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BusUnitSetter {
+    #[default]
+    Unrecorded,
+    Operator,
+    Wire,
+    Redundancy,
+}
+
+impl BusUnitSetter {
+    #[must_use]
+    pub const fn mover(self) -> ApplicationActiveMover {
+        match self {
+            Self::Unrecorded => ApplicationActiveMover::Unmoved,
+            Self::Operator | Self::Redundancy => ApplicationActiveMover::Command,
+            Self::Wire => ApplicationActiveMover::Wire,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BusUnitSetBy {
+    pub short_address: BusUnitSetter,
+    pub random_address: BusUnitSetter,
+    pub device_groups: BusUnitSetter,
+    pub operating_mode: BusUnitSetter,
+    pub power_cycle_notification: BusUnitSetter,
+    pub application_active: BusUnitSetter,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

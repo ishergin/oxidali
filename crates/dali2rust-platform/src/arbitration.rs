@@ -1,11 +1,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::bus_unit::{BusUnitSnapshot, Busy, Latest};
 use crate::liveness::CLOCK_READ_SKEW_MS;
-
-const UNIT_PUBLISHED: u32 = 1 << 31;
-const UNIT_ACTIVE: u32 = 1 << 8;
-const UNIT_ADDRESS_MASK: u32 = 0xFF;
-const UNIT_NO_ADDRESS: u32 = 0xFF;
 
 pub const LEASE_TTL_MS: u32 = 3_000;
 
@@ -19,15 +15,9 @@ pub struct ArbitrationAnswerCounters {
     pub out_of_window: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnitInputs {
-    pub application_active: bool,
-    pub device_short_address: Option<u8>,
-}
-
 #[derive(Debug)]
 pub struct AnswerInputs {
-    unit: AtomicU32,
+    bus_unit: Latest<BusUnitSnapshot>,
     lease_until_ms: AtomicU32,
     answered: AtomicU32,
     suppressed_lease: AtomicU32,
@@ -46,7 +36,7 @@ impl Default for AnswerInputs {
 impl AnswerInputs {
     pub const fn new() -> Self {
         Self {
-            unit: AtomicU32::new(0),
+            bus_unit: Latest::new(),
             lease_until_ms: AtomicU32::new(0),
             answered: AtomicU32::new(0),
             suppressed_lease: AtomicU32::new(0),
@@ -57,25 +47,16 @@ impl AnswerInputs {
         }
     }
 
-    pub fn publish_unit(&self, inputs: UnitInputs) {
-        let address = inputs
-            .device_short_address
-            .map_or(UNIT_NO_ADDRESS, u32::from);
-        let active = if inputs.application_active { UNIT_ACTIVE } else { 0 };
-        self.unit
-            .store(UNIT_PUBLISHED | active | (address & UNIT_ADDRESS_MASK), Ordering::Release);
+    pub fn publish_bus_unit(&self, snapshot: BusUnitSnapshot) {
+        self.bus_unit.publish(snapshot);
     }
 
-    pub fn unit(&self) -> Option<UnitInputs> {
-        let packed = self.unit.load(Ordering::Acquire);
-        if packed & UNIT_PUBLISHED == 0 {
-            return None;
-        }
-        let address = packed & UNIT_ADDRESS_MASK;
-        Some(UnitInputs {
-            application_active: packed & UNIT_ACTIVE != 0,
-            device_short_address: (address != UNIT_NO_ADDRESS).then_some(address as u8),
-        })
+    pub fn bus_unit(&self) -> Option<BusUnitSnapshot> {
+        self.bus_unit.latest()
+    }
+
+    pub fn try_bus_unit(&self) -> Result<Option<BusUnitSnapshot>, Busy> {
+        self.bus_unit.try_latest()
     }
 
     pub fn extend_lease(&self, now_ms: u32, ttl_ms: u32) {
@@ -84,10 +65,6 @@ impl AnswerInputs {
             self.lease_until_ms
                 .store(now_ms.wrapping_add(ttl_ms), Ordering::Release);
         }
-    }
-
-    pub fn revoke_lease(&self, now_ms: u32) {
-        self.lease_until_ms.store(now_ms, Ordering::Release);
     }
 
     pub fn lease_alive(&self, now_ms: u32) -> bool {
@@ -106,7 +83,7 @@ impl AnswerInputs {
     }
 
     pub fn is_answering(&self, now_ms: u32) -> bool {
-        self.lease_alive(now_ms) && self.unit().is_some_and(|unit| unit.application_active)
+        self.lease_alive(now_ms) && self.bus_unit().is_some_and(|unit| unit.nvm.application_active)
     }
 
     pub fn mirror_answers(&self, counts: ArbitrationAnswerCounters) {
@@ -134,9 +111,18 @@ impl AnswerInputs {
 mod tests {
     use super::*;
 
-    const ACTIVE_AT_7: UnitInputs = UnitInputs {
-        application_active: true,
-        device_short_address: Some(7),
+    const ACTIVE_AT_7: BusUnitSnapshot = BusUnitSnapshot {
+        nvm: crate::bus_unit::BusUnitNvm {
+            short_address: Some(7),
+            random_address: 0x00FF_FFFF,
+            device_groups: 0,
+            operating_mode: 0,
+            power_cycle_notification: false,
+            application_active: true,
+        },
+        revision: 1,
+        acknowledged_wire_sequence: 0,
+        acknowledged_quiescence: 0,
     };
 
     fn leased() -> AnswerInputs {
@@ -146,38 +132,15 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_published_before_the_supervisor_speaks() {
-        assert_eq!(AnswerInputs::new().unit(), None);
-    }
-
-    #[test]
-    fn the_unit_reads_back_as_published() {
-        let inputs = AnswerInputs::new();
-        inputs.publish_unit(ACTIVE_AT_7);
-        assert_eq!(inputs.unit(), Some(ACTIVE_AT_7));
-        let passive = UnitInputs {
-            application_active: false,
-            device_short_address: None,
-        };
-        inputs.publish_unit(passive);
-        assert_eq!(inputs.unit(), Some(passive));
-    }
-
-    #[test]
-    fn short_address_zero_survives_the_packing() {
-        let inputs = AnswerInputs::new();
-        let at_zero = UnitInputs {
-            application_active: true,
-            device_short_address: Some(0),
-        };
-        inputs.publish_unit(at_zero);
-        assert_eq!(inputs.unit(), Some(at_zero));
+    fn nothing_is_published_before_the_registry_speaks() {
+        assert_eq!(AnswerInputs::new().bus_unit(), None);
+        assert!(!leased().is_answering(1_000), "no unit, no answer");
     }
 
     #[test]
     fn a_supervisor_that_stops_calling_is_all_it_takes() {
         let inputs = leased();
-        inputs.publish_unit(ACTIVE_AT_7);
+        inputs.publish_bus_unit(ACTIVE_AT_7);
         assert!(inputs.is_answering(3_500));
         assert!(!inputs.lease_alive(4_001));
         assert!(!inputs.is_answering(4_001));
@@ -191,20 +154,14 @@ mod tests {
     }
 
     #[test]
-    fn revoking_is_immediate() {
-        let inputs = leased();
-        inputs.revoke_lease(1_000);
-        assert!(!inputs.lease_alive(1_000));
-    }
-
-    #[test]
-    fn a_lease_revoked_late_in_the_clock_stays_revoked_and_extends_again() {
-        for revoked_at in [(1u32 << 31) + 10, u32::MAX - 1_000] {
+    fn a_lease_lapsed_late_in_the_clock_stays_lapsed_and_extends_again() {
+        for renewed_at in [(1u32 << 31) + 10, u32::MAX - 1_000] {
             let inputs = AnswerInputs::new();
-            inputs.revoke_lease(revoked_at);
-            let later = revoked_at.wrapping_add(500);
-            assert!(!inputs.lease_alive(revoked_at), "revoked at {revoked_at}");
-            assert_eq!(inputs.lease_remaining_ms(later), 0, "revoked at {revoked_at}");
+            inputs.extend_lease(renewed_at, LEASE_TTL_MS);
+            let lapsed_at = renewed_at.wrapping_add(LEASE_TTL_MS);
+            let later = lapsed_at.wrapping_add(500);
+            assert!(!inputs.lease_alive(lapsed_at), "renewed at {renewed_at}");
+            assert_eq!(inputs.lease_remaining_ms(later), 0, "renewed at {renewed_at}");
             inputs.extend_lease(later, LEASE_TTL_MS);
             assert!(inputs.lease_alive(later));
             assert!(!inputs.lease_alive(later.wrapping_add(LEASE_TTL_MS)));
@@ -243,10 +200,9 @@ mod tests {
     #[test]
     fn a_passive_unit_is_not_answering_under_a_live_lease() {
         let inputs = leased();
-        inputs.publish_unit(UnitInputs {
-            application_active: false,
-            device_short_address: Some(7),
-        });
+        let mut passive = ACTIVE_AT_7;
+        passive.nvm.application_active = false;
+        inputs.publish_bus_unit(passive);
         assert!(!inputs.is_answering(1_000));
     }
 

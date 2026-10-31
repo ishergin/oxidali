@@ -140,7 +140,7 @@ impl FailedTarget {
 fn close_target_state_failure(reply: &Reply<'_>, target: FailedTarget, error: &SemanticDaliError) {
     let Reply { publisher, adapter_id, answer, counters, .. } = *reply;
     publish_target_state_failed(publisher, adapter_id, answer.correlation_id, target, error);
-    answer.failed(publisher, counters, (error.code(), error.message()));
+    answer.ended_by(publisher, counters, *error);
 }
 
 fn publish_target_state_failed(

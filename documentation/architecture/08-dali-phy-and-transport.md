@@ -87,9 +87,10 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   `TX_ARM_LEAD_TICKS` (3) after the arming tick, whose work would otherwise delay the
   opening edge and shorten the start bit. Work on the transmit-start path is
   timing-critical; move it off that tick rather than make it faster.
-- The lead listens: a dominant level during it means another master took the slot, and
-  the frame steps back unwritten (`TxPollResult::Yielded`) and re-arms from the interrupt
-  once the bus is idle. A line inside its start-bit debounce counts as busy.
+- A forward frame's lead listens: a dominant level during it means another master took
+  the slot, and the frame steps back unwritten (`TxPollResult::Yielded`) and re-arms from
+  the interrupt once the bus is idle. A line inside its start-bit debounce counts as busy.
+  An answer's lead does not listen (ADR-030).
 - A held or yielded frame is voided when another master's forward frame completes first
   — that command spends the `ENABLE DEVICE TYPE` the frame may depend on (102 §11.7.14)
   and may have rewritten its DTR — and is reported that tick as `SessionEvent::TxVoided`
@@ -143,32 +144,49 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
   decoded. The other lengths are decoded by the drain.
 - Every capture pushed to the sniffer ring, or dropped because it was full, moves
-  `sniff_seq`, and the capture carries it; our own frames do not move it.
+  `sniff_seq`, and the capture carries it; our own frames do not move it. The bus epoch
+  moves on every forward capture and every forward frame we start that does not yield
+  before its first edge, and a backward capture carries it unchanged, so the drain sees
+  from a capture's epoch that a frame of ours passed before it.
 - The `dali-sniff` task drains captures, decodes, logs, publishes and republishes the
   answer table. It polls every 10 ms and runs one priority step above the worker pool.
 
 ## Answering inside Table 20
 
-- The task decides before the frame, the interrupt answers it (ADR-030). After each poll
-  the drain builds the answer table from the supervisor's `AnswerInputs`
-  (`dali2rust-domain::dali::dev103::unit`) and publishes it (`dali-phy::answer_table`)
-  naming the last capture it consumed.
+- The task decides before the frame, the interrupt answers it (ADR-030). The drain feeds
+  every capture it decodes, in wire order, to the bus-unit model
+  (`dali2rust-domain::dali::dev103::bus_unit`) and after each poll publishes the table the
+  model returns (`dali-phy::answer_table`), naming the last capture it consumed. A model
+  the registry has not hydrated publishes no table; it takes the registry's copy only at a
+  poll that finds no capture waiting. A frame of ours between two captures
+  reaches the model as a frame it cannot read, which splits a send-twice pair.
 - The interrupt answers a decoded 24-bit capture only from a table published after the
   drain took the capture just before it. A table that is behind answers nothing, and every
   query it has an entry for (a device query addressed to the unit, or a special query)
   that meets it is counted (`answer_table_behind_total`), whether or not the entry holds
   an answer: the count measures the drain's lag. A capture lost to a full ring reaches
-  the drain only as a jump in `sniff_seq`. The table
+  the drain only as a jump in `sniff_seq`, on which the model drops the state that capture
+  could have changed. `sniff_seq` is 32 bits, so no stall wraps it; the table carries the
+  tick it was published at, and one older than `TABLE_MAX_AGE_TICKS` is behind, so a
+  stalled drain answers nothing. The table
   is double-buffered under a sequence check, so the interrupt never answers from half of
   one and counts a torn read instead.
 - The lease reaches the interrupt as an expiry in its own ticks, never more than
   `LEASE_TTL_MS` ahead, rewritten at every poll and applied at answer time: a stalled
   supervisor or a stalled drain silences the answer within one lease, and a lease nobody
   rewrites reads alive again for at most one lease per wrap of the counter.
-- The interrupt stages the answer in the answer cell under the capture's bus epoch and
-  sends it on the tick the idle counter reaches the Table 20 target (`answer_gate`),
-  ahead of any forward frame of ours, only while no later bus event has moved the epoch,
-  and discards it once the window has passed.
+- The interrupt stages the answer in the answer cell under the capture's bus epoch, which
+  only a forward frame moves, ours or a foreign one. The slot is counted from the
+  capture's last edge in every bus state: the answer goes out on the tick the count reaches the
+  Table 20 target (`answer_gate`), ahead of any forward frame of ours, and is discarded
+  once the window has passed. A backward frame or a violation captured meanwhile neither
+  voids it nor moves its slot.
+- A reception in progress holds the answer only when it began less than 2,4 ms after that
+  edge, since 101 Table 20 reads such a frame as no backward frame, and so does a line held
+  low for `fsm::LINE_HELD_TICKS`. A later one is another unit's answer: ours abandons the
+  reception and starts over it, the dominant level wins, and `answer_over_backward_total`
+  in `/api/v1/stats` counts it, as it counts a frame whose start is still being debounced
+  on our arming tick.
 - The window constants live in `dali-phy::backward_window`, derived from
   `fsm::TX_ARM_LEAD_TICKS` and bounded at compile time; the gear emulator stages its
   answers in the same cell.

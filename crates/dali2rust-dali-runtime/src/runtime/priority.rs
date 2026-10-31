@@ -174,6 +174,22 @@ const WIRE_CLASSES: &[WireClass] = &[
         false,
         TransactionPriority::PeriodicQuery,
     ),
+    // IEC 62386-103 §11.10.21
+    class(
+        "Dali103TestFrameCommand",
+        WirePriority::Attended,
+        YieldGranularity::Never,
+        false,
+        TransactionPriority::UserAction,
+    ),
+    // IEC 62386-103 §9.12.2
+    class(
+        "Dali103PowerNotificationCommand",
+        WirePriority::Attended,
+        YieldGranularity::Never,
+        false,
+        TransactionPriority::UserAction,
+    ),
     // IEC 62386-103 §9.13.1
     class(
         "DaliAddressingCommand",
@@ -434,6 +450,32 @@ mod tests {
     fn a_command_from_home_assistant_is_not_background_work() {
         assert!(!Origin::Mqtt.is_background());
         assert!(Origin::Poller.is_background());
+    }
+
+    #[test]
+    fn no_command_kind_opens_a_transaction_at_priority_one() {
+        let origins = [
+            Origin::Api,
+            Origin::Mqtt,
+            Origin::Hcl,
+            Origin::Cluster,
+            Origin::AdapterProxy,
+            Origin::Sniffer,
+            Origin::Poller,
+            Origin::Registry,
+            Origin::Internal,
+            Origin::Rules,
+        ];
+        for row in WIRE_CLASSES {
+            for origin in origins {
+                assert_ne!(
+                    transaction_priority(row.variant, origin),
+                    Some(TransactionPriority::Transaction),
+                    "{} from {origin:?} would open at the priority a transaction continues with",
+                    row.variant
+                );
+            }
+        }
     }
 
     #[test]

@@ -9,9 +9,7 @@ use dali2rust_contracts::msg::{DaliWriteMemoryLuminaireCommand, OperationWorkerS
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_dali_runtime::{spawn_dali_worker, DaliRuntimeConfig, DaliWorkerCounters};
 use dali2rust_contracts::msg::{ErrorCode, LuminaireNumbers as N};
-use dali2rust_dali_runtime::runtime::controller::{
-    DaliController, PHY_TICK_US, TRANSACTION_BUDGET_MS, TX_ARM_LEAD_TICKS,
-};
+use dali2rust_dali_runtime::runtime::controller::{DaliController, TRANSACTION_BUDGET_MS};
 use dali2rust_dali_runtime::runtime::executor::{
     write_memory_luminaire, LuminaireWriteFailure, HEADER_SUBJECT, IDENTITY_CHANGED, IDENTITY_SUBJECT,
     LOCK_SUBJECT, READBACK_SUBJECT, RELOCK_SUBJECT,
@@ -24,8 +22,8 @@ use dali2rust_domain::dali::banks::luminaire_write::{
     number_patch, planned_writes, text_patch, FieldWrite, LuminaireField, BANK_UNLOCKED, TEXT_TERMINATOR,
 };
 use dali2rust_domain::dali::banks::part251::{self, LuminaireFormat, LUMINAIRE_COLOUR, YEAR_OFFSET};
-use dali2rust_domain::dali::controller::DaliApplicationController;
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::opcode::READ_MEMORY_LOCATION_OPCODE;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -442,6 +440,64 @@ fn a_locked_bank_is_opened_written_closed_and_read_back_whole() {
     let readback = outcome.readback.expect("the bank is read back");
     assert_eq!(readback.len(), usize::from(last) + 1, "the read-back covers the whole bank");
     assert_eq!(readback[usize::from(YEAR_OFFSET)], YEAR);
+}
+
+struct QuiescentOnceUnlocked(Arc<Mutex<SimDaliTransport>>);
+
+impl WireHold for QuiescentOnceUnlocked {
+    fn held(&self) -> Option<HoldCause> {
+        let unlock = special(SpecialCommand::WriteMemoryLocation(BANK_UNLOCKED));
+        let sent = self.0.lock().expect("bus").sent_frames();
+        sent.contains(&unlock).then_some(HoldCause::Quiescent)
+    }
+}
+
+fn select_bank1() -> u16 {
+    special(SpecialCommand::Dtr1(PROFILE_BANK))
+}
+
+struct QuiescentOnceBank1Selected(Arc<Mutex<SimDaliTransport>>);
+
+impl WireHold for QuiescentOnceBank1Selected {
+    fn held(&self) -> Option<HoldCause> {
+        let sent = self.0.lock().expect("bus").sent_frames();
+        sent.contains(&select_bank1()).then_some(HoldCause::Quiescent)
+    }
+}
+
+// IEC 62386-103 §9.9.3
+#[test]
+fn a_hold_once_the_header_read_is_armed_names_the_hold_and_not_the_header() {
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let bus = Arc::new(Mutex::new(sim));
+    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
+    let hold: Arc<dyn WireHold> = Arc::new(QuiescentOnceBank1Selected(Arc::clone(&bus)));
+    let outcome = controller.with_wire_hold(hold, |c| run_write(c, identity, &year(YEAR)));
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, "controller_quiescent"));
+    let sent = bus.lock().expect("bus").sent_frames();
+    let armed = sent.iter().position(|&frame| frame == select_bank1()).expect("the header read was armed");
+    assert!(!sent[armed..].contains(&read_location()), "no byte of bank 1 is read");
+}
+
+// IEC 62386-103 §9.9.3
+// IEC 62386-102 §9.10.2
+#[test]
+fn a_hold_that_starts_after_the_unlock_lets_the_session_close_the_bank_and_names_its_cause() {
+    let sim = luminaire_gear(FOUND_LOCK, false);
+    let identity = identity_of(&sim);
+    let bus = Arc::new(Mutex::new(sim));
+    let mut controller = DaliController::new(Arc::clone(&bus), Box::new(StoppedClock::at(0)));
+    let hold: Arc<dyn WireHold> = Arc::new(QuiescentOnceUnlocked(Arc::clone(&bus)));
+    let outcome = controller.with_wire_hold(hold, |c| run_write(c, identity, &year(YEAR)));
+    drop(controller);
+    let sim = Arc::into_inner(bus).expect("one owner").into_inner().expect("bus");
+
+    assert_eq!(shape(outcome.result), failure(ErrorCode::Conflict, "controller_quiescent"));
+    assert_eq!(written_values(&sim), vec![BANK_UNLOCKED, YEAR, FOUND_LOCK], "the started session ends closed");
+    assert_eq!(location(&sim, LOCK_OFFSET), Some(FOUND_LOCK));
+    assert_eq!(outcome.readback.as_deref(), Some(&[][..]), "nothing is read back while held");
 }
 
 // IEC 62386-102 §9.10.2, Table 8
@@ -1192,7 +1248,7 @@ fn recorded_write(writes: &[FieldWrite]) -> (Vec<Exchange>, Arc<DaliWireCounters
 }
 
 fn on_wire_settle_us(exchange: &Exchange) -> u32 {
-    exchange.settle_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US
+    support::on_wire_settle_us(exchange.settle_us)
 }
 
 // IEC 62386-101 Table 22

@@ -12,7 +12,7 @@ pub(super) fn handle_stop_fade(
     match execute_stop_fade(controller, read_port, command) {
         Ok(()) => publish_confirmation_ok(publisher, correlation_id, counters),
         Err(error) => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+            count_failure(counters, error);
             emit_execution_failed_with_product_error(
                 publisher,
                 correlation_id,

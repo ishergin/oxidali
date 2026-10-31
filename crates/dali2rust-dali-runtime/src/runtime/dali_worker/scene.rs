@@ -140,7 +140,7 @@ fn fail_recall_scene(
     command: &dali2rust_contracts::msg::DaliRecallSceneCommand,
     error: SemanticDaliError,
 ) {
-    outcome.counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+    count_failure(outcome.counters, error);
     let target = RecallTarget::as_commanded(command);
     let recalled = scene_recalled_event(outcome, command, target, Some((error.code(), error.message())));
     publish_event_required(outcome.publisher, recalled, outcome.counters, PublishKind::Singleton, SCENE_RECALLED);
@@ -213,7 +213,7 @@ pub(super) fn handle_recall_last_active_level(
             }
         }
         Err(error) => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+            count_failure(counters, error);
             emit_execution_failed_with_product_error(
                 publisher,
                 correlation_id,

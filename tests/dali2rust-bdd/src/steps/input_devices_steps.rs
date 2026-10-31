@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use cucumber::{then, when};
+use dali2rust_domain::dali::dev103::{Device103Address, Device103Command};
 use dali2rust_platform::dali::TransferOutcome;
 use dali2rust_platform::dali::ObservedRawFrameKind;
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{remains_false_for, wait_until};
 use serde_json::Value;
 
 use crate::steps::polling::fetch_json;
@@ -25,7 +26,33 @@ fn translator_counter(world: &DaliWorld, name: &str) -> Option<u64> {
 // INP-001 INP-002 INP-003 INP-004 INP-005 RULE-020 RULE-023 INP-006 MQTT-025
 #[when(regex = r"^a 24-bit input event frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
-    let bytes = [parse_hex_byte(&b0), parse_hex_byte(&b1), parse_hex_byte(&b2)];
+    inject_forward24(world, [&b0, &b1, &b2]);
+}
+
+// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022
+#[when(regex = r"^a 24-bit frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
+async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
+    inject_forward24(world, [&b0, &b1, &b2]);
+}
+
+// SET-DALI-010 SET-DALI-011
+#[when(regex = r"^another controller sends (START|STOP) QUIESCENT MODE to every unit$")]
+async fn when_another_controller_sends_quiescent_mode(world: &mut DaliWorld, verb: String) {
+    let command = match verb.as_str() {
+        "START" => Device103Command::StartQuiescentMode,
+        _ => Device103Command::StopQuiescentMode,
+    };
+    assert!(command.metadata().send_twice, "{command:?} is a send-twice command");
+    let bytes = command.frame(Device103Address::Broadcast).as_bytes();
+    inject_bytes(world, bytes);
+    inject_bytes(world, bytes);
+}
+
+fn inject_forward24(world: &DaliWorld, text: [&str; 3]) {
+    inject_bytes(world, text.map(parse_hex_byte));
+}
+
+fn inject_bytes(world: &DaliWorld, bytes: [u8; 3]) {
     let injected = world
         .dali_mock()
         .lock()
@@ -148,7 +175,7 @@ async fn given_scan_with_ed1_feedback(world: &mut DaliWorld, types: String, capa
     seed_scan_with_feedback(world, &types, 0x2F, parse_hex_byte(&capability), None);
 }
 
-// INP-019 INP-070 INP-071 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097 INP-084 INP-085
+// INP-019 INP-070 INP-071 INP-076 INP-077 INP-079 INP-080 INP-081 RULE-020 RULE-023 INP-095 INP-096 INP-097 INP-084 INP-085 RED-027
 #[when(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 #[given(regex = r#"^the mock bus answers 24-bit query "([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2})" with "([0-9A-Fa-f]{2})"$"#)]
 async fn given_frame24_answer(
@@ -191,7 +218,7 @@ fn detail_path_of(patch_path: &str) -> String {
     }
 }
 
-// INP-019 INP-070 INP-076 INP-095 INP-096 INP-097 INP-084
+// INP-019 INP-070 INP-076 INP-095 INP-096 INP-097 INP-084 RED-027 RED-035
 #[then(regex = r#"^the mock transport 24-bit trace should be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);
@@ -202,7 +229,7 @@ async fn then_frames24_trace_exactly(world: &mut DaliWorld, trace: String) {
     );
 }
 
-// RULE-065 RULE-066
+// RULE-065 RULE-066 SET-DALI-012 SET-DALI-013 SET-DALI-014
 #[then(regex = r#"^the mock transport 24-bit trace should eventually be exactly "([0-9A-Fa-f ,]+)"$"#)]
 async fn then_frames24_trace_eventually_exactly(world: &mut DaliWorld, trace: String) {
     let expected = parse_frames24(&trace);
@@ -212,9 +239,30 @@ async fn then_frames24_trace_eventually_exactly(world: &mut DaliWorld, trace: St
     assert_eq!(sent(), expected, "the frames, their address bytes and their order are the contract");
 }
 
+// SET-DALI-015 SET-DALI-017
+#[then(regex = r#"^the mock transport 24-bit trace should be exactly "([0-9A-Fa-f ,]+)" within (\d+) ms$"#)]
+async fn then_frames24_trace_exactly_within(world: &mut DaliWorld, trace: String, deadline_ms: u64) {
+    let expected = parse_frames24(&trace);
+    let mock = world.dali_mock().clone();
+    let sent = || mock.lock().expect("mock lock").sent_frames24();
+    wait_until(|| sent().len() >= expected.len(), Duration::from_millis(deadline_ms));
+    assert_eq!(sent(), expected, "the frames, their address bytes and their order are the contract");
+}
+
+// SET-DALI-015 SET-DALI-016
+#[then(regex = r#"^the mock transport 24-bit trace should stay exactly "([0-9A-Fa-f ,]*)" for (\d+) ms$"#)]
+async fn then_frames24_trace_stays_exactly(world: &mut DaliWorld, trace: String, window_ms: u64) {
+    let expected = parse_frames24(&trace);
+    let mock = world.dali_mock().clone();
+    let sent = || mock.lock().expect("mock lock").sent_frames24();
+    let held = remains_false_for(|| sent() != expected, Duration::from_millis(window_ms));
+    assert!(held, "the 24-bit trace left {expected:02X?} inside {window_ms} ms: {:02X?}", sent());
+}
+
 fn parse_frames24(trace: &str) -> Vec<[u8; 3]> {
     trace
         .split(',')
+        .filter(|frame| !frame.trim().is_empty())
         .map(|frame| {
             let bytes: Vec<u8> = frame.split_whitespace().map(parse_hex_byte).collect();
             <[u8; 3]>::try_from(bytes).expect("three bytes per frame")
@@ -318,7 +366,7 @@ async fn first_frame24_priority(world: &mut DaliWorld, expected: u8) {
     );
 }
 
-// INP-084 RULE-065
+// INP-084 RULE-065 SET-DALI-012 SET-DALI-013 SET-DALI-015 SET-DALI-017
 #[then(regex = r"^24-bit forward frame (\d+) should be sent at priority (\d+)$")]
 async fn frame24_priority(world: &mut DaliWorld, ordinal: usize, expected: u8) {
     let settle_us = world.dali_mock().lock().expect("mock lock").sent_frame24_settle_us();

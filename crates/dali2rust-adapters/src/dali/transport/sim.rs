@@ -8,9 +8,11 @@ use dali2rust_dali_codec::rx_decode::RxDecode;
 use dali2rust_dali_phy::{PHY_TICK_US, TX_HALF_BIT_TICKS};
 use dali2rust_gear_model::{GearFleet, Rng};
 use dali2rust_platform::dali::{
-    DaliTransport, DaliWireCounters, ObservedFrameSender, ObservedRawFrame,
-    ObservedRawFrameKind, TransferOutcome, WireLoadWindow,
+    DaliTransport, DaliWireCounters, ObservedFrameSender, ObservedRawFrameKind, TransferOutcome,
+    WireLoadWindow,
 };
+
+use super::bus_unit_wire::InjectedWire;
 
 use super::{held_capture_outcome, WIRE_LOAD_WINDOW_TICKS};
 
@@ -37,7 +39,7 @@ pub struct SimDaliTransport {
     sent_frame_min_idle_us: Vec<u32>,
     sent_frame24_min_idle_us: Vec<u32>,
     sent_frame_times: Vec<Instant>,
-    observed_tx: Option<ObservedFrameSender>,
+    wire: InjectedWire,
     wire_counters: Option<Arc<DaliWireCounters>>,
     wire_load: WireLoadWindow,
     born: Instant,
@@ -51,7 +53,7 @@ impl SimDaliTransport {
         Self {
             fleet: GearFleet::new(specs, 0, HOST_RNG_SEED),
             input_fleet: dali2rust_gear_model::input_device::DeviceFleet::new(Vec::new()),
-            observed_tx: None,
+            wire: InjectedWire::default(),
             sent_frames: Vec::new(),
             sent_frame_min_idle_us: Vec::new(),
             sent_frame24_min_idle_us: Vec::new(),
@@ -69,7 +71,7 @@ impl SimDaliTransport {
         Self {
             fleet: GearFleet::demo_bus(),
             input_fleet: demo_input_devices(),
-            observed_tx: None,
+            wire: InjectedWire::default(),
             sent_frames: Vec::new(),
             sent_frame_min_idle_us: Vec::new(),
             sent_frame24_min_idle_us: Vec::new(),
@@ -120,16 +122,7 @@ impl SimDaliTransport {
             ObservedRawFrameKind::Backward8 => BACKWARD8_TICKS,
         };
         self.charge_foreign_wire(ticks);
-        let Some(tx) = self.observed_tx.as_ref() else {
-            return false;
-        };
-        tx.try_send(ObservedRawFrame {
-            bytes,
-            kind,
-            observed_at_ms: dali2rust_bsp::unix_clock::unix_wall_clock_millis(),
-            observed_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
-        })
-        .is_ok()
+        self.wire.inject(bytes, kind)
     }
 
     pub fn inject_foreign_frame(&mut self, frame: u16) -> bool {
@@ -176,6 +169,7 @@ impl SimDaliTransport {
         self.sent_frames.push(frame);
         self.sent_frame_min_idle_us.push(min_idle_us);
         self.sent_frame_times.push(Instant::now());
+        self.wire.note_own_forward();
         self.fleet.advance_to_ms(elapsed_ms(self.born));
         let outcome = self.fleet.exchange(frame, expects_backward);
         let outcome = self.merged_on_the_wire(outcome);
@@ -300,6 +294,7 @@ impl DaliTransport for SimDaliTransport {
         dali2rust_platform::dali::Frame24Error<Self::Error>,
     > {
         self.sent_frame24_min_idle_us.push(min_idle_us);
+        self.wire.note_own_forward();
         let outcome = self.input_fleet.exchange24(frame, expects_backward);
         self.charge_wire(FORWARD24_TICKS, &outcome);
         Ok(outcome)
@@ -314,7 +309,15 @@ impl DaliTransport for SimDaliTransport {
     }
 
     fn set_observed_frame_sender(&mut self, sender: ObservedFrameSender) {
-        self.observed_tx = Some(sender);
+        self.wire.set_sender(sender);
+    }
+
+    fn set_answer_inputs(&mut self, inputs: Arc<dali2rust_platform::arbitration::AnswerInputs>) {
+        self.wire.set_answer_inputs(inputs);
+    }
+
+    fn set_bus_unit_identity(&mut self, identity: dali2rust_platform::bus_unit::BusUnitIdentity) {
+        self.wire.set_identity(&identity);
     }
 
     fn send_forward_frame(&mut self, frame: u16) -> Result<(), Self::Error> {
@@ -365,7 +368,9 @@ mod tests {
         let sent = sim.press_button(0, 3, true);
 
         assert_eq!(sent, 1, "the demo panel's button instance emits one event");
-        let frame = rx.try_recv().expect("the event reaches the translator");
+        let Ok(dali2rust_platform::dali::ObservedItem::Frame(frame)) = rx.try_recv() else {
+            panic!("the event reaches the translator as a frame");
+        };
         assert_eq!(frame.kind, ObservedRawFrameKind::Forward24);
         assert_ne!(frame.bytes, [0, 0, 0]);
         assert_eq!(sim.press_button(0, 3, false), 1, "and so does the release");

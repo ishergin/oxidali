@@ -32,7 +32,26 @@ pub struct ObservedRawFrame {
     pub observed_at_mono_ms: u32,
 }
 
-pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedRawFrame>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedItem {
+    Frame(ObservedRawFrame),
+    BusUnit(crate::bus_unit::BusUnitEvidence),
+    BusUnitQuiescence(crate::bus_unit::BusUnitQuiescence),
+    BusUnitTestFrame { data: u8, dtr: [u8; 3] },
+    BusUnitPowerNotification(crate::bus_unit::PowerNotice),
+}
+
+impl ObservedItem {
+    #[must_use]
+    pub const fn resent_until_acknowledged(&self) -> bool {
+        match self {
+            Self::BusUnit(_) | Self::BusUnitQuiescence(_) => true,
+            Self::Frame(_) | Self::BusUnitTestFrame { .. } | Self::BusUnitPowerNotification(_) => false,
+        }
+    }
+}
+
+pub type ObservedFrameSender = std::sync::mpsc::SyncSender<ObservedItem>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameDirection {
@@ -361,6 +380,7 @@ pub struct PhySnifferCounters {
     pub isr_ticks_surplus_raw: core::sync::atomic::AtomicU32,
 
     pub answer_staged: core::sync::atomic::AtomicU32,
+    pub answer_over_backward: core::sync::atomic::AtomicU32,
     pub answer_table_behind: core::sync::atomic::AtomicU32,
     pub answer_table_torn: core::sync::atomic::AtomicU32,
     pub answer_decode_overrun: core::sync::atomic::AtomicU32,
@@ -621,6 +641,8 @@ pub trait DaliTransport {
         _inputs: std::sync::Arc<crate::arbitration::AnswerInputs>,
     ) {
     }
+
+    fn set_bus_unit_identity(&mut self, _identity: crate::bus_unit::BusUnitIdentity) {}
 }
 
 #[derive(Debug)]

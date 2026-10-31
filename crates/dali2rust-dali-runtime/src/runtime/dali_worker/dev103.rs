@@ -540,7 +540,7 @@ fn confirm_request(
     match outcome {
         Ok(()) => super::publish::publish_confirmation_ok(publisher, correlation_id, counters),
         Err(error) => {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+            super::publish::count_failure(counters, error);
             super::publish::emit_execution_failed_with_product_error(
                 publisher,
                 correlation_id,

@@ -66,6 +66,9 @@ impl LuminaireWriteFailure {
 
     // IEC 62386-102 §9.10.4
     fn unread(error: SemanticDaliError, subject: &'static str) -> Self {
+        if error.is_held() {
+            return Self::of(error);
+        }
         let code = match error.message() {
             MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST | MEMORY_LOCATION_UNANSWERED => {
                 ErrorCode::DeviceAbsent
@@ -78,6 +81,9 @@ impl LuminaireWriteFailure {
 
     // IEC 62386-102 §9.10.5
     fn unproved(error: SemanticDaliError, subject: &'static str) -> Self {
+        if error.is_held() {
+            return Self::of(error);
+        }
         let code = match error.message() {
             MEMORY_POINTER_UNCONFIRMED | READ_ENDED_EARLY | MEMORY_LATCH_LOST | MEMORY_LOCATION_UNANSWERED => {
                 ErrorCode::VerifyUnanswered

@@ -21,7 +21,11 @@ BDD — [`settings_dali`](../../../../tests/dali2rust-bdd/features/settings_dali
 | `PATCH` | `/api/v1/settings/dali` | `200` — применённые настройки |
 
 `PATCH` — merge-patch с read-after-write. Не-boolean в булевом поле или адрес вне
-диапазона — `422 invalid_value`, неизвестный ключ — `400 unknown_field`.
+диапазона — `422 invalid_value`, неизвестный ключ — `400 unknown_field`. Патч, который
+переводит адрес на назначенный пиру redundancy (`peer_device_short_address`), —
+`409 conflict` с `message` `short_address_taken_by_peer`: два блока на одном адресе
+накладывают каждый адресный ответ. Совпадение, которое сделал провод, патч, оставляющий
+адрес прежним, не отвергает, иначе ни одна настройка не сохранилась бы.
 
 ## Поля
 
@@ -41,8 +45,22 @@ BDD — [`settings_dali`](../../../../tests/dali2rust-bdd/features/settings_dali
   зонда арбитража. Ручное переключение — вход того же автомата ролей, что ведёт
   redundancy.
 - `device_short_address` (`0..63` или `null`) — собственный адрес контроллера как
-  control device Part 103; из него строится адресная строка таблицы ответов на зонд
-  пира. `null` — отвечают широковещательная строка и строка broadcast unaddressed.
+  control device Part 103; на него отвечает модель блока, в том числе на зонд пира.
+  `null` — отвечают широковещательная форма и форма broadcast unaddressed.
+- `power_cycle_notification` (по умолчанию `false`) — шлёт ли контроллер после загрузки
+  `POWER NOTIFICATION` (IEC 62386-103 §9.12.2); когда и с чем, решает
+  [`ADR-030`](../../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md).
+- `random_address`, `device_groups` (номера групп `0..31`), `operating_mode` — только
+  чтение: их меняет лишь другой контроллер на шине.
+
+Другой контроллер на шине может ввести этот в эксплуатацию (IEC 62386-103 §9.2.3): его
+`SET SHORT ADDRESS`, `ENABLE` / `DISABLE APPLICATION CONTROLLER` и остальные команды
+конфигурации меняют те же переменные через реестр, и `GET` показывает значение, которое
+записали последним, а `set_by` называет по каждой переменной, кто: `operator`, `wire`
+или `redundancy` (арбитраж этого контроллера сам отдал или взял шину); `null` — никто с
+тех пор, как запись это помнит. Изменение с шины, которое модель блока сделала до
+того, как приняла значение оператора, это значение не перезаписывает
+([`ADR-030`](../../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md)).
 
 Первые два поля — разрешения, а не override, поэтому не nullable. Разрешение
 вычисляется в реестре вместе с поустройственным исключением под одной блокировкой:

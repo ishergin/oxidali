@@ -44,6 +44,7 @@ impl DaliPriority {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum TransactionPriority {
+    Transaction = 1,
     UserAction = 2,
     Configuration = 3,
     Automatic = 4,
@@ -53,11 +54,24 @@ pub enum TransactionPriority {
 impl TransactionPriority {
     pub const fn first_frame(self) -> DaliPriority {
         match self {
+            Self::Transaction => DaliPriority::Transaction,
             Self::UserAction => DaliPriority::UserAction,
             Self::Configuration => DaliPriority::Configuration,
             Self::Automatic => DaliPriority::Automatic,
             Self::PeriodicQuery => DaliPriority::PeriodicQuery,
         }
+    }
+
+    // IEC 62386-103 §11.10.21
+    pub const fn from_priority(priority: u8) -> Option<Self> {
+        Some(match priority {
+            1 => Self::Transaction,
+            2 => Self::UserAction,
+            3 => Self::Configuration,
+            4 => Self::Automatic,
+            5 => Self::PeriodicQuery,
+            _ => return None,
+        })
     }
 }
 
@@ -213,7 +227,17 @@ mod tests {
     }
 
     #[test]
-    fn no_transaction_class_opens_with_priority_one() {
+    fn a_stated_priority_names_the_class_that_opens_with_it() {
+        for priority in 1..=5 {
+            let class = TransactionPriority::from_priority(priority).expect("1..=5 is a priority");
+            assert_eq!(class.first_frame() as u8, priority);
+        }
+        assert_eq!(TransactionPriority::from_priority(0), None);
+        assert_eq!(TransactionPriority::from_priority(6), None);
+    }
+
+    #[test]
+    fn no_class_but_the_stated_one_opens_with_priority_one() {
         for class in [
             TransactionPriority::UserAction,
             TransactionPriority::Configuration,

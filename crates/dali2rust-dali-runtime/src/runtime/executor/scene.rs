@@ -8,7 +8,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 
 use crate::runtime::executor::helpers::{
     dali_short_address, program_with_verify_repair, send_special, send_standard,
-    send_standard_query, SemanticDaliError,
+    send_standard_query, unanswered_unless_held, SemanticDaliError,
 };
 use crate::runtime::executor::target_state::{
     apply_dt8_cct, apply_dt8_rgb, apply_dt8_waf, apply_dt8_xy, waf_channels,
@@ -159,12 +159,11 @@ fn read_scene_level(
     address: DaliAddress,
     scene_id: u8,
 ) -> Result<Option<u8>, SemanticDaliError> {
-    Ok(send_standard_query(
+    unanswered_unless_held(send_standard_query(
         controller,
         address,
         StandardCommand::QuerySceneLevel { scene: scene_id },
-    )
-    .unwrap_or(None))
+    ))
 }
 
 #[cfg(test)]

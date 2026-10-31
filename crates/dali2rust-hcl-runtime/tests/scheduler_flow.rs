@@ -461,6 +461,7 @@ struct HarnessOptions {
     inbox: usize,
     gate: Option<Arc<Gate>>,
     command_timeout_ms: u64,
+    role: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
 }
 
 impl Default for HarnessOptions {
@@ -470,6 +471,7 @@ impl Default for HarnessOptions {
             inbox: SCHEDULER_INBOX,
             gate: None,
             command_timeout_ms: TEST_COMMAND_TIMEOUT_MS,
+            role: Arc::new(ActiveRole),
         }
     }
 }
@@ -544,7 +546,7 @@ fn spawn_harness_with(
         Arc::clone(&counters),
         Arc::clone(&overrides),
         Arc::clone(&liveness),
-        std::sync::Arc::new(ActiveRole),
+        options.role,
         Arc::new(dali2rust_platform::firmware::MaintenanceHold::new()),
     );
     Harness {
@@ -1390,12 +1392,46 @@ struct ActiveRole;
 impl dali2rust_domain::registry::DaliSettingsReadPort for ActiveRole {
     fn dali_settings_view(&self) -> dali2rust_domain::registry::DaliSettingsView {
         dali2rust_domain::registry::DaliSettingsView {
-            dt8_auto_activation_repair: false,
-            dt8_rgbwaf_control_assert: false,
             application_active: true,
-            device_short_address: None,
+            ..dali2rust_domain::registry::DaliSettingsView::default()
         }
     }
+}
+
+#[derive(Default)]
+struct QuiescentRole {
+    quiescent: std::sync::atomic::AtomicBool,
+}
+
+impl dali2rust_domain::registry::DaliSettingsReadPort for QuiescentRole {
+    fn dali_settings_view(&self) -> dali2rust_domain::registry::DaliSettingsView {
+        ActiveRole.dali_settings_view()
+    }
+
+    fn quiescent_remaining_ms(&self) -> Option<u32> {
+        self.quiescent.load(Ordering::Relaxed).then_some(1)
+    }
+}
+
+#[test]
+fn another_controller_s_quiescent_mode_holds_the_schedule_until_it_stops() {
+    let registry = StubRegistry {
+        schedules: vec![schedule(
+            "morning",
+            vec![group_target(0, &[3])],
+            vec![point(360, HclLevelMode::Absolute, Some(80), Some(2700))],
+        )],
+        ..StubRegistry::default()
+    };
+    let role = Arc::new(QuiescentRole::default());
+    role.quiescent.store(true, Ordering::Relaxed);
+    let options = HarnessOptions { role: role.clone(), ..HarnessOptions::default() };
+    let harness = spawn_harness_with(Arc::new(registry), Arc::new(StubClock::at(420)), options);
+    harness.wait_for_ticks(3);
+    assert!(harness.commands().is_empty(), "no point goes out while the bus is quiescent");
+    role.quiescent.store(false, Ordering::Relaxed);
+    let commands = harness.wait_for_commands(1);
+    assert!(matches!(commands[0], BusCommandPayload::DaliSetTargetStateCommand(_)));
 }
 
 #[test]

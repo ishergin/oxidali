@@ -58,6 +58,26 @@ pub const EVENT_INFO_MASK: u16 = 0x03FF;
 // IEC 62386-103 Table 20
 const POWER_NOTIFICATION_BYTE0: u8 = 0xFE;
 const POWER_NOTIFICATION_BYTE1_TOP: u8 = 0xE0;
+const POWER_CYCLE_GROUP_VALID: u8 = 0x10;
+const POWER_CYCLE_ADDRESS_VALID: u8 = 0x40;
+const POWER_CYCLE_SHORT_BITS: u8 = 0x3F;
+const POWER_CYCLE_GROUP_LOW_SHIFT: u8 = 7;
+
+// IEC 62386-103 §9.6.2, Table 7
+#[must_use]
+pub fn power_notification(short_address: Option<u8>, device_groups: u32) -> ForwardFrame24 {
+    let lowest_group =
+        (device_groups != 0).then(|| u8::try_from(device_groups.trailing_zeros()).unwrap_or_default());
+    let group_bits = lowest_group.map_or(0, |group| POWER_CYCLE_GROUP_VALID | (group >> 1));
+    let group_low = lowest_group.map_or(0, |group| (group & 0x01) << POWER_CYCLE_GROUP_LOW_SHIFT);
+    let address =
+        short_address.map_or(0, |short| POWER_CYCLE_ADDRESS_VALID | (short & POWER_CYCLE_SHORT_BITS));
+    ForwardFrame24::from_bytes([
+        POWER_NOTIFICATION_BYTE0,
+        POWER_NOTIFICATION_BYTE1_TOP | group_bits,
+        group_low | address,
+    ])
+}
 
 #[must_use]
 pub fn decode_event(frame: ForwardFrame24) -> Option<InputEvent> {
@@ -421,6 +441,31 @@ mod tests {
             }
             other => panic!("expected a power cycle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_power_notification_carries_the_lowest_group_and_the_short_address() {
+        let frame = power_notification(Some(5), 0b0110_0100);
+        assert_eq!(frame.as_bytes(), [0xFE, 0b111_1_0001, 0b0_1_000101]);
+    }
+
+    #[test]
+    fn every_power_notification_decodes_to_the_unit_it_names() {
+        for short_address in [None, Some(0), Some(5), Some(63)] {
+            for device_groups in [0_u32, 1, 1 << 1, 1 << 16, 1 << 31, 0b1010_0000] {
+                let lowest = (device_groups != 0).then(|| u8::try_from(device_groups.trailing_zeros()).unwrap());
+                assert_eq!(
+                    event(power_notification(short_address, device_groups).as_bytes()),
+                    InputEvent::PowerCycle { short_address, device_group: lowest },
+                    "short {short_address:?}, groups {device_groups:#034b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_unit_without_an_address_or_a_group_sends_the_valid_bits_clear() {
+        assert_eq!(power_notification(None, 0).as_bytes(), [0xFE, 0xE0, 0x00]);
     }
 
     #[test]

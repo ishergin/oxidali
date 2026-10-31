@@ -69,6 +69,7 @@ fn fault_to_error(fault: Frame24Fault) -> SemanticDaliError {
         Frame24Fault::Unsupported => SemanticDaliError::OperationFailed(TRANSPORT_UNSUPPORTED_24BIT),
         Frame24Fault::Contended => SemanticDaliError::OperationFailed(FRAME24_CONTENDED),
         Frame24Fault::Preempted => SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE),
+        Frame24Fault::Held(cause) => SemanticDaliError::Conflict(cause.message()),
     }
 }
 
@@ -555,20 +556,18 @@ pub fn commission_control_devices(
     } else {
         InitialiseScope103::Unaddressed
     };
-    controller.transaction_exempt(|c| {
-        send_twice(c, Device103Command::StartQuiescentMode.frame(Device103Address::Broadcast))?;
-        let result = commission_body(c, scope, on_addressed);
-        let terminate = send(c, Special103Command::Terminate.frame(0x00), false);
-        let unquiesce = send_twice(
-            c,
-            Device103Command::StopQuiescentMode.frame(Device103Address::Broadcast),
-        );
-        match (result, terminate, unquiesce) {
-            (Err(e), _, _) | (Ok(_), Err(e), _) => Err(e),
-            (Ok(_), Ok(_), Err(e)) => Err(e),
-            (Ok(count), Ok(_), Ok(())) => Ok(count),
-        }
-    })
+    send_twice(controller, Device103Command::StartQuiescentMode.frame(Device103Address::Broadcast))?;
+    let result = commission_body(controller, scope, on_addressed);
+    let terminate = send(controller, Special103Command::Terminate.frame(0x00), false);
+    let unquiesce = send_twice(
+        controller,
+        Device103Command::StopQuiescentMode.frame(Device103Address::Broadcast),
+    );
+    match (result, terminate, unquiesce) {
+        (Err(e), _, _) | (Ok(_), Err(e), _) => Err(e),
+        (Ok(_), Ok(_), Err(e)) => Err(e),
+        (Ok(count), Ok(_), Ok(())) => Ok(count),
+    }
 }
 
 fn commission_body(
@@ -587,7 +586,10 @@ fn commission_body(
         let Some(short_address) = next_short else {
             break;
         };
-        program_short_address(controller, random, short_address)?;
+        controller.unit_exempt(|c| {
+            set_search_address(c, random)?;
+            program_short_address(c, random, short_address)
+        })?;
         on_addressed(short_address, random);
         addressed = addressed.saturating_add(1);
         next_short = next_free_short_address(short_address);
@@ -598,8 +600,7 @@ fn commission_body(
 fn find_lowest_random_address(
     controller: &mut impl DaliApplicationController,
 ) -> Result<Option<u32>, SemanticDaliError> {
-    set_search_address(controller, RANDOM_ADDRESS_MAX)?;
-    if !send(controller, Special103Command::Compare.frame(0x00), true)?.is_yes() {
+    if !probe_search_address(controller, RANDOM_ADDRESS_MAX)? {
         return Ok(None);
     }
 
@@ -607,15 +608,23 @@ fn find_lowest_random_address(
     let mut high = RANDOM_ADDRESS_MAX;
     while low < high {
         let mid = low + (high - low) / 2;
-        set_search_address(controller, mid)?;
-        if send(controller, Special103Command::Compare.frame(0x00), true)?.is_yes() {
+        if probe_search_address(controller, mid)? {
             high = mid;
         } else {
             low = mid + 1;
         }
     }
-    set_search_address(controller, low)?;
     Ok(Some(low))
+}
+
+fn probe_search_address(
+    controller: &mut impl DaliApplicationController,
+    address: u32,
+) -> Result<bool, SemanticDaliError> {
+    controller.unit_exempt(|c| {
+        set_search_address(c, address)?;
+        Ok(send(c, Special103Command::Compare.frame(0x00), true)?.is_yes())
+    })
 }
 
 fn set_search_address(

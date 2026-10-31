@@ -263,9 +263,16 @@ td.mono { font-family: var(--mono); color: var(--text); }
       <div class="srow">
         <div class="lbl">
           <div class="n">Lease left</div>
-          <div class="d">Renewed once a second while the watched workers turn.</div>
+          <div class="d">Renewed once a second while the watched workers turn, in both roles. Once it lapses the controller reports an application controller error (103 §9.15).</div>
         </div>
         <div class="ctl"><span class="val">2740 ms</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Held quiet by another controller</div>
+          <div class="d">103 §9.9.3 quiescent mode: while another controller holds it, no forward frame of ours leaves, the probe included. It ends with STOP, or on its own 15 min after the last START.</div>
+        </div>
+        <div class="ctl"><span class="val">14 m 08 s left</span></div>
       </div>
       <div class="srow">
         <div class="lbl">
@@ -320,9 +327,16 @@ td.mono { font-family: var(--mono); color: var(--text); }
       <div class="srow">
         <div class="lbl">
           <div class="n">Lease left</div>
-          <div class="d">Renewed once a second while the watched workers turn.</div>
+          <div class="d">Renewed once a second while the watched workers turn, in both roles. Once it lapses the controller reports an application controller error (103 §9.15).</div>
         </div>
-        <div class="ctl"><span class="val faint">0 ms</span></div>
+        <div class="ctl"><span class="val">2810 ms</span></div>
+      </div>
+      <div class="srow">
+        <div class="lbl">
+          <div class="n">Held quiet by another controller</div>
+          <div class="d">103 §9.9.3 quiescent mode: while another controller holds it, no forward frame of ours leaves, the probe included. It ends with STOP, or on its own 15 min after the last START.</div>
+        </div>
+        <div class="ctl"><span class="val faint">no</span></div>
       </div>
       <div class="srow">
         <div class="lbl">

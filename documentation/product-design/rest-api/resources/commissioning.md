@@ -117,7 +117,8 @@ invalid_value`.
 - Неизвестный ключ тела — `400 unknown_field`; шаг, команду которого никто не принял,
   — `503 delivery_rejected`. Отказ до провода — как у любого синхронного маршрута:
   выключенный адаптер — `409 conflict` с `message = adapter_disabled`, пассивный
-  контроллер — `409 controller_standby` с `Retry-After: 1`.
+  контроллер — `409 controller_standby` с `Retry-After: 1`, quiescent mode другого
+  контроллера — `409 controller_quiescent` с `Retry-After`.
 - Ответ — `success`, `backward_frame` и добавки шага; отсутствующее поле значит «к
   шагу не относится» или, при `success: false`, «шаг не исполнен». Отказ исполнения на
   проводе тоже приходит `200` с `success: false`, и тогда в ответе есть `error_code` и

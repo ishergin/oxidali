@@ -248,6 +248,8 @@ fn set_role(
             dt8_rgbwaf_control_assert: false,
             application_active: active,
             device_short_address: u8::MAX,
+            power_cycle_notification: false,
+            by_redundancy: true,
         },
     );
     if deps

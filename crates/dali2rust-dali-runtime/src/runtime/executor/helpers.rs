@@ -4,7 +4,7 @@ use dali2rust_domain::dali::controller::{DaliApplicationController, ReadbackWork
 use dali2rust_domain::dali::devices::dt8_color::{
     Dt8Command, opcode_requires_repeat as dt8_opcode_requires_repeat,
 };
-use dali2rust_domain::dali::frame::ForwardFrame;
+use dali2rust_domain::dali::frame::{ForwardFrame, HoldCause};
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
@@ -84,6 +84,20 @@ impl SemanticDaliError {
         matches!(self, Self::OperationFailed(PREEMPTED_MESSAGE))
     }
 
+    pub fn is_held(self) -> bool {
+        [HoldCause::Passive, HoldCause::Quiescent]
+            .into_iter()
+            .any(|cause| self == Self::Conflict(cause.message()))
+    }
+
+    pub fn held_as_preempted(self) -> Self {
+        if self.is_held() {
+            Self::OperationFailed(PREEMPTED_MESSAGE)
+        } else {
+            self
+        }
+    }
+
     pub fn is_device_absent(self) -> bool {
         matches!(self, Self::OperationFailed(DEVICE_ABSENT_MESSAGE))
     }
@@ -103,13 +117,25 @@ pub const RANDOMISE_SETTLE_MS: u64 = 100;
 
 fn map_transport_error(error: &impl core::fmt::Debug) -> SemanticDaliError {
     let rendered = format!("{error:?}");
-    if rendered.contains("Preempted") {
+    if let Some(cause) = held_cause_in(&rendered) {
+        SemanticDaliError::Conflict(cause.message())
+    } else if rendered.contains("Preempted") {
         SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE)
     } else if rendered.contains("Collision") || rendered.contains("BusBusy") {
         SemanticDaliError::OperationFailed("bus_contended")
     } else {
         SemanticDaliError::OperationFailed("dali_transport_error")
     }
+}
+
+pub(crate) fn held_cause_of(error: &impl core::fmt::Debug) -> Option<HoldCause> {
+    held_cause_in(&format!("{error:?}"))
+}
+
+fn held_cause_in(rendered: &str) -> Option<HoldCause> {
+    [HoldCause::Passive, HoldCause::Quiescent]
+        .into_iter()
+        .find(|cause| rendered.contains(&format!("Held({cause:?})")))
 }
 
 pub fn dali_short_address(short_address: u8) -> Result<DaliAddress, SemanticDaliError> {
@@ -499,10 +525,19 @@ pub(crate) fn program_with_verify_repair<C: DaliApplicationController, V: Copy>(
         if latest.is_some() {
             controller.note_workaround(ReadbackWorkaround::ProgramRepair);
         }
-        latest = drive(controller).unwrap_or(None);
+        latest = unanswered_unless_held(drive(controller))?;
         readback = latest.or(readback);
     }
     Ok(readback)
+}
+
+pub(crate) fn unanswered_unless_held<V>(
+    read: Result<Option<V>, SemanticDaliError>,
+) -> Result<Option<V>, SemanticDaliError> {
+    match read {
+        Err(error) if error.is_held() => Err(error),
+        read => Ok(read.unwrap_or(None)),
+    }
 }
 
 pub(crate) fn confirm_observed_query<C, F, T>(

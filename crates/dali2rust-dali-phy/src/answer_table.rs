@@ -24,8 +24,10 @@ const SPECIAL_VERIFY_SHORT_ADDRESS: u8 = 0x09;
 const SPECIAL_QUERY_SHORT_ADDRESS: u8 = 0x0A;
 const NEVER_PUBLISHED: u32 = 0;
 const US_PER_MS: u32 = 1_000;
+const TABLE_MAX_AGE_MS: u32 = 100;
 
 pub const ANSWER_LEASE_MAX_TICKS: u32 = lease_ticks(LEASE_TTL_MS);
+pub const TABLE_MAX_AGE_TICKS: u32 = TABLE_MAX_AGE_MS * US_PER_MS / PHY_TICK_US;
 
 #[allow(clippy::arithmetic_side_effects, reason = "at most LEASE_TTL_MS microseconds divided by a non-zero constant; task context only")]
 const fn lease_ticks(remaining_ms: u32) -> u32 {
@@ -59,7 +61,7 @@ pub const fn answer_entry_index(frame: [u8; 3], short_address: u8, groups: u32) 
 }
 
 #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
-const fn addresses_the_device(address: u8, short_address: u8, groups: u32) -> bool {
+pub const fn addresses_the_device(address: u8, short_address: u8, groups: u32) -> bool {
     match address {
         BROADCAST => true,
         BROADCAST_UNADDRESSED => short_address == NO_SHORT_ADDRESS,
@@ -130,7 +132,8 @@ impl TableRefusals {
 #[derive(Clone, Copy)]
 struct LiveRead {
     torn: bool,
-    accounts_for: u8,
+    accounts_for: u32,
+    published_tick: u32,
     short_address: u8,
     index: Option<usize>,
     word: u32,
@@ -138,7 +141,8 @@ struct LiveRead {
 
 struct TableCopy {
     generation: AtomicU32,
-    accounts_for: AtomicU8,
+    accounts_for: AtomicU32,
+    published_tick: AtomicU32,
     short_address: AtomicU8,
     groups: AtomicU32,
     entries: [AtomicU32; ANSWER_ENTRIES],
@@ -148,18 +152,20 @@ impl TableCopy {
     const fn new() -> Self {
         Self {
             generation: AtomicU32::new(NEVER_PUBLISHED),
-            accounts_for: AtomicU8::new(0),
+            accounts_for: AtomicU32::new(0),
+            published_tick: AtomicU32::new(0),
             short_address: AtomicU8::new(NO_SHORT_ADDRESS),
             groups: AtomicU32::new(0),
             entries: [const { AtomicU32::new(0) }; ANSWER_ENTRIES],
         }
     }
 
-    fn write(&self, image: &AnswerTableImage, accounts_for: u8) {
+    fn write(&self, image: &AnswerTableImage, accounts_for: u32, now_tick: u32) {
         let generation = self.generation.load(Ordering::Relaxed);
         self.generation.store(generation.wrapping_add(1), Ordering::Relaxed);
         fence(Ordering::Release);
         self.accounts_for.store(accounts_for, Ordering::Relaxed);
+        self.published_tick.store(now_tick, Ordering::Relaxed);
         self.short_address.store(image.short_address, Ordering::Relaxed);
         self.groups.store(image.groups, Ordering::Relaxed);
         for (slot, entry) in self.entries.iter().zip(image.entries.iter()) {
@@ -192,10 +198,10 @@ impl AnswerTableCell {
         }
     }
 
-    pub fn publish(&self, image: &AnswerTableImage, accounts_for: u8) {
+    pub fn publish(&self, image: &AnswerTableImage, accounts_for: u32, now_tick: u32) {
         let next = (self.live.load(Ordering::Relaxed) ^ 1) & 1;
         if let Some(copy) = self.copies.get(usize::from(next)) {
-            copy.write(image, accounts_for);
+            copy.write(image, accounts_for, now_tick);
             self.live.store(next, Ordering::Release);
         }
     }
@@ -214,12 +220,12 @@ impl AnswerTableCell {
         remaining != 0 && remaining <= ANSWER_LEASE_MAX_TICKS
     }
 
-    pub fn lookup(&self, frame: [u8; 3], previous_capture: u8, now_tick: u32) -> TableLookup {
+    pub fn lookup(&self, frame: [u8; 3], previous_capture: u32, now_tick: u32) -> TableLookup {
         self.decide(frame, previous_capture, now_tick, &TableRefusals::new())
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
-    pub fn answer(&self, frame: [u8; 3], previous_capture: u8, now_tick: u32) -> Option<u8> {
+    pub fn answer(&self, frame: [u8; 3], previous_capture: u32, now_tick: u32) -> Option<u8> {
         match self.decide(frame, previous_capture, now_tick, &self.refusals) {
             TableLookup::Answer(answer) => Some(answer),
             _ => None,
@@ -238,7 +244,7 @@ impl AnswerTableCell {
     fn decide(
         &self,
         frame: [u8; 3],
-        previous_capture: u8,
+        previous_capture: u32,
         now_tick: u32,
         refusals: &TableRefusals,
     ) -> TableLookup {
@@ -252,7 +258,8 @@ impl AnswerTableCell {
         let Some(index) = read.index else {
             return TableLookup::NotAddressed;
         };
-        if read.accounts_for != previous_capture {
+        let aged = now_tick.wrapping_sub(read.published_tick) > TABLE_MAX_AGE_TICKS;
+        if read.accounts_for != previous_capture || aged {
             refusals.behind.fetch_add(1, Ordering::Relaxed);
             return TableLookup::Behind;
         }
@@ -276,6 +283,7 @@ impl AnswerTableCell {
             return None;
         }
         let accounts_for = copy.accounts_for.load(Ordering::Relaxed);
+        let published_tick = copy.published_tick.load(Ordering::Relaxed);
         let short_address = copy.short_address.load(Ordering::Relaxed);
         let groups = copy.groups.load(Ordering::Relaxed);
         let index = answer_entry_index(frame, short_address, groups);
@@ -287,7 +295,7 @@ impl AnswerTableCell {
             None => 0,
         };
         let torn = !copy.settled_since(before);
-        Some(LiveRead { torn, accounts_for, short_address, index, word })
+        Some(LiveRead { torn, accounts_for, published_tick, short_address, index, word })
     }
 }
 
@@ -313,9 +321,9 @@ mod tests {
         image
     }
 
-    fn published(image: &AnswerTableImage, accounts_for: u8) -> AnswerTableCell {
+    fn published(image: &AnswerTableImage, accounts_for: u32) -> AnswerTableCell {
         let cell = AnswerTableCell::new();
-        cell.publish(image, accounts_for);
+        cell.publish(image, accounts_for, NOW);
         cell.set_lease_until_tick(NOW + 100);
         cell
     }
@@ -359,6 +367,29 @@ mod tests {
         let cell = published(&image(7, 0), 4);
         assert_eq!(cell.lookup([0xFF, 0xFE, QACE], 5, NOW), TableLookup::Behind);
         assert_eq!(cell.lookup([0x11, 0xFE, QACE], 5, NOW), TableLookup::NotAddressed);
+    }
+
+    #[test]
+    fn a_table_older_than_its_bound_answers_nothing_whatever_capture_it_names() {
+        let cell = published(&image(7, 0), 4);
+        cell.set_lease_until_tick(NOW + 2 * TABLE_MAX_AGE_TICKS);
+        let qace = [0xFF, 0xFE, QACE];
+        assert_eq!(cell.lookup(qace, 4, NOW + TABLE_MAX_AGE_TICKS), TableLookup::Answer(0xFF));
+        assert_eq!(cell.lookup(qace, 4, NOW + TABLE_MAX_AGE_TICKS + 1), TableLookup::Behind);
+        assert_eq!(cell.answer(qace, 4, NOW + TABLE_MAX_AGE_TICKS + 1), None);
+        assert_eq!(cell.refusal_counts().behind, 1);
+        cell.publish(&image(7, 0), 4, NOW + TABLE_MAX_AGE_TICKS + 1);
+        assert_eq!(cell.lookup(qace, 4, NOW + TABLE_MAX_AGE_TICKS + 1), TableLookup::Answer(0xFF));
+    }
+
+    #[test]
+    fn a_table_counts_its_age_across_the_tick_counter_wrapping() {
+        let cell = AnswerTableCell::new();
+        cell.publish(&image(7, 0), 0, u32::MAX);
+        cell.set_lease_until_tick(TABLE_MAX_AGE_TICKS + 1);
+        let qace = [0xFF, 0xFE, QACE];
+        assert_eq!(cell.lookup(qace, 0, TABLE_MAX_AGE_TICKS - 1), TableLookup::Answer(0xFF));
+        assert_eq!(cell.lookup(qace, 0, TABLE_MAX_AGE_TICKS), TableLookup::Behind);
     }
 
     #[test]
@@ -434,10 +465,10 @@ mod tests {
     #[test]
     fn a_republished_table_replaces_the_one_before() {
         let cell = published(&image(7, 0), 0);
-        cell.publish(&image(8, 0), 1);
+        cell.publish(&image(8, 0), 1, NOW);
         assert_eq!(cell.lookup([0x0F, 0xFE, QACE], 1, NOW), TableLookup::NotAddressed);
         assert_eq!(cell.lookup([0x11, 0xFE, QACE], 1, NOW), TableLookup::Answer(0xFF));
-        cell.publish(&image(7, 0), 2);
+        cell.publish(&image(7, 0), 2, NOW);
         assert_eq!(cell.lookup([0x0F, 0xFE, QACE], 2, NOW), TableLookup::Answer(0xFF));
     }
 
@@ -447,7 +478,7 @@ mod tests {
         let copy = &cell.copies[usize::from(cell.live.load(Ordering::Relaxed))];
         let before = copy.generation.load(Ordering::Acquire);
         assert!(copy.settled_since(before));
-        copy.write(&image(7, 0), 1);
+        copy.write(&image(7, 0), 1, NOW);
         assert!(!copy.settled_since(before));
     }
 

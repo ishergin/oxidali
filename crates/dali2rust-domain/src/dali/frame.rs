@@ -5,6 +5,8 @@ pub struct ForwardFrame(pub u16);
 pub struct BackwardFrame(pub u8);
 
 impl ForwardFrame {
+    pub const DATA_BITS: u8 = 16;
+
     pub fn new(address_byte: u8, command_byte: u8) -> Self {
         Self(((address_byte as u16) << 8) | (command_byte as u16))
     }
@@ -44,6 +46,25 @@ impl BackwardFrame {
     }
 }
 
+// IEC 62386-101 Table 16
+const HALF_BITS_PER_SECOND: u32 = 2_400;
+const HALF_BITS_PER_BIT: u32 = 2;
+const US_PER_SECOND: u32 = 1_000_000;
+const US_PER_MS: u32 = 1_000;
+// IEC 62386-101 Table 20
+pub const SEND_TWICE_SEPARATE_US: u32 = 105_000;
+
+#[must_use]
+pub const fn forward_frame_us(data_bits: u8) -> u32 {
+    (data_bits as u32 + 1) * HALF_BITS_PER_BIT * US_PER_SECOND / HALF_BITS_PER_SECOND
+}
+
+// IEC 62386-101 §9.3
+#[must_use]
+pub const fn send_twice_span_ms(data_bits: u8) -> u32 {
+    (SEND_TWICE_SEPARATE_US + forward_frame_us(data_bits)).div_ceil(US_PER_MS)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
     BackwardTimeout,
@@ -52,11 +73,36 @@ pub enum FrameError {
     BusBusy,
     TransportError,
     Preempted,
+    Held(HoldCause),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldCause {
+    Passive,
+    Quiescent,
+}
+
+impl HoldCause {
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::Passive => "controller_passive",
+            Self::Quiescent => "controller_quiescent",
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pair_spans_its_settling_limit_plus_the_second_frame() {
+        assert_eq!(forward_frame_us(24), 20_833);
+        assert_eq!(forward_frame_us(16), 14_166);
+        assert_eq!(send_twice_span_ms(24), 126);
+        assert_eq!(send_twice_span_ms(16), 120);
+    }
 
     #[test]
     fn forward_frame_new() {

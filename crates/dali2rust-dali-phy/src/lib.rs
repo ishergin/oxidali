@@ -29,11 +29,13 @@ pub mod ring;
 pub mod timer_alarm;
 
 pub use answer::AtomicAnswerCell;
-pub use answer_table::{answer_entry_index, entry_answer, AnswerTableCell, TableLookup};
+pub use answer_table::{
+    answer_entry_index, entry_answer, AnswerTableCell, TableLookup, TABLE_MAX_AGE_TICKS,
+};
 pub use backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_LEAD_TICKS, ANSWER_ARM_MAX_IDLE_TICKS,
     ANSWER_ARM_TARGET_IDLE_TICKS, BACKWARD_DATA_BITS, BACKWARD_MAX_US, BACKWARD_MIN_US,
-    BACKWARD_TARGET_US,
+    BACKWARD_RECEIVE_MIN_TICKS, BACKWARD_RECEIVE_MIN_US, BACKWARD_TARGET_US,
 };
 pub use command::{AtomicCommandCell, ExchangeId, TxCommand, TxGates};
 pub use cpu::{isr_core_id, ISR_CORE_ID};

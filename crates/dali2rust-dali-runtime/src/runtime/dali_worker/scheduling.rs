@@ -13,17 +13,21 @@ pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationCon
         correlation: correlation.as_ref(),
     };
     let adapter_id = env.adapter_id;
+    let holds = GateHolds::new(read_port);
     while let Ok(frame) = cmd_rx.recv() {
         let mut batch = vec![Queued::new(frame)];
         while let Some(Queued { frame, riders }) =
             take_next_command(&mut batch, cmd_rx, publisher, adapter_id, counters)
         {
             let scope = frame_scope(&frame, interactive, adapter_id);
+            let hold = holds.for_frame(&frame);
             let run = |c: &mut _| process_one(frame, c, &env, &riders);
             crate::runtime::required_publish::with_budget(scope.publish_priority, || {
-                ctrl.with_wire_class(scope.class, |c| match scope.lease {
-                    Some(lease) => c.with_wire_lease(lease, run),
-                    None => run(c),
+                ctrl.with_wire_hold(hold, |c| {
+                    c.with_wire_class(scope.class, |c| match scope.lease {
+                        Some(lease) => c.with_wire_lease(lease, run),
+                        None => run(c),
+                    })
                 });
             });
         }

@@ -373,6 +373,7 @@ export interface RedundancyState {
   active: boolean
   answering: boolean
   lease_remaining_ms: number
+  quiescent_remaining_ms: number | null
   arbitration: RedundancyArbitration
   probes: RedundancyProbes
   takeovers: number
@@ -402,11 +403,27 @@ export interface ConfigSliceRow {
   crc32: number
 }
 
+export type BusUnitSetter = 'operator' | 'wire' | 'redundancy'
+
+export interface BusUnitSetBy {
+  application_active: BusUnitSetter | null
+  device_short_address: BusUnitSetter | null
+  power_cycle_notification: BusUnitSetter | null
+  random_address: BusUnitSetter | null
+  device_groups: BusUnitSetter | null
+  operating_mode: BusUnitSetter | null
+}
+
 export interface DaliSettings {
   dt8_auto_activation_repair: boolean
   dt8_rgbwaf_control_assert: boolean
   application_active: boolean
   device_short_address: number | null
+  power_cycle_notification: boolean
+  random_address: number
+  device_groups: number[]
+  operating_mode: number
+  set_by: BusUnitSetBy
 }
 
 export interface PhysicalDevicePatch {
@@ -806,7 +823,7 @@ export type SnifferTranslatorCounters = {
   input_events_ambiguous_scheme: number
   input_lifecycle: number
   fact_publish_retried: number
-  app_control_pairs: number
+  bus_unit_reports: number
 }
 
 export type RulesWorkerCounters = {
@@ -1029,6 +1046,7 @@ export type StatsDali = {
   isr_late_ticks_total: number
   isr_max_gap_us: number
   answer_staged_total: number
+  answer_over_backward_total: number
   answer_table_behind_total: number
   answer_table_publish_max_ticks: number
   sniff_poll_late_total: number
@@ -1128,7 +1146,6 @@ export type StatsNetwork = {
 }
 
 export interface StatsReportPayload {
-  sample_ms: number
   controller: StatsController
   bus: StatsBus
   dali: StatsDali

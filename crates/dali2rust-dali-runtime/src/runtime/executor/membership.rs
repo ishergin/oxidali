@@ -5,7 +5,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 
 use crate::runtime::executor::attributes::read_group_membership_mask;
 use crate::runtime::executor::helpers::{
-    dali_short_address, program_with_verify_repair, send_standard, SemanticDaliError,
+    dali_short_address, program_with_verify_repair, send_standard, unanswered_unless_held, SemanticDaliError,
 };
 
 pub fn program_group_membership(
@@ -34,7 +34,7 @@ fn drive_membership_program(
         GroupMembershipAction::Remove => StandardCommand::RemoveFromGroup { group: group_id },
     };
     send_standard(controller, address, command)?;
-    Ok(read_group_membership_mask(controller, short_address).unwrap_or(None))
+    unanswered_unless_held(read_group_membership_mask(controller, short_address))
 }
 
 fn membership_confirms(readback: Option<u16>, group_id: u8, action: GroupMembershipAction) -> bool {

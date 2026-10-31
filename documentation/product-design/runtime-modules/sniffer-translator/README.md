@@ -60,11 +60,12 @@
 
 - события инстансов всех пяти схем → `DaliInputEventObservedEvent`; уведомление о
   питании → `DaliInputDeviceLifecycleEvent`;
-- чужая пара `ENABLE` / `DISABLE APPLICATION CONTROLLER`, повторённая в окне
-  send-twice (105 мс) без единого кадра между половинами (IEC 62386-101 §9.3), →
-  `Dali103ApplicationControlObservedEvent` с областью адресации: broadcast, `0xFD` (только
-  устройствам без короткого адреса, IEC 62386-103 §9.5.1) или короткий адрес; одиночный
-  кадр командой не является;
+- чужие команды конфигурации, адресованные контроллеру как блоку Part 103, исполняет
+  модель блока в драйне `dali-sniff`; каждое изменение её NVM-переменных приходит
+  транслятору свидетельством рядом с кадрами и уходит в реестр как
+  `BusUnitNvmObservedEvent`, а начало и конец quiescent mode — как
+  `BusUnitQuiescenceObservedEvent`
+  ([ADR-030](../../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md));
 - прочие команды считаются: командный путь Part 103 принадлежит `DaliWorker`.
 
 ## Свойства

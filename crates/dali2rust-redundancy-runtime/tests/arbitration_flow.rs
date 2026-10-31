@@ -46,12 +46,7 @@ impl RedundancySettingsReadPort for FakeSettings {
 
 impl DaliSettingsReadPort for FakeSettings {
     fn dali_settings_view(&self) -> DaliSettingsView {
-        DaliSettingsView {
-            dt8_auto_activation_repair: false,
-            dt8_rgbwaf_control_assert: false,
-            application_active: self.active.load(Ordering::Relaxed),
-            device_short_address: None,
-        }
+        DaliSettingsView { application_active: self.active.load(Ordering::Relaxed), ..DaliSettingsView::default() }
     }
 
     fn application_active_moved_by(&self) -> (bool, dali2rust_domain::registry::ApplicationActiveMover) {
@@ -129,7 +124,7 @@ fn drain_empty(rig: &Rig) -> bool {
 fn payload_name(payload: &BusCommandPayload) -> String {
     match payload {
         BusCommandPayload::Dali103ArbitrationProbeCommand(_) => "probe".to_string(),
-        BusCommandPayload::DaliSettingsUpdateCommand(c) => {
+        BusCommandPayload::DaliSettingsUpdateCommand(c) if c.by_redundancy => {
             format!("role:{}", c.application_active)
         }
         other => format!("{other:?}"),

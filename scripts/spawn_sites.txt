@@ -1,3 +1,4 @@
+crates/dali2rust-adapters/src/dali/transport/bus_unit_wire.rs                thread::spawn             host     host poll of the injected bus-unit model, one per mock or sim transport given an identity; the module is compiled off ESP-IDF only
 crates/dali2rust-adapters/src/dali/transport/esp_idf.rs                      dali-sniff                boot     drains the PHY ring; started with the transport, which the firmware builds once
 crates/dali2rust-adapters/src/http/host.rs                                   thread::scope             host     host dev-server accept loop; the module is compiled off ESP-IDF only
 crates/dali2rust-adapters/src/http/host_ws.rs                                thread::spawn             host     host dev-server upstream pump per WebSocket; the module is compiled off ESP-IDF only

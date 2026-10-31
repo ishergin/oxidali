@@ -11,8 +11,22 @@ pub mod shared {
     use dali2rust_domain::dali::ses::DaliPriority;
     use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
     use dali2rust_domain::dali::types::DaliAddress;
+    use dali2rust_domain::dali::controller::WireHold;
+    use dali2rust_domain::dali::frame::HoldCause;
     use dali2rust_platform::dali::{DaliTransport, DaliWireCounters};
     use std::sync::{Arc, Mutex};
+
+    pub struct HeldWhenScriptLeft {
+        pub transport: Arc<Mutex<MockDaliTransport>>,
+        pub left: usize,
+    }
+
+    impl WireHold for HeldWhenScriptLeft {
+        fn held(&self) -> Option<HoldCause> {
+            let remaining = self.transport.lock().expect("mock lock").scripted_exchanges_remaining();
+            (remaining <= self.left).then_some(HoldCause::Quiescent)
+        }
+    }
 
     pub fn priorities_of(settle_us: &[u32]) -> Vec<DaliPriority> {
         settle_us

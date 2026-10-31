@@ -32,6 +32,14 @@ Feature: Redundancy — state and the planned handover
     And the JSON pointer "/arbitration/defended" at "/api/v1/redundancy" should eventually be greater than 0
     And the JSON pointer "/now_ms" at "/api/v1/redundancy" should eventually be greater than 0
 
+  @id:RED-034
+  Scenario: A standby whose workers turn keeps renewing its liveness lease
+    Given this controller has stood down
+    When I note the supervisor's defended and stale ticks
+    Then the supervisor should eventually have defended 2 more ticks with no stale worker
+    And the JSON pointer "/lease_remaining_ms" at "/api/v1/redundancy" should eventually be greater than 0
+    And the JSON pointer "/answering" at "/api/v1/redundancy" should eventually be "false"
+
   @id:RED-021
   Scenario: Every response says which controller answered it
     When I send a GET request to "/api/v1/health"
@@ -88,16 +96,37 @@ Feature: Redundancy — state and the planned handover
 
   @id:RED-027
   Scenario: A planned switchover is recorded as a handover on the side that gave the bus away
+    Given the mock bus answers 24-bit query "7B FE 3D" with "FF"
     When I PATCH JSON {"enabled":true,"role":"primary","boot_listen_ms":0,"peer_device_short_address":61} to "/api/v1/settings/redundancy"
     Then the response status should be 200
     And the JSON pointer "/transitions/0/reason" at "/api/v1/redundancy" should eventually be "boot"
     When I send a POST request to "/api/v1/redundancy/switchover" with empty body
     Then the response status should be 200
+    And the mock transport 24-bit trace should be exactly "7B FE 16, 7B FE 16, 7B FE 3D"
     And the JSON pointer "/transitions/0/reason" at "/api/v1/redundancy" should eventually be "handover"
     When I send a GET request to "/api/v1/redundancy"
     Then the JSON boolean field "active" should be false
     And the JSON pointer "/transitions/0/now_active" should be false
     And the JSON pointer "/transitions/1/reason" should be "boot"
+    When I send a GET request to "/api/v1/settings/dali"
+    Then the JSON boolean field "application_active" should be false
+    And the JSON pointer "/set_by/application_active" should be "redundancy"
+
+  @id:RED-035
+  Scenario: A switchover the peer does not confirm leaves the bus with this controller
+    When I PATCH JSON {"enabled":true,"role":"primary","boot_listen_ms":0,"peer_device_short_address":61} to "/api/v1/settings/redundancy"
+    Then the response status should be 200
+    And the JSON pointer "/transitions/0/reason" at "/api/v1/redundancy" should eventually be "boot"
+    When I send a POST request to "/api/v1/redundancy/switchover" with empty body
+    Then the response status should be 409
+    And the JSON error should be "conflict"
+    And the JSON field "message" should be "peer_not_enabled"
+    And the mock transport 24-bit trace should be exactly "7B FE 16, 7B FE 16, 7B FE 3D"
+    When I send a GET request to "/api/v1/redundancy"
+    Then the JSON boolean field "active" should be true
+    And the JSON pointer "/transitions/0/reason" should be "boot"
+    When I send a GET request to "/api/v1/settings/dali"
+    Then the JSON boolean field "application_active" should be true
 
   @id:RED-028
   Scenario: A standby's arbitration probe announces itself at priority 5

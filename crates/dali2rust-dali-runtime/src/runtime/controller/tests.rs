@@ -1701,3 +1701,80 @@ fn a_unit_refused_on_every_attempt_fails_with_the_wire_error() {
     );
     assert_eq!(guard.scripted_exchanges_remaining(), 0);
 }
+
+struct HoldAfter {
+    transport: Arc<Mutex<MockDaliTransport>>,
+    frames: usize,
+    cause: HoldCause,
+}
+
+impl WireHold for HoldAfter {
+    fn held(&self) -> Option<HoldCause> {
+        let sent = self.transport.lock().unwrap().sent_frames24().len();
+        (sent >= self.frames).then_some(self.cause)
+    }
+}
+
+fn held_after(transport: &Arc<Mutex<MockDaliTransport>>, frames: usize) -> Arc<dyn WireHold> {
+    Arc::new(HoldAfter { transport: Arc::clone(transport), frames, cause: HoldCause::Quiescent })
+}
+
+const HELD_FRAME: [u8; 3] = [0x07, 0xFE, 0x00];
+
+#[test]
+fn a_hold_that_starts_between_units_stops_the_next_frame() {
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    let outcomes = controller.with_wire_hold(held_after(&transport, 1), |c| {
+        let first = c.transaction(|c| c.send_frame24(HELD_FRAME, false));
+        let second = c.transaction(|c| c.send_frame24(HELD_FRAME, false));
+        (first, second)
+    });
+
+    assert_eq!(outcomes, (Ok(DaliResponse::NoAnswer), Err(Frame24Fault::Held(HoldCause::Quiescent))));
+    assert_eq!(transport.lock().unwrap().sent_frames24().len(), 1, "nothing of the second unit left");
+}
+
+#[test]
+fn a_hold_that_starts_inside_a_started_transaction_lets_it_finish() {
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    let (inside, after) = controller.with_wire_hold(held_after(&transport, 1), |c| {
+        let inside = c.transaction(|c| {
+            c.send_frame24(HELD_FRAME, false)?;
+            c.send_frame24(HELD_FRAME, false)
+        });
+        (inside, c.send_frame24(HELD_FRAME, false))
+    });
+
+    assert!(inside.is_ok(), "a started transaction is never broken: {inside:?}");
+    assert_eq!(after, Err(Frame24Fault::Held(HoldCause::Quiescent)));
+    assert_eq!(transport.lock().unwrap().sent_frames24().len(), 2);
+}
+
+#[test]
+fn the_hold_ends_with_its_command() {
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+
+    let held = controller.with_wire_hold(held_after(&transport, 0), |c| c.send_frame24(HELD_FRAME, false));
+    let free = controller.send_frame24(HELD_FRAME, false);
+
+    assert_eq!(held, Err(Frame24Fault::Held(HoldCause::Quiescent)));
+    assert!(free.is_ok());
+}
+
+#[test]
+fn a_held_16_bit_frame_names_its_cause() {
+    let transport = Arc::new(Mutex::new(MockDaliTransport::new()));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+    let hold: Arc<dyn WireHold> =
+        Arc::new(HoldAfter { transport: Arc::clone(&transport), frames: 0, cause: HoldCause::Passive });
+
+    let held = controller.with_wire_hold(hold, |c| c.send_raw(ForwardFrame::new(0xFF, 0x00), false));
+
+    assert_eq!(held, Err(FrameError::Held(HoldCause::Passive)));
+    assert!(transport.lock().unwrap().sent_frames().is_empty());
+}

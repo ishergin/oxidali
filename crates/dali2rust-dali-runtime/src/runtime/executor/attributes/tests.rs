@@ -5,8 +5,9 @@ use crate::runtime::executor::helpers::{
 };
 use crate::runtime::executor::test_helpers::shared::{
     assert_script_consumed, expect_narrow_colour_value_sample, expect_wide_colour_value_sample,
-    setup_controller, short_address, wire_counters,
+    setup_controller, short_address, wire_counters, HeldWhenScriptLeft,
 };
+use dali2rust_domain::dali::controller::WireHold;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 
@@ -2192,4 +2193,38 @@ fn a_known_device_type_set_without_dt6_skips_the_escalation() {
         execution.dt6.is_none(),
         "a lamp failure on a gear that declares only DT8 buys no Part 207 frames"
     );
+}
+
+// IEC 62386-103 §9.9.3
+#[test]
+fn a_physical_minimum_re_read_held_after_the_curve_is_proved_names_the_hold() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let curve = 1;
+    let enable_dt6 = DaliCommand::Special(SpecialCommand::EnableDeviceType(6)).to_forward_frame().raw();
+    mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+    mock.expect_forward_frame_with_backward(
+        DaliCommand::Standard {
+            address: short_address(short),
+            command: StandardCommand::QueryContentDtr0,
+        }
+        .to_forward_frame()
+        .raw(),
+        Some(curve),
+    );
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+    mock.expect_forward_frame(enable_dt6);
+    mock.expect_forward_frame_with_backward(dt6_frame(short, Dt6Command::QueryDimmingCurve), Some(curve));
+
+    let (transport, mut controller) = setup_controller(mock);
+    let hold: Arc<dyn WireHold> = Arc::new(HeldWhenScriptLeft { transport: Arc::clone(&transport), left: 0 });
+    let execution = controller.with_wire_hold(hold, |c| {
+        write_short_attributes(c, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None)
+    });
+
+    assert_eq!(execution.confirmed.dimming_curve, Some(curve), "the proved curve stays confirmed");
+    assert_eq!(execution.error, Some(SemanticDaliError::Conflict("controller_quiescent")));
+    assert_script_consumed(&transport);
 }

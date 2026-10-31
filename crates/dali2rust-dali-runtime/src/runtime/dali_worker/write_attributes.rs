@@ -108,7 +108,7 @@ fn publish_write_attributes_outcome(
                 .write_attributes_preempted
                 .fetch_add(1, Ordering::Relaxed);
         } else {
-            counters.execution_failed.fetch_add(1, Ordering::Relaxed);
+            count_failure(counters, error);
         }
         publish_worker_failed(
             publisher,

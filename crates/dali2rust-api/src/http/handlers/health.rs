@@ -58,6 +58,7 @@ impl ApiHandler for HealthHandler {
                 "role".to_string(),
                 serde_json::Value::String(crate::http::role::role_name(role.is_active()).into()),
             );
+            map.insert("quiescent".to_string(), serde_json::Value::Bool(role.quiescent_remaining_ms().is_some()));
         }
         json_stream_dto(body)
     }

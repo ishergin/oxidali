@@ -7,12 +7,12 @@ use dali2rust_bus::{
     publish_required, BusChannel, BusFrame, BusId, BusPublisher, PublishResult,
     REQUIRED_PUBLISH_BACKOFF_MS, REQUIRED_PUBLISH_UNCAPPED,
 };
-use dali2rust_contracts::bus::event_envelope;
+use dali2rust_contracts::bus::{command_envelope, event_envelope};
 use dali2rust_contracts::msg::{
-    Dali103ApplicationControlObservedEvent,
-    ColorMode, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
+    BusCommandPayload, BusUnitNvmObservedEvent, BusUnitNvmRow, BusUnitQuiescenceObservedEvent, ColorMode,
+    Dali103PowerNotificationCommand, Dali103TestFrameCommand, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
     DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
-    DeviceCommandScope, InputDeviceLifecycleKind,
+    InputDeviceLifecycleKind,
     LevelTransition,
     InputEventKind, LightSetpoint, ObservedFrameWidth, ObservedKind, Origin, PowerState,
     RuntimeSource,
@@ -25,13 +25,16 @@ use dali2rust_domain::registry::InputInstanceTypeReadPort;
 use dali2rust_domain::dali::devices::dt8_color::{dim_level_to_srgb_channel, Dt8Command};
 use dali2rust_domain::dali::devices::DeviceType;
 use dali2rust_domain::dali::net::address::{decode_wire_address, DaliAddress};
+use dali2rust_domain::dali::frame::{send_twice_span_ms, ForwardFrame};
 use dali2rust_domain::dali::pres::codec::dali_command_from_wire;
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::pres::DaliCommand;
 use dali2rust_domain::registry::mirek_to_kelvin;
+use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence, PowerNotice};
 use dali2rust_platform::dali::{
-    FrameDirection, ObservedRawFrame, ObservedRawFrameKind, SnifferRecord, SnifferTap,
+    FrameDirection, ObservedItem, ObservedRawFrame, ObservedRawFrameKind, SnifferRecord,
+    SnifferTap,
 };
 
 const DT8_SET_TEMPORARY_X_COORDINATE_OPCODE: u8 = Dt8Command::SetTemporaryXCoordinate.opcode();
@@ -47,8 +50,9 @@ const DAPC_MASK_LEVEL: u8 = 255;
 pub const SNIFFER_TRANSLATOR_REQUIRED_EVENTS: &[&str] = &[
     "DaliInputEventObservedEvent",
     "DaliInputDeviceLifecycleEvent",
-    "Dali103ApplicationControlObservedEvent",
     "DaliSceneRecalledEvent",
+    "BusUnitNvmObservedEvent",
+    "BusUnitQuiescenceObservedEvent",
 ];
 
 #[derive(Debug, Default)]
@@ -66,7 +70,7 @@ pub struct SnifferTranslatorCounters {
     pub input_events_ambiguous_scheme: AtomicU32,
     pub input_lifecycle: AtomicU32,
     pub fact_publish_retried: AtomicU32,
-    pub app_control_pairs: AtomicU32,
+    pub bus_unit_reports: AtomicU32,
     pub scene_writes_observed: AtomicU32,
     pub unaddressed_ignored: AtomicU32,
 }
@@ -86,7 +90,6 @@ struct DecoderState {
     dtr2: Option<u8>,
     dt8_armed: bool,
     colour_stage: Option<ColourStage>,
-    pending_device_cmd: Option<([u8; 3], u32)>,
     pending_scene_write: Option<([u8; 3], u32)>,
 }
 
@@ -118,7 +121,7 @@ impl DecoderState {
 }
 
 pub fn spawn_sniffer_translator_worker(
-    raw_rx: Receiver<ObservedRawFrame>,
+    raw_rx: Receiver<ObservedItem>,
     publisher: BusPublisher,
     bus_id: BusId,
     registry_adapter_id: u8,
@@ -126,38 +129,114 @@ pub fn spawn_sniffer_translator_worker(
     sniffer_tap: Option<Arc<SnifferTap>>,
     instance_types: Arc<dyn InputInstanceTypeReadPort>,
 ) -> std::thread::JoinHandle<()> {
+    let mut translator = Translator {
+        publisher,
+        bus_id,
+        registry_adapter_id,
+        counters,
+        sniffer_tap,
+        instance_types,
+        state: DecoderState::default(),
+    };
     esp_thread::spawn_named_stack_in(
         c"sniffer_translator_worker",
         std_thread_stack::EVENT_WORKER_STACK,
         esp_thread::StackHome::ExternalOnXip,
         move || {
-            let mut state = DecoderState::default();
-            while let Ok(raw) = raw_rx.recv() {
-                mirror_to_sniffer_window(sniffer_tap.as_deref(), registry_adapter_id, &raw);
-                translate_raw_frame(
-                    &publisher,
-                    bus_id,
-                    registry_adapter_id,
-                    &counters,
-                    &mut state,
-                    &raw,
-                    instance_types.as_ref(),
-                );
-                while let Ok(raw) = raw_rx.try_recv() {
-                    mirror_to_sniffer_window(sniffer_tap.as_deref(), registry_adapter_id, &raw);
-                    translate_raw_frame(
-                        &publisher,
-                        bus_id,
-                        registry_adapter_id,
-                        &counters,
-                        &mut state,
-                        &raw,
-                        instance_types.as_ref(),
-                    );
+            while let Ok(item) = raw_rx.recv() {
+                translator.handle(item);
+                while let Ok(item) = raw_rx.try_recv() {
+                    translator.handle(item);
                 }
             }
         },
     )
+}
+
+struct Translator {
+    publisher: BusPublisher,
+    bus_id: BusId,
+    registry_adapter_id: u8,
+    counters: Arc<SnifferTranslatorCounters>,
+    sniffer_tap: Option<Arc<SnifferTap>>,
+    instance_types: Arc<dyn InputInstanceTypeReadPort>,
+    state: DecoderState,
+}
+
+impl Translator {
+    fn handle(&mut self, item: ObservedItem) {
+        match item {
+            ObservedItem::Frame(raw) => {
+                mirror_to_sniffer_window(self.sniffer_tap.as_deref(), self.registry_adapter_id, &raw);
+                translate_raw_frame(
+                    &self.publisher,
+                    self.bus_id,
+                    self.registry_adapter_id,
+                    &self.counters,
+                    &mut self.state,
+                    &raw,
+                    self.instance_types.as_ref(),
+                );
+            }
+            ObservedItem::BusUnit(evidence) => self.report_bus_unit(evidence),
+            ObservedItem::BusUnitQuiescence(quiescence) => self.report_quiescence(quiescence),
+            ObservedItem::BusUnitTestFrame { data, dtr } => self.send_test_frame(data, dtr),
+            ObservedItem::BusUnitPowerNotification(notice) => self.send_power_notification(notice),
+        }
+    }
+
+    // IEC 62386-103 §11.10.21
+    fn send_test_frame(&self, data: u8, dtr: [u8; 3]) {
+        let registry_adapter_id = self.registry_adapter_id;
+        self.send_bus_unit_frame(Dali103TestFrameCommand { registry_adapter_id, data, dtr });
+    }
+
+    // IEC 62386-103 §9.12.2
+    fn send_power_notification(&self, notice: PowerNotice) {
+        self.send_bus_unit_frame(Dali103PowerNotificationCommand {
+            registry_adapter_id: self.registry_adapter_id,
+            short_address: notice.short_address,
+            device_groups: notice.device_groups,
+        });
+    }
+
+    fn send_bus_unit_frame(&self, command: impl Into<BusCommandPayload>) {
+        let ce = command_envelope(SOURCE_ID_UNSPECIFIED, CORRELATION_NONE, self.bus_id.0, Some(Origin::Sniffer), command);
+        if self.publisher.try_publish(BusChannel::Commands, BusFrame::command(ce)) != PublishResult::Queued {
+            self.counters.publish_failed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    // IEC 62386-103 §9.9.3
+    fn report_quiescence(&self, quiescence: BusUnitQuiescence) {
+        self.counters.bus_unit_reports.fetch_add(1, Ordering::Relaxed);
+        publish_required_fact(&self.publisher, self.bus_id, &self.counters, BusUnitQuiescenceObservedEvent {
+            sequence: quiescence.sequence,
+            remaining_ms: quiescence.remaining_ms,
+        });
+    }
+
+    // IEC 62386-103 §9.2.3
+    fn report_bus_unit(&self, evidence: BusUnitEvidence) {
+        self.counters.bus_unit_reports.fetch_add(1, Ordering::Relaxed);
+        publish_required_fact(&self.publisher, self.bus_id, &self.counters, BusUnitNvmObservedEvent {
+            adopted: nvm_row(evidence.adopted),
+            adopted_revision: evidence.adopted_revision,
+            observed: nvm_row(evidence.observed),
+            wire_sequence: evidence.wire_sequence,
+        });
+    }
+}
+
+const fn nvm_row(nvm: BusUnitNvm) -> BusUnitNvmRow {
+    BusUnitNvmRow {
+        short_address: nvm.short_address,
+        random_address: nvm.random_address,
+        device_groups: nvm.device_groups,
+        operating_mode: nvm.operating_mode,
+        power_cycle_notification: nvm.power_cycle_notification,
+        application_active: nvm.application_active,
+    }
 }
 
 fn mirror_to_sniffer_window(
@@ -191,9 +270,6 @@ fn translate_raw_frame(
     raw: &ObservedRawFrame,
     instance_types: &dyn InputInstanceTypeReadPort,
 ) {
-    if raw.kind != ObservedRawFrameKind::Forward24 {
-        state.pending_device_cmd = None;
-    }
     if raw.kind != ObservedRawFrameKind::Forward16 {
         state.pending_scene_write = None;
     }
@@ -207,7 +283,6 @@ fn translate_raw_frame(
                 bus_id,
                 registry_adapter_id,
                 counters,
-                state,
                 raw,
                 instance_types,
             );
@@ -282,7 +357,7 @@ fn track_scene_write(
     (kind, scene): (ObservedKind, u8),
 ) {
     let paired = held.is_some_and(|(first, at)| {
-        first == raw.bytes && raw.observed_at_mono_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS
+        first == raw.bytes && raw.observed_at_mono_ms.wrapping_sub(at) < SCENE_PAIR_SPAN_MS
     });
     if !paired {
         state.pending_scene_write = Some((raw.bytes, raw.observed_at_mono_ms));
@@ -634,64 +709,7 @@ fn color_fact(address: DaliAddress, color: ColorValue) -> Dt8Outcome {
     })
 }
 
-// IEC 62386-101 Table 20
-const SEND_TWICE_WINDOW_MS: u32 = 105;
-
-// IEC 62386-103 §9.5.1
-fn application_control(bytes: [u8; 3]) -> Option<(DeviceCommandScope, bool)> {
-    if bytes[1] != 0xFE {
-        return None;
-    }
-    let enable = match bytes[2] {
-        0x16 => true,
-        0x17 => false,
-        _ => return None,
-    };
-    match bytes[0] {
-        0xFF => Some((DeviceCommandScope::Broadcast, enable)),
-        0xFD => Some((DeviceCommandScope::Unaddressed, enable)),
-        addr if addr & 0x81 == 0x01 => Some((DeviceCommandScope::Short((addr >> 1) & 0x3F), enable)),
-        _ => None,
-    }
-}
-
-fn track_device_command_pair(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    registry_adapter_id: u8,
-    counters: &Arc<SnifferTranslatorCounters>,
-    state: &mut DecoderState,
-    raw: &ObservedRawFrame,
-) {
-    let pending = state.pending_device_cmd.take();
-    if application_control(raw.bytes).is_none() {
-        return;
-    }
-    match pending {
-        Some((first, at)) if first == raw.bytes
-            && raw.observed_at_mono_ms.wrapping_sub(at) <= SEND_TWICE_WINDOW_MS =>
-        {
-            let Some((scope, enable)) = application_control(raw.bytes) else {
-                return;
-            };
-            counters.app_control_pairs.fetch_add(1, Ordering::Relaxed);
-            publish_required_fact(
-                publisher,
-                bus_id,
-                counters,
-                Dali103ApplicationControlObservedEvent {
-                    registry_adapter_id,
-                    scope,
-                    enable,
-                    observed_at_ms: raw.observed_at_ms,
-                },
-            );
-        }
-        _ => {
-            state.pending_device_cmd = Some((raw.bytes, raw.observed_at_mono_ms));
-        }
-    }
-}
+const SCENE_PAIR_SPAN_MS: u32 = send_twice_span_ms(ForwardFrame::DATA_BITS);
 
 #[inline(never)]
 fn translate_forward24(
@@ -699,16 +717,13 @@ fn translate_forward24(
     bus_id: BusId,
     registry_adapter_id: u8,
     counters: &Arc<SnifferTranslatorCounters>,
-    state: &mut DecoderState,
     raw: &ObservedRawFrame,
     instance_types: &dyn InputInstanceTypeReadPort,
 ) {
     let Some(decoded) = decode_event(ForwardFrame24::from_bytes(raw.bytes)) else {
-        track_device_command_pair(publisher, bus_id, registry_adapter_id, counters, state, raw);
         count_unknown(counters);
         return;
     };
-    state.pending_device_cmd = None;
 
     match decoded {
         InputEvent::PowerCycle {

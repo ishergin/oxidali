@@ -41,7 +41,9 @@
 | Воркер арбитража | зонд владельца шины | `Dali103ArbitrationProbeCommand` |
 | DALI-воркер | успешный discovery при `apply_on_discovery` | `PolicyApplyExecuteCommand` (ячейки публикует оркестратор) |
 | Проектор state-fanout | проекция фактов в реестр | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` — DALI-команд не публикует |
-| Sniffer translator | чужие кадры | только события (`DaliObservedFrameEvent`, вход Part 103, `DaliSceneRecalledEvent` чужого `GO TO SCENE`) — команд не публикует |
+| Sniffer translator | чужие кадры | только события (`DaliObservedFrameEvent`, вход Part 103, `DaliSceneRecalledEvent` чужого `GO TO SCENE`) — из чужого кадра команд не публикует |
+| Sniffer translator | `SEND TESTFRAME`, принятый моделью шинного блока | `Dali103TestFrameCommand` |
+| Sniffer translator | `POWER NOTIFICATION`, который модель шинного блока подняла после загрузки | `Dali103PowerNotificationCommand` |
 
 `DaliProgramTarget = Short` и `DaliRecallSceneCommand` со `scope = Short` допустимы
 контрактом, но ни один документированный продуктовый сценарий их сейчас не использует.
