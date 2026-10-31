@@ -41,8 +41,9 @@ Home Assistant строится только в `dali2rust-api/src/ha/`, runtime
   `ha_discovery_publish`, итог — `HomeAssistantDiscoveryPublishedEvent`);
   `MqttPublishCommand` — публикации правил, за ограничителем (четыре подряд, затем одна
   в секунду; отброшенное считается).
-- **Публикует на шину** `DaliSetTargetStateCommand` (лампа, группа) и
-  `DaliRecallSceneCommand` (broadcast) с `Origin::Mqtt`: на проводе это `Attended` —
+- **Публикует на шину** `DaliSetTargetStateCommand` или, для effect,
+  `DaliRecallLevelPresetCommand` (лампа, группа) и `DaliRecallSceneCommand` (broadcast)
+  с `Origin::Mqtt`: на проводе это `Attended` —
   ползунок web UI обгоняет Home Assistant, а две команды Home Assistant друг друга не
   обгоняют.
 - **Триггеры правил** (`when mqtt`): топики мост читает из read-порта стора правил,
@@ -140,6 +141,9 @@ Home Assistant строится только в `dali2rust-api/src/ha/`, runtime
   `color_temp_kelvin` в payload'е не читается и не пишется: это имя флага discovery.
   Диапазон `min_kelvin` / `max_kelvin` объявляет только лампа — у группы честного
   диапазона нет.
+- **Эффекты**: discovery объявляет `effect_list: ["max_level", "min_level"]`; команда с
+  `effect` — recall границы, как `recall` в теле target-state: `state: ON` рядом с ней
+  подразумевается, а `OFF`, яркость или цвет рядом — отказ. Состояние эффекта не несёт.
 - Проверки значений — общий разбор уставки, тот же, что у REST.
 
 ## Плитка группы
@@ -147,7 +151,8 @@ Home Assistant строится только в `dali2rust-api/src/ha/`, runtime
 Групповая сущность показывает ON, только если группе **командовали** включение и хотя
 бы один её applied-член горит. «Командовали» — групповой или широковещательный факт
 питания от нас (Home Assistant, web UI, REST, HCL, правила) или групповой кадр чужого
-мастера; broadcast взводит и снимает флаг всем группам; recall сцены и команда только
+мастера; recall границы и `ON AND STEP UP` — тоже включение, а шаг без него флаг не
+трогает. Broadcast взводит и снимает флаг всем группам; recall сцены и команда только
 цвета флаг не трогают. Флаг волатилен: после перезагрузки плитки говорят OFF до первой
 групповой команды.
 

@@ -86,6 +86,8 @@ fn light_payload(
     m.insert("brightness_scale".into(), json!(HA_BRIGHTNESS_SCALE));
     m.insert("color_temp_kelvin".into(), json!(true));
     m.insert("supported_color_modes".into(), json!(supported_color_modes(caps)));
+    m.insert("effect".into(), json!(true));
+    m.insert("effect_list".into(), json!(super::command::ha_effects().collect::<Vec<_>>()));
     m
 }
 
@@ -299,6 +301,8 @@ mod tests {
         assert_eq!(v["brightness_scale"], 254);
         assert_eq!(v["color_temp_kelvin"], true);
         assert_eq!(v["supported_color_modes"], json!(["color_temp"]));
+        assert_eq!(v["effect"], true);
+        assert_eq!(v["effect_list"], json!(["max_level", "min_level"]));
         assert_eq!(v["min_kelvin"], 2700);
         assert_eq!(v["device"]["identifiers"], json!(["ctl1"]));
     }

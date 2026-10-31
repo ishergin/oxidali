@@ -166,15 +166,8 @@ pub fn parse_target_request(
     }
 }
 
-pub fn parse_light_setpoint(
-    body: &TargetStateBody,
-    supports_color_mode: impl Fn(ColorMode) -> bool,
-) -> Result<LightSetpoint, HttpResponse> {
-    match parse_target_request(body, supports_color_mode)? {
-        TargetRequest::Setpoint(sp) => Ok(sp),
-        TargetRequest::Recall(_) => Err(json_err(422, "unsupported_field")),
-    }
-}
+pub const LEVEL_PRESETS: [(&str, LevelPreset); 2] =
+    [("max_level", LevelPreset::MaxLevel), ("min_level", LevelPreset::MinLevel)];
 
 fn parse_recall(recall: &MaybeString, fields: &SetpointFields) -> Result<LevelPreset, HttpResponse> {
     if fields.has_any_value() {
@@ -183,11 +176,11 @@ fn parse_recall(recall: &MaybeString, fields: &SetpointFields) -> Result<LevelPr
     let MaybeString::Valid(name) = recall else {
         return Err(json_err(422, "invalid_value"));
     };
-    match name.as_str() {
-        "max_level" => Ok(LevelPreset::MaxLevel),
-        "min_level" => Ok(LevelPreset::MinLevel),
-        _ => Err(json_err(422, "invalid_enum")),
-    }
+    LEVEL_PRESETS
+        .iter()
+        .find(|(preset_name, _)| *preset_name == name.as_str())
+        .map(|&(_, preset)| preset)
+        .ok_or_else(|| json_err(422, "invalid_enum"))
 }
 
 pub(crate) fn apply_setpoint_fields(
@@ -391,6 +384,16 @@ mod tests {
 
     fn body(value: serde_json::Value) -> TargetStateBody {
         serde_json::from_value(value).expect("target-state body")
+    }
+
+    fn parse_light_setpoint(
+        body: &TargetStateBody,
+        supports_color_mode: impl Fn(ColorMode) -> bool,
+    ) -> Result<LightSetpoint, HttpResponse> {
+        match parse_target_request(body, supports_color_mode)? {
+            TargetRequest::Setpoint(sp) => Ok(sp),
+            TargetRequest::Recall(_) => panic!("a setpoint test sent a recall"),
+        }
     }
 
     fn parse_ok(value: serde_json::Value) -> LightSetpoint {

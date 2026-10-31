@@ -49,3 +49,17 @@ Feature: MQTT/HA — commands from Home Assistant reach the wire
     When I PUT JSON {"power":"on","level":180} to "/api/v1/adapters/0/physical-devices/0/target-state"
     Then the response status should be 200
     And MQTT should have a retained "None" on "dali/ctl1/a0/scene_select/state"
+
+  @id:MQTT-027
+  Scenario: An effect on a lamp topic recalls the bound gear's own maximum, and nothing else
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    When I PUT JSON {"physical_short_address":0} to "/api/v1/adapters/0/virtual-lamps/0/binding"
+    Then the response status should be 200
+    Given the Home Assistant bridge is enabled with controller id "ctl1"
+    And a RECALL MAX LEVEL script for short address 0
+    When Home Assistant publishes {"state":"ON","effect":"max_level"} on "dali/ctl1/a0/vl/0/set"
+    Then the scripted DALI exchanges should eventually be consumed
+    And the DALI mock transport should have received 1 forward frame

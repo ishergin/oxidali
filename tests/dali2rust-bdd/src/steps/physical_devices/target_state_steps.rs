@@ -23,12 +23,19 @@ async fn given_successful_target_state_script(world: &mut DaliWorld, level: u8) 
     ));
 }
 
-// PD-303 PD-305
+// PD-303 PD-305 MQTT-027
 #[given("a RECALL MAX LEVEL script for short address 0")]
 async fn given_recall_max_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
     mock.clear();
     mock.expect_forward_frame(standard_frame(TEST_SHORT_ADDRESS, StandardCommand::RecallMaxLevel));
+}
+
+// PD-303
+#[then(regex = r"^the response physical device state level should be (\d+)$")]
+async fn then_response_pd_state_level(world: &mut DaliWorld, level: u64) {
+    let json = crate::steps::last_json(world);
+    assert_eq!(json.pointer("/state/level").and_then(Value::as_u64), Some(level), "{json:?}");
 }
 
 // PD-303
