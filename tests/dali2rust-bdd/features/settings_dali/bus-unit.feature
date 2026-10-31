@@ -176,9 +176,9 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     And a 24-bit frame FF FE 14 is observed on the bus
     And a 24-bit frame FF FE 14 is observed on the bus
     Then the JSON pointer "/device_short_address" at "/api/v1/settings/dali" should eventually be "5"
-    When I PATCH JSON {"dt8_auto_activation_repair":true,"device_short_address":5} to "/api/v1/settings/dali"
+    When I PATCH JSON {"dt8_auto_activation_repair":false,"device_short_address":5} to "/api/v1/settings/dali"
     Then the response status should be 200
-    And the JSON boolean field "dt8_auto_activation_repair" should be true
+    And the JSON boolean field "dt8_auto_activation_repair" should be false
     And the JSON pointer "/set_by/device_short_address" should be "wire"
 
   @id:SET-DALI-022

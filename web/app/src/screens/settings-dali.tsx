@@ -1,22 +1,10 @@
+import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { BusUnitSetter, DaliSettings } from '../api/types'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
 import { hex6 } from '../format'
 import { useSettingsDraft } from '../hooks'
-
-const EDITABLE: (keyof DaliSettings)[] = [
-  'dt8_auto_activation_repair',
-  'dt8_rgbwaf_control_assert',
-  'application_active',
-  'device_short_address',
-  'power_cycle_notification',
-]
-
-function changedFields(next: DaliSettings, base: DaliSettings): Partial<DaliSettings> {
-  const body: Partial<DaliSettings> = {}
-  for (const k of EDITABLE) if (next[k] !== base[k]) Object.assign(body, { [k]: next[k] })
-  return body
-}
+import { fieldPatch, fieldsOnScreen, sendFieldsOnFreshRead, withFieldEdit } from './field-edits'
 
 const SET_BY: Record<BusUnitSetter, { chip: string; text: string }> = {
   wire: { chip: 'chip info', text: 'set by the wire' },
@@ -31,16 +19,23 @@ function SetBy({ by }: { by: BusUnitSetter | null }) {
 }
 
 export function SettingsDali() {
-  const { data, current, busy, setDraft, discard, save } = useSettingsDraft(() =>
-    api.daliSettings(),
-  )
+  const { data, busy, save } = useSettingsDraft(() => api.daliSettings())
+  const [edits, setEdits] = useState<Partial<DaliSettings> | null>(null)
+  useEffect(() => {
+    if (edits && data && withFieldEdit(edits, {}, data) === null) setEdits(null)
+  }, [edits, data])
 
   if (!data) return <div class="empty">Loading DALI settings…</div>
-  const s = current ?? data
-  const changed = changedFields(s, data)
-  const dirty = Object.keys(changed).length > 0
+  const s = fieldsOnScreen(edits ?? {}, data)
+  const edit = (change: Partial<DaliSettings>) => setEdits(withFieldEdit(edits ?? {}, change, data))
+  const discard = () => setEdits(null)
+  const dirty = edits !== null && Object.keys(fieldPatch(edits, data)).length > 0
 
-  const apply = () => void save('DALI settings', () => api.patchDaliSettings(changed))
+  const apply = () =>
+    void save('DALI settings', async () => {
+      await sendFieldsOnFreshRead(edits ?? {}, api.daliSettings, api.patchDaliSettings)
+      discard()
+    })
 
   return (
     <div>
@@ -67,7 +62,7 @@ export function SettingsDali() {
           <Switch
             on={s.dt8_auto_activation_repair}
             onToggle={() =>
-              setDraft({ ...s, dt8_auto_activation_repair: !s.dt8_auto_activation_repair })
+              edit({ dt8_auto_activation_repair: !s.dt8_auto_activation_repair })
             }
           />
         </FieldRow>
@@ -78,7 +73,7 @@ export function SettingsDali() {
           <Switch
             on={s.dt8_rgbwaf_control_assert}
             onToggle={() =>
-              setDraft({ ...s, dt8_rgbwaf_control_assert: !s.dt8_rgbwaf_control_assert })
+              edit({ dt8_rgbwaf_control_assert: !s.dt8_rgbwaf_control_assert })
             }
           />
         </FieldRow>
@@ -92,7 +87,7 @@ export function SettingsDali() {
           <SetBy by={data.set_by.application_active} />
           <Switch
             on={s.application_active}
-            onToggle={() => setDraft({ ...s, application_active: !s.application_active })}
+            onToggle={() => edit({ application_active: !s.application_active })}
           />
         </FieldRow>
         <FieldRow
@@ -105,10 +100,10 @@ export function SettingsDali() {
             placeholder="—"
             onCommit={(raw: string) => {
               const t = raw.trim()
-              if (t === '') return setDraft({ ...s, device_short_address: null })
+              if (t === '') return edit({ device_short_address: null })
               const n = Number(t)
               if (!Number.isInteger(n) || n < 0 || n > 63) return
-              setDraft({ ...s, device_short_address: n })
+              edit({ device_short_address: n })
             }}
           />
         </FieldRow>
@@ -120,7 +115,7 @@ export function SettingsDali() {
           <Switch
             on={s.power_cycle_notification}
             onToggle={() =>
-              setDraft({ ...s, power_cycle_notification: !s.power_cycle_notification })
+              edit({ power_cycle_notification: !s.power_cycle_notification })
             }
           />
         </FieldRow>

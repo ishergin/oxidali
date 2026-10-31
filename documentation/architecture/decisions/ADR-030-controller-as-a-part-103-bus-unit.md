@@ -255,18 +255,21 @@ application controllers and leaves a correctly working system to integration. Th
 controller accepts them; it refuses only what it can see is wrong itself, and it records
 the rest.
 
-- The DALI settings surface shows each bus-unit variable and whether the operator or the
-  wire set it last; a value the wire changed is logged and counted.
-- A unit refuses an operator's short address equal to its configured peer's, and the
-  reverse. A pair on one address would superimpose every addressed answer, and the other
-  master would re-address one of them.
+- The DALI settings surface shows each bus-unit variable and who set it last: the
+  operator, the wire or the redundancy arbitration; a value the wire changed is logged
+  and counted.
+- A unit refuses an operator's patch that moves its short address onto its configured
+  peer's, and one that moves the peer's onto its own. A pair on one address would
+  superimpose every addressed answer, and the other master would re-address one of them.
+  A clash the wire made is recorded and refuses nothing, so a save that leaves the
+  address alone still lands.
 - The pair's takeover does not depend on any short address: the probe stays broadcast.
 - Planned switchover verifies what it hands over. After `ENABLE APPLICATION CONTROLLER`
   at `peer_device_short_address`, the active unit asks the peer
   `QUERY APPLICATION CONTROLLER ENABLED` at that address — a passive unit now answers
-  queries — and stands down only on YES. A peer that does not answer, at an address the
-  wire may have moved, leaves the bus with the active unit and fails the request with a
-  named cause.
+  queries — and stands down only on a clean answer. A peer that does not answer, at an
+  address the wire may have moved, or a violating answer from several units at that
+  address leaves the bus with the active unit and fails the request with a named cause.
 
 ### Rejected alternatives
 

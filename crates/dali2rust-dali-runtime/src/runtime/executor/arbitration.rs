@@ -38,7 +38,7 @@ pub fn enable_peer_controller(
     let Some(address) = short_address(peer) else {
         return Err(SemanticDaliError::Conflict(PEER_ADDRESS_INVALID));
     };
-    controller.unit_exempt(|c| {
+    controller.transaction(|c| {
         super::dev103::send_twice(c, Device103Command::EnableApplicationController.frame(address))?;
         let answer = send(c, Device103Command::QueryApplicationControlEnabled.frame(address), true)?;
         peer_enabled(answer)

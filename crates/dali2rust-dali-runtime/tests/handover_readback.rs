@@ -93,16 +93,16 @@ fn a_hold_that_starts_after_the_enable_still_asks_the_peer() {
 
 // IEC 62386-101 §9.1.4
 #[test]
-fn a_collided_query_goes_again_with_its_enable_pair() {
+fn a_collided_query_is_asked_again_and_its_enable_pair_is_not() {
     let bus = bus(Some(YES));
     first_pass_ends_with(&bus, TransferOutcome::Collision);
     assert_eq!(hand_over(&bus, Arc::new(Free)), Ok(()));
-    assert_eq!(sent(&bus), vec![enable(), enable(), query(), enable(), enable(), query()]);
+    assert_eq!(sent(&bus), vec![enable(), enable(), query(), query()]);
 }
 
 // IEC 62386-101 §8.2.5
 #[test]
-fn a_garbled_answer_proves_no_peer_enabled() {
+fn a_garbled_answer_names_an_address_clash_and_the_bus_stays_here() {
     let bus = bus(Some(YES));
     first_pass_ends_with(&bus, TransferOutcome::CorruptedInWindow);
     assert_eq!(hand_over(&bus, Arc::new(Free)), Err(SemanticDaliError::Conflict("peer_answer_contended")));
@@ -111,10 +111,9 @@ fn a_garbled_answer_proves_no_peer_enabled() {
 
 // IEC 62386-103 §9.9.3
 #[test]
-fn a_hold_that_starts_in_a_collided_pass_refuses_the_rerun() {
+fn a_hold_that_starts_after_the_enable_still_asks_again_after_a_collision() {
     let bus = bus(Some(YES));
     first_pass_ends_with(&bus, TransferOutcome::Collision);
-    let outcome = hand_over(&bus, Arc::new(QuiescentOnceEnabled(Arc::clone(&bus))));
-    assert!(matches!(outcome, Err(error) if error.is_held()), "{outcome:?}");
-    assert_eq!(sent(&bus), vec![enable(), enable(), query()]);
+    assert_eq!(hand_over(&bus, Arc::new(QuiescentOnceEnabled(Arc::clone(&bus)))), Ok(()));
+    assert_eq!(sent(&bus), vec![enable(), enable(), query(), query()]);
 }
