@@ -883,6 +883,29 @@ declare_bus_payloads! {
     }
     budget = BusUnitQuiescenceObservedEvent { sequence: u32::MAX, remaining_ms: Some(u32::MAX) };
 
+    pub struct DaliLevelTransitionAppliedEvent {
+        pub registry_adapter_id: u8,
+        pub scope: DaliTargetScope,
+        pub virtual_lamp_id: Option<u8>,
+        pub short_address: Option<u8>,
+        pub group_id: Option<u8>,
+        pub transition: super::kinds::LevelTransition,
+        pub source: RuntimeSource,
+        pub applied_at_mono_ms: u32,
+        pub hold_hcl: bool,
+    }
+    budget = DaliLevelTransitionAppliedEvent {
+        registry_adapter_id: u8::MAX,
+        scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: Some(63),
+        short_address: Some(63),
+        group_id: Some(15),
+        transition: crate::msg::kinds::LevelTransition::GoToLastActiveLevel,
+        source: RuntimeSource::Sniffer,
+        applied_at_mono_ms: u32::MAX,
+        hold_hcl: true,
+    };
+
 }
 
 pub const APPLICATION_ACTIVE_UNMOVED: u8 = 0;

@@ -222,7 +222,7 @@ async fn given_group_exists_with_name(world: &mut DaliWorld, group_id: u8, name:
     patch_group_name(world, group_id, &name);
 }
 
-// GRP-030 REG-030 GRP-063 GRP-066 GRP-070 GRP-072 OP-130 OP-131 SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-215 VL-010 VL-020 VL-025 VL-054 SCN-030 SCN-040 SCN-043 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 VL-034 VL-035 MQTT-002 MQTT-008 MQTT-009 MQTT-016 MQTT-017 MQTT-018 SCN-083 SCN-084 SCN-085 SYS-241 MQTT-020 POL-006 POL-008 POL-030 POL-031 SYS-238 VL-100 ADP-026 SYS-251 SYS-252 SYS-253 RULE-027 RULE-031 RULE-033 RULE-036 RULE-039 RULE-040 SCN-095 SCN-096 SCN-097 PD-262 RULE-025 SYS-246 VL-104 VL-107 VL-108
+// GRP-030 REG-030 GRP-063 GRP-066 GRP-070 GRP-072 OP-130 OP-131 SYS-210 SYS-211 SYS-212 SYS-213 SYS-214 SYS-215 VL-010 VL-020 VL-025 VL-054 SCN-030 SCN-040 SCN-043 SCN-060 SCN-062 SCN-063 SCN-065 SCN-080 REG-031 VL-034 VL-035 MQTT-002 MQTT-008 MQTT-009 MQTT-016 MQTT-017 MQTT-018 SCN-083 SCN-084 SCN-085 SYS-241 MQTT-020 POL-006 POL-008 POL-030 POL-031 SYS-238 VL-100 ADP-026 SYS-251 SYS-252 SYS-253 RULE-027 RULE-031 RULE-033 RULE-036 RULE-039 RULE-040 SCN-095 SCN-096 SCN-097 PD-262 RULE-025 SYS-246 VL-104 VL-107 VL-108 GRP-078 VL-109
 #[given("adapter 0 has a discovered and bound virtual lamp 1 on physical device 0")]
 async fn given_discovered_and_bound_vl1(world: &mut DaliWorld) {
     {
@@ -269,7 +269,7 @@ pub(crate) fn bind_discovered_vl1(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();
 }
 
-// GRP-030 GRP-063 GRP-070 GRP-072 OP-131 REG-030 SYS-210 MQTT-002 MQTT-016 MQTT-017 SYS-241 GRP-073 MQTT-020 COMM-110 RULE-025
+// GRP-030 GRP-063 GRP-070 GRP-072 OP-131 REG-030 SYS-210 MQTT-002 MQTT-016 MQTT-017 SYS-241 GRP-073 MQTT-020 COMM-110 RULE-025 GRP-078
 #[given(regex = r"^adapter 0 desired membership includes virtual lamp (\d+) in group (\d+)$")]
 #[when(regex = r"^adapter 0 desired membership includes virtual lamp (\d+) in group (\d+)$")]
 async fn given_desired_membership_includes(world: &mut DaliWorld, virtual_lamp_id: u8, group_id: u8) {

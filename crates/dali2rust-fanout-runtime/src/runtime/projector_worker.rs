@@ -9,9 +9,9 @@ use dali2rust_bus::{
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     BusEventPayload, DaliAttributeReadChunk,
-    DaliAttributeReadOutcomesEvent, DaliObservedFrameEvent,
+    DaliAttributeReadOutcomesEvent, DaliLevelTransitionAppliedEvent, DaliObservedFrameEvent,
     DaliSceneRecalledEvent, DaliSceneTargetState, DaliTargetScope, DaliTargetStateAppliedEvent,
-    LastDapcSource, LightSetpoint, ObservedKind, Origin, PowerState,
+    LastDapcSource, LevelTransition, LightSetpoint, ObservedKind, Origin, PowerState,
     RegistryLevelTransitionCommand, RegistryRuntimeUpdateCommand,
     RuntimeObservation, RuntimeRegistryUpdateEntry, RuntimeSource,
 };
@@ -201,6 +201,8 @@ dali2rust_contracts::dispatch_bus_events! {
         handle_target_state_applied(publisher, bus_id, read_port, counters, corr, body),
     DaliSceneRecalledEvent(body) =>
         handle_scene_recalled(publisher, bus_id, read_port, counters, body),
+    DaliLevelTransitionAppliedEvent(body) =>
+        handle_level_transition_applied(publisher, bus_id, read_port, counters, body),
     DaliObservedFrameEvent(body) =>
         handle_observed_frame(publisher, bus_id, read_port, counters, body),
     DaliAttributeReadOutcomesEvent(body) =>
@@ -773,9 +775,26 @@ fn handle_observed_frame(
     }
 }
 
+struct TransitionTarget {
+    registry_adapter_id: u8,
+    scope: DaliTargetScope,
+    virtual_lamp_id: Option<u8>,
+    short_address: Option<u8>,
+    group_id: Option<u8>,
+}
+
+struct TransitionFact {
+    target: TransitionTarget,
+    transition: LevelTransition,
+    observation: RuntimeObservation,
+    source: RuntimeSource,
+    observed_at_mono_ms: u32,
+    hold_hcl: bool,
+}
+
 fn transition_members(
     read_port: &dyn ProjectorReadPort,
-    body: &DaliObservedFrameEvent,
+    body: &TransitionTarget,
 ) -> Vec<(Option<u8>, Option<u8>)> {
     let aid = body.registry_adapter_id;
     match body.scope {
@@ -803,7 +822,8 @@ fn transition_members(
             .filter(|view| view.binding_short.is_some())
             .map(|view| (Some(view.virtual_lamp_id), None))
             .collect(),
-        DaliTargetScope::VirtualLamp | DaliTargetScope::AddressRange => Vec::new(),
+        DaliTargetScope::VirtualLamp => body.virtual_lamp_id.map(|vl| vec![(Some(vl), None)]).unwrap_or_default(),
+        DaliTargetScope::AddressRange => Vec::new(),
     }
 }
 
@@ -827,8 +847,55 @@ fn handle_observed_level_transition(
         counters.ignored_events.fetch_add(1, Ordering::Relaxed);
         return;
     };
-    let aid = body.registry_adapter_id;
-    let members = transition_members(read_port, body);
+    expand_transition(publisher, bus_id, read_port, counters, TransitionFact {
+        target: TransitionTarget {
+            registry_adapter_id: body.registry_adapter_id,
+            scope: body.scope,
+            virtual_lamp_id: None,
+            short_address: body.short_address,
+            group_id: body.group_id,
+        },
+        transition,
+        observation: RuntimeObservation::sniffer_timestamped(body.observed_at_ms),
+        source: RuntimeSource::Sniffer,
+        observed_at_mono_ms: body.observed_at_mono_ms,
+        hold_hcl: true,
+    });
+}
+
+fn handle_level_transition_applied(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    read_port: &dyn ProjectorReadPort,
+    counters: &Arc<ProjectorCounters>,
+    body: &DaliLevelTransitionAppliedEvent,
+) {
+    let now = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
+    expand_transition(publisher, bus_id, read_port, counters, TransitionFact {
+        target: TransitionTarget {
+            registry_adapter_id: body.registry_adapter_id,
+            scope: body.scope,
+            virtual_lamp_id: body.virtual_lamp_id,
+            short_address: body.short_address,
+            group_id: body.group_id,
+        },
+        transition: body.transition,
+        observation: RuntimeObservation::timestamped(body.source, now),
+        source: body.source,
+        observed_at_mono_ms: body.applied_at_mono_ms,
+        hold_hcl: body.hold_hcl,
+    });
+}
+
+#[inline(never)]
+fn expand_transition(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    read_port: &dyn ProjectorReadPort,
+    counters: &Arc<ProjectorCounters>,
+    fact: TransitionFact,
+) {
+    let members = transition_members(read_port, &fact.target);
     if members.is_empty() {
         counters.ignored_events.fetch_add(1, Ordering::Relaxed);
         return;
@@ -836,13 +903,14 @@ fn handle_observed_level_transition(
     let mut pace = ExpansionPace::new();
     for (virtual_lamp_id, short_address) in members {
         pace.publish_transition(publisher, bus_id, counters, RegistryLevelTransitionCommand {
-            adapter_id: aid,
+            adapter_id: fact.target.registry_adapter_id,
             virtual_lamp_id,
             short_address,
-            transition,
-            observation: Some(RuntimeObservation::sniffer_timestamped(body.observed_at_ms)),
-            source: RuntimeSource::Sniffer,
-            observed_at_mono_ms: Some(body.observed_at_mono_ms),
+            transition: fact.transition,
+            observation: Some(fact.observation.clone()),
+            source: fact.source,
+            observed_at_mono_ms: Some(fact.observed_at_mono_ms),
+            hold_hcl: fact.hold_hcl,
         });
     }
     counters

@@ -30,7 +30,14 @@ fn execute_stop_fade(
     read_port: &dyn RegistryReadPort,
     command: &dali2rust_contracts::msg::DaliStopFadeCommand,
 ) -> Result<(), SemanticDaliError> {
-    let address = stop_fade_address(read_port, command)?;
+    let address = super::target_address::scoped_address(
+        read_port,
+        command.registry_adapter_id,
+        command.scope,
+        command.virtual_lamp_id,
+        command.short_address,
+        command.group_id,
+    )?;
     send_standard(
         controller,
         address,
@@ -39,27 +46,4 @@ fn execute_stop_fade(
         },
     )?;
     Ok(())
-}
-
-fn stop_fade_address(
-    read_port: &dyn RegistryReadPort,
-    command: &dali2rust_contracts::msg::DaliStopFadeCommand,
-) -> Result<DaliAddress, SemanticDaliError> {
-    match command.scope {
-        DaliTargetScope::Broadcast => Ok(DaliAddress::Broadcast),
-        DaliTargetScope::Group => DaliAddress::group(command.group_id)
-            .map_err(|_| SemanticDaliError::Conflict("invalid_group_id")),
-        DaliTargetScope::Short => DaliAddress::short(command.short_address)
-            .map_err(|_| SemanticDaliError::Conflict("invalid_short_address")),
-        DaliTargetScope::VirtualLamp => {
-            let short = read_port
-                .virtual_lamp_binding_short(command.registry_adapter_id, command.virtual_lamp_id)
-                .ok_or(SemanticDaliError::Conflict("vl_unbound"))?;
-            DaliAddress::short(short)
-                .map_err(|_| SemanticDaliError::Conflict("invalid_short_address"))
-        }
-        DaliTargetScope::AddressRange => {
-            Err(SemanticDaliError::Conflict("unsupported_scope"))
-        }
-    }
 }

@@ -12,7 +12,7 @@ use super::read_model::{wait_pd_state_field, READ_MODEL_TIMEOUT};
 use super::write_scripts::script_staged_dtrs;
 use super::TEST_SHORT_ADDRESS;
 
-// OP-100 OP-130 OP-132 PD-040 PD-041 PD-157 VL-020 WS-046 MQTT-002 MQTT-003 MQTT-005 MQTT-007 MQTT-008 MQTT-013 MQTT-015 MQTT-018 MQTT-019 COMM-092 MQTT-001 WS-003 WS-004 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 MQTT-024 HCL-077 HCL-078 MQTT-021 MQTT-023 PD-266 RED-023
+// OP-100 OP-130 OP-132 PD-040 PD-041 PD-157 VL-020 WS-046 MQTT-002 MQTT-003 MQTT-005 MQTT-007 MQTT-008 MQTT-013 MQTT-015 MQTT-018 MQTT-019 COMM-092 MQTT-001 WS-003 WS-004 WS-013 WS-030 WS-032 WS-040 WS-041 WS-045 MQTT-024 HCL-077 HCL-078 MQTT-021 MQTT-023 PD-266 RED-023 PD-305
 #[given(regex = r"^a successful target-state script for level (\d+) on short address 0$")]
 async fn given_successful_target_state_script(world: &mut DaliWorld, level: u8) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -23,7 +23,23 @@ async fn given_successful_target_state_script(world: &mut DaliWorld, level: u8) 
     ));
 }
 
-// PD-040 PD-271
+// PD-303 PD-305
+#[given("a RECALL MAX LEVEL script for short address 0")]
+async fn given_recall_max_script(world: &mut DaliWorld) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    mock.expect_forward_frame(standard_frame(TEST_SHORT_ADDRESS, StandardCommand::RecallMaxLevel));
+}
+
+// PD-303
+#[given("a RECALL MIN LEVEL script for short address 0")]
+async fn given_recall_min_script(world: &mut DaliWorld) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    mock.expect_forward_frame(standard_frame(TEST_SHORT_ADDRESS, StandardCommand::RecallMinLevel));
+}
+
+// PD-040 PD-271 PD-305
 #[given("a power-off target-state script for short address 0")]
 async fn given_power_off_target_state_script(world: &mut DaliWorld) {
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -126,13 +142,19 @@ fn script_rgb_target_state(mock: &MockDaliTransport, rgb: [u8; 3]) {
     );
 }
 
-// PD-040 PD-157 PD-271 SYS-217 PD-258
+// PD-040 PD-157 PD-271 SYS-217 PD-258 PD-303 PD-305
 #[then(regex = r"^the physical device (\d+) state level should eventually be (\d+)$")]
 async fn then_pd_state_level_eventually(world: &mut DaliWorld, short: u8, level: u8) {
     wait_pd_state_field(world, short, "/state/level", &Value::from(level));
 }
 
-// PD-271
+// PD-305
+#[then(regex = r"^the physical device (\d+) state level should eventually be null$")]
+async fn then_pd_state_level_eventually_null(world: &mut DaliWorld, short: u8) {
+    wait_pd_state_field(world, short, "/state/level", &Value::Null);
+}
+
+// PD-271 PD-305
 #[then(regex = r#"^the physical device (\d+) state power should eventually be "(on|off)"$"#)]
 async fn then_pd_state_power_eventually(world: &mut DaliWorld, short: u8, power: String) {
     wait_pd_state_field(world, short, "/state/power", &Value::from(power));

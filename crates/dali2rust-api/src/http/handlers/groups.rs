@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
-    GroupMatrixDesiredRow, GroupMatrixDesiredRowList, LightSetpoint, OperationType,
+    GroupMatrixDesiredRow, GroupMatrixDesiredRowList, OperationType,
     MAX_GROUP_MATRIX_ROWS_PER_COMMAND,
 };
 use serde_json::Value;
@@ -30,7 +30,7 @@ use crate::http::handlers::common::{
     write_json_array_items,
     parse_metadata_name,
 };
-use crate::http::target_state_request::TargetStateBody;
+use crate::http::target_state_request::{TargetRequest, TargetStateBody};
 use crate::http::types::HttpResponse;
 use crate::http::handlers::common::{check_body_keys, publish_apply_execute, reject_if_apply_active};
 use dali2rust_domain::registry::OperationReadPort;
@@ -228,7 +228,7 @@ impl GroupTargetStateHandler {
         &self,
         params: &HashMap<String, String>,
         body: &[u8],
-    ) -> Result<(u8, u8, LightSetpoint), HttpResponse> {
+    ) -> Result<(u8, u8, TargetRequest), HttpResponse> {
         let adapter_id = parse_adapter_id(self.state.adapter_count(), params)?;
         let group_id = parse_group_id(params)?;
         let group = self
@@ -236,16 +236,16 @@ impl GroupTargetStateHandler {
             .group_dto(adapter_id, group_id)
             .ok_or_else(|| json_err(404, "not_found"))?;
         let request = parse_typed_body::<TargetStateBody>(body)?;
-        let setpoint = crate::http::target_state_request::parse_light_setpoint(&request, |mode| {
+        let target = crate::http::target_state_request::parse_target_request(&request, |mode| {
             cap_accepts_color_mode(&group.capabilities_summary, mode)
         })?;
-        Ok((adapter_id, group_id, setpoint))
+        Ok((adapter_id, group_id, target))
     }
 
-    fn execute(&self, args: (u8, u8, LightSetpoint)) -> Result<u64, HttpResponse> {
-        let (adapter_id, group_id, setpoint) = args;
+    fn execute(&self, args: (u8, u8, TargetRequest)) -> Result<u64, HttpResponse> {
+        let (adapter_id, group_id, target) = args;
         let correlation_id = self.correlation.next_id();
-        let command = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliSetTargetStateCommand::for_group(adapter_id, group_id, &setpoint));
+        let command = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), target.for_group(adapter_id, group_id));
         dispatch_and_wait_for_success(
             &self.publisher,
             &self.slots,

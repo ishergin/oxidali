@@ -59,6 +59,12 @@ broadcast (продюсер — HCL для `level_mode = last_active`). Applied-
 уровень, поэтому это отдельный вид, а не форма target-state; проецировать нечего,
 реестр сохраняет прежнее значение до следующего чтения.
 
+**`DaliRecallLevelPresetCommand`** — один кадр `RECALL MAX LEVEL` или
+`RECALL MIN LEVEL` (102 §11.3.5, §11.3.6) на любой класс адреса; лампу воркер разрешает
+в короткий адрес, как у target-state. Уровень прибор берёт из своей границы, поэтому это
+отдельный вид, а не форма target-state: applied-факт несёт глагол, а не уровень, и
+уровень членов считает реестр. `hold_hcl` едет так же, как у target-state.
+
 **`DaliRecallSceneCommand`** — единственная продуктовая активация сцены: нативный
 `GO TO SCENE`, яркость и цвет одним кадром. Scope — `Broadcast`, `Group`, `Short` или
 `VirtualLamp`; лампу воркер разрешает в короткий адрес в момент исполнения, как у
@@ -173,6 +179,7 @@ min/max — только когда ответы так и не устоялис
 | `DaliSetTargetStateCommand` | `DaliTargetStateAppliedEvent` / `DaliTargetStateFailedEvent` | проектор → RRUC → `RuntimeStateChangedEvent` |
 | `DaliRecallLastActiveLevelCommand` | applied-факт без уровня | проектор → RRUC; уровень из тени реестра |
 | `DaliStopFadeCommand` | подтверждение | ничего не проецируется |
+| `DaliRecallLevelPresetCommand` | `DaliLevelTransitionAppliedEvent` | проектор → `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
 | `DaliRecallSceneCommand` | `DaliSceneRecalledEvent` | проектор раскрывает по applied-строкам сцены |
 | `DaliProgramGroupMembershipCommand` | `DaliGroupMembershipProgrammedEvent` | реестр: applied-членство, `GroupMatrixChangedEvent` |
 | `DaliProgramSceneCommand` | `DaliSceneProgrammedEvent` (+ чанки цвета сцены) | реестр: applied-строка, `SceneMatrixChangedEvent` |

@@ -26,6 +26,8 @@ pub const PARSED_ACTION_KINDS: &[ActionKind] = &[
     ActionKind::LightRgb,
     ActionKind::LightLastActive,
     ActionKind::LightStopFade,
+    ActionKind::LightRecallMax,
+    ActionKind::LightRecallMin,
     ActionKind::SceneCycle,
     ActionKind::SceneRecall,
     ActionKind::SceneApply,

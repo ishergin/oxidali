@@ -246,6 +246,7 @@ pub(super) fn handle_level_transition(
             observation: obs,
             source: cmd.source,
             observed_at_mono_ms: cmd.observed_at_mono_ms,
+            holds_hcl: cmd.hold_hcl,
         },
     ));
     let outcome = announce_transition(ctx, cmd, vl, short_address, outcome);
@@ -273,7 +274,7 @@ fn announce_transition(
         RuntimeCommitMeta {
             source: cmd.source,
             dimensions: dali2rust_contracts::msg::SetpointDimensions { level: true, color: false },
-            holds_hcl: true,
+            holds_hcl: cmd.hold_hcl,
         },
     );
     RuntimeApplyOutcome::Applied

@@ -12,6 +12,14 @@ pub enum LightVerb {
     Rgb { r: u8, g: u8, b: u8 },
     LastActive,
     StopFade,
+    RecallMax,
+    RecallMin,
+}
+
+impl LightVerb {
+    pub fn stands_alone(self) -> bool {
+        matches!(self, Self::StopFade | Self::RecallMax | Self::RecallMin)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

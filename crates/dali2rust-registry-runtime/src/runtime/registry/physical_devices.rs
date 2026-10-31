@@ -76,6 +76,20 @@ pub(crate) struct LevelTransitionCommit<'a> {
     pub observation: &'a RuntimeObservation,
     pub source: RuntimeSource,
     pub observed_at_mono_ms: Option<u32>,
+    pub holds_hcl: bool,
+}
+
+fn transition_setpoint(outcome: TransitionOutcome) -> LightSetpoint {
+    match outcome {
+        TransitionOutcome::Level(level) => LightSetpoint::from_level(level, None),
+        TransitionOutcome::OnAtUnknownLevel => LightSetpoint { power: PowerState::On, ..LightSetpoint::default() },
+        TransitionOutcome::Unchanged | TransitionOutcome::Unknown => LightSetpoint::default(),
+    }
+}
+
+fn forget_commanded_level(rec: &mut PhysicalDeviceRecord) {
+    rec.runtime_level = None;
+    rec.last_active_level = None;
 }
 
 fn resolve_transition(
@@ -1148,10 +1162,8 @@ impl RegistryStore {
         if !observation_supersedes(commit.observed_at_mono_ms, rec.runtime.observed_at_mono_ms) {
             return RuntimeCommitOutcome::Superseded;
         }
-        let setpoint = match resolve_transition(commit.transition, rec) {
-            TransitionOutcome::Level(level) => LightSetpoint::from_level(level, None),
-            TransitionOutcome::Unchanged | TransitionOutcome::Unknown => LightSetpoint::default(),
-        };
+        let outcome = resolve_transition(commit.transition, rec);
+        let setpoint = transition_setpoint(outcome);
         let physical = PhysicalRuntimeCommit {
             short_address: commit.short_address,
             setpoint: &setpoint,
@@ -1159,12 +1171,15 @@ impl RegistryStore {
             observed_at_mono_ms: commit.observed_at_mono_ms,
             entry_last_dapc_source: None,
             entry_source: commit.source,
-            entry_holds_hcl: true,
+            entry_holds_hcl: commit.holds_hcl,
             clears_power_cycle_seen: true,
         };
         let silent = !setpoint.states_a_value()
             && rec.runtime.observation_adds_nothing(commit.observation);
         let power_cycled = commit_physical_runtime(rec, &physical);
+        if outcome == TransitionOutcome::OnAtUnknownLevel {
+            forget_commanded_level(rec);
+        }
         drop(g);
         if power_cycled {
             self.dirty.mark_physical_device_dirty(adapter_id, commit.short_address);

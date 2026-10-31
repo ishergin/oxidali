@@ -638,6 +638,23 @@ pub enum LevelTransition {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
+pub enum LevelPreset {
+    MaxLevel = 0,
+    MinLevel = 1,
+}
+
+impl LevelPreset {
+    #[must_use]
+    pub const fn transition(self) -> LevelTransition {
+        match self {
+            Self::MaxLevel => LevelTransition::RecallMaxLevel,
+            Self::MinLevel => LevelTransition::RecallMinLevel,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum DecodeStatus {
     Decoded = 0,
     Unsupported = 1,

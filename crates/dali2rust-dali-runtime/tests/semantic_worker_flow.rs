@@ -406,6 +406,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::DaliRecallSceneCommand::broadcast(0, 3).into(),
         m::DaliRecallLastActiveLevelCommand { registry_adapter_id: 0, scope: HclTargetScope::Broadcast, group_id: None }.into(),
         m::DaliStopFadeCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, virtual_lamp_id: 0, short_address: 0, group_id: 0 }.into(),
+        m::DaliRecallLevelPresetCommand::broadcast(0, m::LevelPreset::MaxLevel).into(),
         m::Dali103FeedbackDriveCommand { registry_adapter_id: 0, action: 0, short_address: Some(5), feature_number: None, feature_group: None, selected_group: 0, opcode_map: 0 }.into(),
         m::Dali103InstanceActionCommand { registry_adapter_id: 0, short_address: 5, instance_number: 2, action: m::Dali103InstanceAction::CancelHoldTimer }.into(),
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),

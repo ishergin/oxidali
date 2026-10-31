@@ -155,3 +155,61 @@ Feature: Physical device direct target state
     When I PUT JSON {"power":"on","level":100} to "/api/v1/adapters/0/physical-devices/64/target-state"
     Then the response status should be 400
     And the JSON error should be "invalid_resource_id"
+
+  @id:PD-303
+  Scenario: RECALL MAX LEVEL and RECALL MIN LEVEL take the gear to its own bounds, one frame each
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a common-102 attribute-read script where short address 0 holds min level 40 and max level 200
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    Given a RECALL MAX LEVEL script for short address 0
+    When I PUT JSON {"recall":"max_level"} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And all scripted DALI exchanges should be consumed without errors
+    And the physical device 0 state level should eventually be 200
+    Given a RECALL MIN LEVEL script for short address 0
+    When I PUT JSON {"recall":"min_level"} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And all scripted DALI exchanges should be consumed without errors
+    And the physical device 0 state level should eventually be 40
+
+  @id:PD-304
+  Scenario: A recall beside a setpoint, or of a preset the route does not name, is refused before the wire
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a DALI mock transport with no response
+    When I PUT JSON {"recall":"max_level","level":10} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+    When I PUT JSON {"recall":"max_level","power":"on"} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+    When I PUT JSON {"recall":"last_active_level"} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 422
+    And the JSON error should be "invalid_enum"
+    And the DALI mock transport should have received 0 forward frame
+
+  @id:PD-305
+  Scenario: A recall of a bound the controller never read lights the lamp and names no level
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a successful target-state script for level 150 on short address 0
+    When I PUT JSON {"power":"on","level":150} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And the physical device 0 state level should eventually be 150
+    Given a power-off target-state script for short address 0
+    When I PUT JSON {"level":0} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And the physical device 0 state power should eventually be "off"
+    Given a RECALL MAX LEVEL script for short address 0
+    When I PUT JSON {"recall":"max_level"} to "/api/v1/adapters/0/physical-devices/0/target-state"
+    Then the response status should be 200
+    And all scripted DALI exchanges should be consumed without errors
+    And the physical device 0 state power should eventually be "on"
+    And the physical device 0 state level should eventually be null

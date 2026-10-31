@@ -37,9 +37,11 @@ httpd stack in [07](07-memory-and-cores.md).
   last DAPC source, the `last_active_level` shadow — live on the physical-device record;
   virtual-lamp state is a projection through the binding.
 - They change only through `RegistryRuntimeUpdateCommand` (RRUC) and
-  `RegistryLevelTransitionCommand` (an observed arc command without a level, whose level
-  the registry computes); in production the state-fanout projector is their only
-  publisher. An entry that names a
+  `RegistryLevelTransitionCommand` (an arc command without a level, observed or our own
+  recall, whose level the registry computes); in production the state-fanout projector
+  is their only publisher. A verb whose bound was never read still lights the gear:
+  `RECALL MAX/MIN LEVEL`, `GO TO LAST ACTIVE LEVEL` and `ON AND STEP UP` commit power on
+  with an unknown level and forget the `last_active_level` shadow. An entry that names a
   virtual lamp with no binding is refused (`VlUnbound`).
 - Every successful runtime commit publishes `RuntimeStateChangedEvent` carrying the
   committed observation; an empty or default payload is forbidden.
@@ -52,8 +54,8 @@ httpd stack in [07](07-memory-and-cores.md).
    of an attribute read, a scene recall. The sniffer translator publishes observed
    foreign frames.
 2. The projector resolves scope through `ProjectorReadPort` — group membership, scene
-   rows, bindings — and publishes RRUC, or `RegistryLevelTransitionCommand` for an
-   observed arc command without a level.
+   rows, bindings — and publishes RRUC, or `RegistryLevelTransitionCommand` for an arc
+   command without a level.
 3. The registry worker commits and publishes `RuntimeStateChangedEvent`.
 
 - A single-target fact keeps the request's correlation id to the end, so the registry

@@ -87,11 +87,18 @@ Home Assistant: что значит каждое поле и какие инва
 **принимается и игнорируется**: плавность задаёт fade time самого прибора
 (`write-attributes`).
 
+Вместо уставки тело может нести `recall: "max_level" | "min_level"` — один кадр
+`RECALL MAX LEVEL` / `RECALL MIN LEVEL` (IEC 62386-102 §11.3.5, §11.3.6) на цель: прибор
+идёт к своей границе, а реестр считает уровень из прочитанных `max_level` / `min_level`.
+Непрочитанная граница даёт `power: on` и `level: null`. Ответ тот же, что у уставки на
+этом ресурсе; новое состояние приходит проекцией, как у группы.
+
 | Нарушение | Ответ |
 |---|---|
 | Поле `RuntimeObservation`, `included` / `setpoint` строки сцены, `waf` (read-only имя шести каналов) | `422 unsupported_field` |
 | Неизвестное поле, в том числе `brightness` и `mired` | `400 unknown_field` |
 | `level > 254`, кельвины вне `1000..20000`, `xy` вне `0..1` или `(0, 0)` | `422 invalid_value` |
+| `recall` рядом с любым полем уставки или не строкой | `422 invalid_value` |
 | Режим, которого нет в effective capabilities цели (исключение у группы — [`../resources/groups.md`](../resources/groups.md)) | `422 unsupported_capability` |
 | Неизвестное значение enum'а | `422 invalid_enum` |
 

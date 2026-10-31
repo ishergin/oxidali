@@ -35,13 +35,22 @@ pub(super) struct Common102Answers {
     pub(super) power_on_level: u8,
     pub(super) system_failure_level: u8,
     pub(super) fade_byte: u8,
+    pub(super) min_level: u8,
+    pub(super) max_level: u8,
 }
 
 impl Default for Common102Answers {
     fn default() -> Self {
         const IEC_DEFAULT_LEVEL: u8 = 0xFE;
         const NO_FADE: u8 = 0x07;
-        Self { power_on_level: IEC_DEFAULT_LEVEL, system_failure_level: IEC_DEFAULT_LEVEL, fade_byte: NO_FADE }
+        const IEC_DEFAULT_MIN_LEVEL: u8 = 0x01;
+        Self {
+            power_on_level: IEC_DEFAULT_LEVEL,
+            system_failure_level: IEC_DEFAULT_LEVEL,
+            fade_byte: NO_FADE,
+            min_level: IEC_DEFAULT_MIN_LEVEL,
+            max_level: IEC_DEFAULT_LEVEL,
+        }
     }
 }
 
@@ -55,8 +64,8 @@ pub(super) fn script_common102_read(mock: &MockDaliTransport, answers: Common102
         (StandardCommand::QueryVersionNumber, 0x08),
         (StandardCommand::QueryDeviceType, 0x08),
         (StandardCommand::QueryPhysicalMinimum, 0x01),
-        (StandardCommand::QueryMinLevel, 0x01),
-        (StandardCommand::QueryMaxLevel, 0xFE),
+        (StandardCommand::QueryMinLevel, answers.min_level),
+        (StandardCommand::QueryMaxLevel, answers.max_level),
         (StandardCommand::QueryPowerOnLevel, answers.power_on_level),
         (StandardCommand::QuerySystemFailureLevel, answers.system_failure_level),
         (StandardCommand::QueryFadeTimeFadeRate, answers.fade_byte),

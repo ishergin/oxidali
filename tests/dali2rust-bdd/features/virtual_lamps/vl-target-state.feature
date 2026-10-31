@@ -33,3 +33,12 @@ Feature: Virtual lamp target state JSON validation
     When I PUT JSON {"power":"on","level":220} to "/api/v1/adapters/0/virtual-lamps/1/target-state"
     Then the response status should be 200
     And all scripted DALI exchanges should be consumed without errors
+
+  @id:VL-109
+  Scenario: A virtual lamp's recall reaches its bound gear's short address
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And a DALI mock transport with no response
+    When I PUT JSON {"recall":"min_level"} to "/api/v1/adapters/0/virtual-lamps/1/target-state"
+    Then the response status should be 200
+    And the DALI mock transport should have sent forward frame 0x0106
+    And the DALI mock transport should have received 1 forward frame

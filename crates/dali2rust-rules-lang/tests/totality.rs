@@ -38,6 +38,8 @@ rule "colours" {
   do lamp("коридор").rgb(255, 180, 40)
      lamp("коридор").last_active()
      lamp("коридор").stop_fade()
+     lamp("коридор").recall_max()
+     group("кухня").recall_min()
      scene(1).recall(lamp("коридор"))
      scene(2).apply()
      scene.cycle(1, 3, 7)
