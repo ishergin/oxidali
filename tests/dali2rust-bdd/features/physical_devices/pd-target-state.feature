@@ -169,12 +169,16 @@ Feature: Physical device direct target state
     Given a RECALL MAX LEVEL script for short address 0
     When I PUT JSON {"recall":"max_level"} to "/api/v1/adapters/0/physical-devices/0/target-state"
     Then the response status should be 200
+    And the response physical device state level should be 200
     And all scripted DALI exchanges should be consumed without errors
+    And the DALI mock transport should have received 1 forward frame
     And the physical device 0 state level should eventually be 200
     Given a RECALL MIN LEVEL script for short address 0
     When I PUT JSON {"recall":"min_level"} to "/api/v1/adapters/0/physical-devices/0/target-state"
     Then the response status should be 200
+    And the response physical device state level should be 40
     And all scripted DALI exchanges should be consumed without errors
+    And the DALI mock transport should have received 1 forward frame
     And the physical device 0 state level should eventually be 40
 
   @id:PD-304

@@ -17,7 +17,7 @@ pub(super) fn scoped_address(
         DaliTargetScope::VirtualLamp => {
             let short = read_port
                 .virtual_lamp_binding_short(registry_adapter_id, virtual_lamp_id)
-                .ok_or(SemanticDaliError::Conflict("vl_unbound"))?;
+                .ok_or(SemanticDaliError::Conflict(VL_UNBOUND_MESSAGE))?;
             DaliAddress::short(short)
                 .map_err(|_| SemanticDaliError::Conflict("invalid_short_address"))
         }

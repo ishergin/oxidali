@@ -22,14 +22,16 @@ runtime только через проектор) — [`../glossary-and-invarian
    ([`contracts/state-contracts.md`](contracts/state-contracts.md) §Тело target-state).
    Что особенного у лампы — no-op без привязки и адрес, разрешаемый в момент исполнения,
    — [`resources/virtual-lamps.md`](resources/virtual-lamps.md).
-2. Публикуется `DaliSetTargetStateCommand` со scope `VirtualLamp` / `Group` / `Short`.
+2. Публикуется `DaliSetTargetStateCommand` (для `recall` — `DaliRecallLevelPresetCommand`)
+   со scope `VirtualLamp` / `Group` / `Short`.
 3. DALI worker коалесцирует инбокс по цели
    ([03](../../architecture/03-bus-and-backpressure.md) §Coalescing), исполняет
-   команду на проводе и публикует applied-факт и подтверждение; handler отвечает по
-   дисциплине синхронного подтверждения.
+   команду на проводе и публикует applied-факт; группу и broadcast подтверждает он
+   же. Handler отвечает по дисциплине синхронного подтверждения.
 4. Проектор state-fanout разворачивает факт: группу — по **applied**-членству,
    broadcast — по адаптеру, адрес — в привязанную лампу; публикует
-   `RegistryRuntimeUpdateCommand`. Реестр коммитит и публикует
+   `RegistryRuntimeUpdateCommand` (для recall — `RegistryLevelTransitionCommand`, уровень
+   которого считает реестр). Реестр коммитит, подтверждает прибор и лампу и публикует
    `RuntimeStateChangedEvent`; WS и MQTT реагируют на него.
 
 Чужие кадры на шине (другой мастер, панель) проходят тот же путь с шага 4: сниффер →

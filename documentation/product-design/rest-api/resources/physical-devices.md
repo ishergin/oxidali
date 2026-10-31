@@ -346,7 +346,7 @@ read-back держит каждый записанный байт, а байт �
 ## `PUT …/target-state`
 
 Прямое управление прибором по короткому адресу (`DaliSetTargetStateCommand` со
-scope `Short`), синхронное подтверждение, ответ `200` с ядром устройства. Тело и
+scope `Short`, для `recall` — `DaliRecallLevelPresetCommand`), синхронное подтверждение, ответ `200` с ядром устройства. Тело и
 ошибки — как у виртуальной лампы
 ([`virtual-lamps.md`](virtual-lamps.md), [`../contracts/state-contracts.md`](../contracts/state-contracts.md));
 цепочка — [`../workflows.md`](../workflows.md) §Target-state. Операции не создаёт.

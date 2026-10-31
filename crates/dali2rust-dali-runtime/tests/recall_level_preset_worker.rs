@@ -5,7 +5,7 @@ use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::msg::{
     BusEventPayload, DaliLevelTransitionAppliedEvent, DaliRecallLevelPresetCommand, DaliTargetScope,
-    DeliveryStatus, LevelPreset, LevelTransition, Origin, RuntimeSource,
+    DeliveryStatus, ErrorCode, LevelPreset, LevelTransition, Origin, RuntimeSource,
 };
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
@@ -95,14 +95,20 @@ fn applied(stack: &Stack) -> DaliLevelTransitionAppliedEvent {
 fn a_short_address_recall_sends_its_opcode_and_closes_with_the_transition_and_its_source() {
     let expected = frame_of(DaliAddress::Short(3), StandardCommand::RecallMaxLevel);
     let stack = spawn_stack(&[expected]);
-    publish(&stack, 61, Origin::Mqtt, DaliRecallLevelPresetCommand::for_short(0, 3, LevelPreset::MaxLevel));
+    let mut command = DaliRecallLevelPresetCommand::for_short(0, 3, LevelPreset::MaxLevel);
+    command.hold_hcl = false;
+    publish(&stack, 61, Origin::Mqtt, command);
 
-    assert_eq!(confirmation(&stack).status, DeliveryStatus::Ok);
     let fact = applied(&stack);
     assert_eq!(fact.scope, DaliTargetScope::Short);
     assert_eq!((fact.virtual_lamp_id, fact.short_address, fact.group_id), (None, Some(3), None));
     assert_eq!(fact.transition, LevelTransition::RecallMaxLevel);
     assert_eq!(fact.source, RuntimeSource::Mqtt);
+    assert!(!fact.hold_hcl, "the fact carries the command's hold");
+    assert!(
+        stack.confirmations.recv_timeout(Duration::from_millis(200)).is_err(),
+        "one device's recall is answered by the registry once it has committed it"
+    );
 
     let mock = stack.transport.lock().expect("mock lock");
     assert_eq!(mock.sent_frames(), vec![expected]);
@@ -131,7 +137,8 @@ fn an_unbound_virtual_lamp_is_refused_before_the_wire_and_states_nothing() {
 
     let conf = confirmation(&stack);
     assert_eq!(conf.status, DeliveryStatus::ExecutionFailed);
-    assert_eq!(conf.confirmation.error.as_ref().expect("product error").message.as_str(), "vl_unbound");
+    let error = conf.confirmation.error.as_ref().expect("product error");
+    assert_eq!((error.code, error.message.as_str()), (ErrorCode::VlUnbound, "vl_unbound"));
     assert!(stack.events.recv_timeout(Duration::from_millis(100)).is_err(), "a refused recall states no transition");
     assert!(stack.transport.lock().expect("mock lock").sent_frames().is_empty());
 }

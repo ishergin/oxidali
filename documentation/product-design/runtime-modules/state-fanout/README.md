@@ -14,7 +14,7 @@ broadcast и сцены по участникам.
 ## Входы и выходы
 
 - **Потребляет**: `DaliTargetStateAppliedEvent`, `DaliSceneRecalledEvent`,
-  `DaliObservedFrameEvent`, секцию `RuntimeStatus` из `DaliAttributesReadEvent` и
+  `DaliLevelTransitionAppliedEvent`, `DaliObservedFrameEvent`, секцию `RuntimeStatus` из `DaliAttributesReadEvent` и
   `DaliAttributeReadOutcomesEvent` (устройство не ответило).
 - **Публикует** только `RegistryRuntimeUpdateCommand` и
   `RegistryLevelTransitionCommand`, через `publish_required`. DALI-команд не

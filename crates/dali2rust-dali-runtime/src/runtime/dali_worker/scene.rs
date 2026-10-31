@@ -184,7 +184,7 @@ fn recall_address(
         DaliTargetScope::VirtualLamp => short_recall(
             read_port
                 .virtual_lamp_binding_short(command.registry_adapter_id, command.virtual_lamp_id)
-                .ok_or(SemanticDaliError::Conflict("vl_unbound"))?,
+                .ok_or(SemanticDaliError::Conflict(VL_UNBOUND_MESSAGE))?,
         ),
         DaliTargetScope::AddressRange => Err(SemanticDaliError::Conflict("invalid_recall_scope")),
     }

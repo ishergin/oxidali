@@ -444,6 +444,7 @@ export interface TargetStateRequest {
   rgb?: Rgb
   rgbwaf?: { r: number; g: number; b: number; w: number; a: number; f: number }
   transition?: { duration_ms: number }
+  recall?: 'max_level' | 'min_level'
 }
 
 export interface WriteAttributesRequest {

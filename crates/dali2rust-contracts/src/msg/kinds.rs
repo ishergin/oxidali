@@ -87,6 +87,13 @@ pub enum DaliTargetScope {
     AddressRange = 4,
 }
 
+impl DaliTargetScope {
+    #[must_use]
+    pub const fn names_one_lamp(self) -> bool {
+        matches!(self, Self::Short | Self::VirtualLamp)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ConfigWriteResource {

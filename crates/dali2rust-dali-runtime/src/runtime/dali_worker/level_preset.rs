@@ -10,9 +10,11 @@ pub(super) fn handle_recall_level_preset(
 ) {
     let WorkerEnv { read_port, publisher, adapter_id, counters, .. } = *env;
     match execute_recall_level_preset(controller, read_port, command) {
-        Ok(()) => {
-            let applied = level_transition_applied_event(adapter_id, correlation_id, origin, command);
-            if publish_closing_fact_or_fail(publisher, applied, counters, PublishKind::Singleton, "level-transition-applied") {
+        Ok(address) => {
+            let applied = level_transition_applied_event(adapter_id, correlation_id, origin, command, address);
+            if publish_closing_fact_or_fail(publisher, applied, counters, PublishKind::Singleton, "level-transition-applied")
+                && !command.scope.names_one_lamp()
+            {
                 publish_confirmation_ok(publisher, correlation_id, counters);
             }
         }
@@ -29,12 +31,12 @@ pub(super) fn handle_recall_level_preset(
     }
 }
 
-// IEC 62386-102 §11.3.5, §11.3.6
+// IEC 62386-102 §11.3.7, §11.3.8
 fn execute_recall_level_preset(
     controller: &mut impl DaliApplicationController,
     read_port: &dyn RegistryReadPort,
     command: &DaliRecallLevelPresetCommand,
-) -> Result<(), SemanticDaliError> {
+) -> Result<DaliAddress, SemanticDaliError> {
     let address = super::target_address::scoped_address(
         read_port,
         command.registry_adapter_id,
@@ -48,7 +50,7 @@ fn execute_recall_level_preset(
         LevelPreset::MinLevel => StandardCommand::RecallMinLevel,
     };
     send_standard(controller, address, recall)?;
-    Ok(())
+    Ok(address)
 }
 
 fn level_transition_applied_event(
@@ -56,13 +58,17 @@ fn level_transition_applied_event(
     correlation_id: u64,
     origin: Origin,
     command: &DaliRecallLevelPresetCommand,
+    address: DaliAddress,
 ) -> EventEnvelope {
     let scope = command.scope;
     let applied = DaliLevelTransitionAppliedEvent {
         registry_adapter_id: command.registry_adapter_id,
         scope,
         virtual_lamp_id: (scope == DaliTargetScope::VirtualLamp).then_some(command.virtual_lamp_id),
-        short_address: (scope == DaliTargetScope::Short).then_some(command.short_address),
+        short_address: match address {
+            DaliAddress::Short(short) => Some(short),
+            _ => None,
+        },
         group_id: (scope == DaliTargetScope::Group).then_some(command.group_id),
         transition: command.preset.transition(),
         source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),

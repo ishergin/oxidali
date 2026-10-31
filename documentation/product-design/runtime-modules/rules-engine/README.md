@@ -59,8 +59,8 @@
   перекомпилируется; `RegistrySliceReloadedEvent` — слайс-стор сменился под нами
   (импорт или репликация), документ перечитывается и грузится в движок безусловно, а не
   по смене ревизии: у документа пира может быть та же ревизия при других байтах.
-- **Публикует** с `Origin::Rules`: `DaliSetTargetStateCommand` и
-  `DaliStopFadeCommand` — свет; `DaliRecallSceneCommand` и `SceneApplyExecuteCommand` —
+- **Публикует** с `Origin::Rules`: `DaliSetTargetStateCommand`, `DaliStopFadeCommand` и
+  `DaliRecallLevelPresetCommand` — свет; `DaliRecallSceneCommand` и `SceneApplyExecuteCommand` —
   сцены, перед вторым — `OperationBeginCommand` его операции; `HclOverrideHoldCommand` — `hcl.hold`; `HclOverrideResumeCommand` — `hcl.resume`;
   `HclScheduleEnableCommand` —
   `hcl.enable` / `hcl.disable` (исполняет реестр); `Dali103FeedbackDriveCommand` —

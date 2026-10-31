@@ -284,7 +284,8 @@ impl EffectExecutor<'_> {
         match verb {
             LightVerb::RecallMax => self.recall_preset(target, LevelPreset::MaxLevel, hold_hcl, snapshot, corr),
             LightVerb::RecallMin => self.recall_preset(target, LevelPreset::MinLevel, hold_hcl, snapshot, corr),
-            _ => self.stop_fade(target, snapshot, corr),
+            LightVerb::StopFade => self.stop_fade(target, snapshot, corr),
+            _ => self.misrouted(),
         }
     }
 
@@ -308,7 +309,7 @@ impl EffectExecutor<'_> {
         )
     }
 
-    // IEC 62386-102 §11.3.5, §11.3.6
+    // IEC 62386-102 §11.3.7, §11.3.8
     fn recall_preset(
         &self,
         target: &LightTarget,

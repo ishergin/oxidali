@@ -44,7 +44,7 @@ use crate::runtime::executor::{
     program_group_membership, replace_device, run_commissioning_step,
     read_attributes,
     read_memory_bank, group_address, send_standard, write_short_attributes, DiscoveredDevice,
-    SemanticDaliError,
+    SemanticDaliError, VL_UNBOUND_MESSAGE,
 };
 use dali2rust_bsp::esp_thread;
 

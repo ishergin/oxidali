@@ -210,7 +210,11 @@ fn resolve_transition_target(
     cmd: &dali2rust_contracts::msg::RegistryLevelTransitionCommand,
 ) -> Result<(Option<u8>, u8), ()> {
     match (cmd.virtual_lamp_id, cmd.short_address) {
-        (Some(vl_id), _) => match ctx.store.internal_virtual_lamp_binding_short(cmd.adapter_id, vl_id) {
+        (Some(vl_id), Some(short)) => {
+            check_runtime_binding_match(ctx, cmd.adapter_id, vl_id, short)?;
+            Ok((Some(vl_id), short))
+        }
+        (Some(vl_id), None) => match ctx.store.internal_virtual_lamp_binding_short(cmd.adapter_id, vl_id) {
             Some(bound) => Ok((Some(vl_id), bound)),
             None => {
                 ctx.confirm_failed(ErrorCode::VlUnbound, "transition_vl_unbound");

@@ -8,7 +8,7 @@ use crate::runtime::registry::publish::{
 use crate::runtime::registry::{ForeignSceneWrite, RegistryStore};
 use crate::runtime::registry_worker::RegistryEventsCounters;
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
-use dali2rust_contracts::msg::BusEventPayload;
+use dali2rust_contracts::msg::{BusEventPayload, LevelTransition};
 use dali2rust_domain::registry::SCENE_COUNT;
 
 fn apply_and_publish_pd(
@@ -92,6 +92,11 @@ dali2rust_contracts::dispatch_bus_events! {
             Some(&body.setpoint),
         );
     },
+    DaliLevelTransitionAppliedEvent(body) => {
+        if let Some(on) = transition_power(body.transition) {
+            note_mass_power(store, body.registry_adapter_id, body.scope, body.group_id, on);
+        }
+    },
     DaliObservedFrameEvent(body) => {
         match body.observed_kind {
             dali2rust_contracts::msg::ObservedKind::TargetStateObserved => note_mass_commanded(
@@ -101,6 +106,11 @@ dali2rust_contracts::dispatch_bus_events! {
                 body.group_id,
                 body.setpoint.as_ref(),
             ),
+            dali2rust_contracts::msg::ObservedKind::LevelTransitionObserved => {
+                if let Some(on) = body.level_transition.and_then(transition_power) {
+                    note_mass_power(store, body.registry_adapter_id, body.scope, body.group_id, on);
+                }
+            }
             dali2rust_contracts::msg::ObservedKind::SceneWriteObserved
             | dali2rust_contracts::msg::ObservedKind::SceneRemovalObserved => {
                 commit_foreign_scene_write(publisher, corr, store, body);
@@ -373,9 +383,31 @@ fn note_mass_commanded(
     group_id: Option<u8>,
     setpoint: Option<&dali2rust_contracts::msg::LightSetpoint>,
 ) {
-    let Some(on) = setpoint.and_then(commanded_power) else {
-        return;
-    };
+    if let Some(on) = setpoint.and_then(commanded_power) {
+        note_mass_power(store, adapter_id, scope, group_id, on);
+    }
+}
+
+// IEC 62386-102 §11.3.7, §11.3.8, §11.3.10
+fn transition_power(transition: LevelTransition) -> Option<bool> {
+    match transition {
+        LevelTransition::RecallMaxLevel
+        | LevelTransition::RecallMinLevel
+        | LevelTransition::OnAndStepUp => Some(true),
+        LevelTransition::StepUp
+        | LevelTransition::StepDown
+        | LevelTransition::StepDownAndOff
+        | LevelTransition::GoToLastActiveLevel => None,
+    }
+}
+
+fn note_mass_power(
+    store: &RegistryStore,
+    adapter_id: u8,
+    scope: dali2rust_contracts::msg::DaliTargetScope,
+    group_id: Option<u8>,
+    on: bool,
+) {
     match scope {
         dali2rust_contracts::msg::DaliTargetScope::Group => {
             if let Some(group_id) = group_id {

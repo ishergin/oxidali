@@ -1085,6 +1085,12 @@ fn an_unresolvable_verb_leaves_the_stored_level_untouched() {
 fn a_recall_of_an_unread_preset_lights_the_lamp_at_no_level_and_keeps_the_rule_s_hold() {
     let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
     seed_physical(&publisher, &store, 23);
+    let lit = LightSetpoint::from_level(137, None);
+    publish_cmd(
+        &publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 920, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(23, &lit, 49_000))),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 920));
     let dark = LightSetpoint { power: PowerState::Off, level: Some(0), color: None };
     publish_cmd(
         &publisher,
@@ -1112,4 +1118,60 @@ fn a_recall_of_an_unread_preset_lights_the_lamp_at_no_level_and_keeps_the_rule_s
     let state = core_view_of(&store, 23).state;
     assert_eq!(state.power, "on", "RECALL MAX LEVEL lights the gear whatever its maximum");
     assert_eq!(state.level, None, "and a maximum never read is no level to show");
+
+    publish_cmd(
+        &publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 923, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), RegistryLevelTransitionCommand {
+            adapter_id: 0,
+            virtual_lamp_id: None,
+            short_address: Some(23),
+            transition: LevelTransition::GoToLastActiveLevel,
+            observation: Some(runtime_observation_api_timestamped(52_000)),
+            source: RuntimeSource::Api,
+            observed_at_mono_ms: Some(52_000),
+            hold_hcl: true,
+        }),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 923));
+    assert_eq!(
+        core_view_of(&store, 23).state.level,
+        None,
+        "the gear left 137 behind at the recall, so its last active level is no longer known"
+    );
+}
+
+#[test]
+fn a_transition_naming_gear_its_lamp_is_no_longer_bound_to_is_refused() {
+    let (publisher, conf_rx, store, _counters, _host) = spawn_cmd_stack(1);
+    seed_physical(&publisher, &store, 10);
+    seed_physical(&publisher, &store, 11);
+    publish_cmd(
+        &publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 2210, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::VirtualLampBindCommand { adapter_id: 0, virtual_lamp_id: 8, physical_short_address: 10 }),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 2210));
+
+    publish_cmd(
+        &publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 2211, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), RegistryLevelTransitionCommand {
+            adapter_id: 0,
+            virtual_lamp_id: Some(8),
+            short_address: Some(11),
+            transition: LevelTransition::RecallMaxLevel,
+            observation: Some(runtime_observation_api_timestamped(60_000)),
+            source: RuntimeSource::Api,
+            observed_at_mono_ms: Some(60_000),
+            hold_hcl: true,
+        }),
+    );
+    let c = recv_confirm_for(&conf_rx, 2211);
+    assert_exec_failed_msg(&c, "runtime_binding_mismatch");
+    assert_eq!(c.confirmation.error.as_ref().expect("err").code, ErrorCode::Conflict);
+    for short in [10, 11] {
+        assert_ne!(
+            core_view_of(&store, short).state.power,
+            "on",
+            "the frame went to 11 while the lamp now means 10: neither commit is true"
+        );
+    }
 }
