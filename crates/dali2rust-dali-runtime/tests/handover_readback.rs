@@ -1,13 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
-use dali2rust_dali_runtime::runtime::controller::DaliController;
+use dali2rust_dali_runtime::runtime::controller::{DaliController, PHY_TICK_US, TX_ARM_LEAD_TICKS};
 use dali2rust_dali_runtime::runtime::executor::arbitration::enable_peer_controller;
 use dali2rust_dali_runtime::runtime::executor::SemanticDaliError;
 use dali2rust_domain::dali::controller::{DaliApplicationController, WireHold};
 use dali2rust_domain::dali::dev103::address::Device103Address;
 use dali2rust_domain::dali::dev103::command::Device103Command;
 use dali2rust_domain::dali::frame::HoldCause;
+use dali2rust_domain::dali::ses::DaliPriority;
 use dali2rust_platform::dali::TransferOutcome;
 use dali2rust_test_support::StoppedClock;
 
@@ -59,6 +60,11 @@ fn sent(bus: &Arc<Mutex<MockDaliTransport>>) -> Vec<[u8; 3]> {
     bus.lock().expect("bus").sent_frames24()
 }
 
+fn continues_the_transaction(bus: &Arc<Mutex<MockDaliTransport>>, frame: usize) -> bool {
+    let settle_us = bus.lock().expect("bus").sent_frame24_settle_us()[frame];
+    DaliPriority::Transaction.contains_settle_us(settle_us + u32::from(TX_ARM_LEAD_TICKS) * PHY_TICK_US)
+}
+
 struct Free;
 
 impl WireHold for Free {
@@ -98,6 +104,7 @@ fn a_collided_query_is_asked_again_and_its_enable_pair_is_not() {
     first_pass_ends_with(&bus, TransferOutcome::Collision);
     assert_eq!(hand_over(&bus, Arc::new(Free)), Ok(()));
     assert_eq!(sent(&bus), vec![enable(), enable(), query(), query()]);
+    assert!(continues_the_transaction(&bus, 3), "the query is asked again at priority 1");
 }
 
 // IEC 62386-101 §8.2.5

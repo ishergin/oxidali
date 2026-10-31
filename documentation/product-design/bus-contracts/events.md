@@ -181,7 +181,7 @@ Part 333 не читается, флаг и триггер инертны: ед�
   ([`../runtime-modules/redundancy/README.md`](../runtime-modules/redundancy/README.md)
   §Обнаружение).
 - `Dali103HandoverSentEvent` (best-effort, воркер арбитража) — пир включён и ответил
-  `YES` на `QUERY APPLICATION CONTROLLER ENABLED`, можно уходить в пассив.
+  чистым кадром на `QUERY APPLICATION CONTROLLER ENABLED`, можно уходить в пассив.
 - `RedundancyTransitionEvent` (best-effort, правила: `controller becomes active`) —
   смена роли с причиной и метками; журнал переходов хранит сам воркер арбитража и
   отдаёт REST.

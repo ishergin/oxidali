@@ -4,7 +4,13 @@ import type { BusUnitSetter, DaliSettings } from '../api/types'
 import { Card, FieldRow, Switch, EditableText } from '../components/ui'
 import { hex6 } from '../format'
 import { useSettingsDraft } from '../hooks'
-import { fieldPatch, fieldsOnScreen, sendFieldsOnFreshRead, withFieldEdit } from './field-edits'
+import {
+  fieldPatch,
+  fieldsOnScreen,
+  sendFieldsOnFreshRead,
+  withFieldEdit,
+  withoutSent,
+} from './field-edits'
 
 const SET_BY: Record<BusUnitSetter, { chip: string; text: string }> = {
   wire: { chip: 'chip info', text: 'set by the wire' },
@@ -22,7 +28,9 @@ export function SettingsDali() {
   const { data, busy, save } = useSettingsDraft(() => api.daliSettings())
   const [edits, setEdits] = useState<Partial<DaliSettings> | null>(null)
   useEffect(() => {
-    if (edits && data && withFieldEdit(edits, {}, data) === null) setEdits(null)
+    if (!edits || !data) return
+    const kept = withFieldEdit(edits, {}, data)
+    if (Object.keys(kept ?? {}).length < Object.keys(edits).length) setEdits(kept)
   }, [edits, data])
 
   if (!data) return <div class="empty">Loading DALI settings…</div>
@@ -33,8 +41,8 @@ export function SettingsDali() {
 
   const apply = () =>
     void save('DALI settings', async () => {
-      await sendFieldsOnFreshRead(edits ?? {}, api.daliSettings, api.patchDaliSettings)
-      discard()
+      const sent = await sendFieldsOnFreshRead(edits ?? {}, api.daliSettings, api.patchDaliSettings)
+      setEdits((now) => now && withoutSent(now, sent))
     })
 
   return (

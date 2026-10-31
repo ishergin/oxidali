@@ -19,11 +19,20 @@ export function withFieldEdit<T extends object>(
   return Object.keys(kept).length > 0 ? kept : null
 }
 
-export async function sendFieldsOnFreshRead<T extends object, R>(
+export function withoutSent<T extends object>(edits: Partial<T>, sent: Partial<T>): Partial<T> | null {
+  const kept: Partial<T> = {}
+  for (const key of Object.keys(edits) as (keyof T)[]) {
+    if (!(key in sent) || sent[key] !== edits[key]) kept[key] = edits[key]
+  }
+  return Object.keys(kept).length > 0 ? kept : null
+}
+
+export async function sendFieldsOnFreshRead<T extends object>(
   edits: Partial<T>,
   read: () => Promise<T>,
-  send: (patch: Partial<T>) => Promise<R>,
-): Promise<R | null> {
+  send: (patch: Partial<T>) => Promise<unknown>,
+): Promise<Partial<T>> {
   const patch = fieldPatch(edits, await read())
-  return Object.keys(patch).length > 0 ? send(patch) : null
+  if (Object.keys(patch).length > 0) await send(patch)
+  return patch
 }
