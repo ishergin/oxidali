@@ -249,7 +249,7 @@ fn full_attributes_view() -> PhysicalDeviceAttributesView {
     t.color_value_2 = ov(403_u16, 49);
     t.gear_features = ov(0x41, 69);
     t.rgbwaf_control = ov(0x80, 71);
-    a.extended.fade_time_ms = ov(700_u16, 50);
+    a.extended.fade_time_ms = ov(700_u32, 50);
     a.extended.version_number = ov(45, 51);
     let i = &mut a.memory_identity;
     i.last_memory_bank = ov(50, 52);

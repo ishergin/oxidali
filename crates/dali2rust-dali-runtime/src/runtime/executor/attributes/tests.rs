@@ -19,7 +19,7 @@ use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
 #[test]
 fn extended_fade_time_codec_round_trips_representable_values() {
     for (ms, byte) in [
-        (0u16, 0x00u8),
+        (0u32, 0x00u8),
         (100, 0x10),
         (500, 0x14),
         (1600, 0x1F),
@@ -27,27 +27,49 @@ fn extended_fade_time_codec_round_trips_representable_values() {
         (16_000, 0x2F),
         (30_000, 0x32),
         (60_000, 0x35),
+        (70_000, 0x36),
+        (160_000, 0x3F),
+        (120_000, 0x3B),
+        (960_000, 0x4F),
     ] {
         assert_eq!(extended_fade_time_byte_from_ms(ms), byte, "{ms} ms");
         assert_eq!(extended_fade_time_ms_from_byte(byte), Some(ms), "0x{byte:02X}");
     }
 }
 
+const SIXTEEN_MINUTES_MS: u32 = 960_000;
+const EXTENDED_FADE_GRID_TOP: u8 = 0x4F;
+
 #[test]
-fn every_encoded_extended_fade_byte_decodes_within_the_contract() {
-    for ms in [64_999u16, 65_000, 65_001, 65_300, u16::MAX] {
+fn every_request_up_to_sixteen_minutes_encodes_to_a_fade_the_record_carries() {
+    let mut previous = 0;
+    for ms in 0..=SIXTEEN_MINUTES_MS {
         let byte = extended_fade_time_byte_from_ms(ms);
-        let decoded = extended_fade_time_ms_from_byte(byte);
-        assert!(
-            decoded.is_some(),
-            "{ms} ms encoded to 0x{byte:02X}, which the contract cannot decode — \
-             the gear would hold a value the record cannot carry"
-        );
-        assert_eq!(
-            decoded,
-            Some(60_000),
-            "the top of the band clamps to the 60 s the gear will actually hold"
-        );
+        let decoded = extended_fade_time_ms_from_byte(byte)
+            .unwrap_or_else(|| panic!("{ms} ms encoded to 0x{byte:02X}, which reads back as nothing"));
+        assert!(decoded <= SIXTEEN_MINUTES_MS, "{ms} ms became {decoded} ms");
+        assert!(decoded >= previous, "IEC 62386-102 §9.5.4: {ms} ms gives {decoded} ms, shorter than {previous} ms");
+        previous = decoded;
+    }
+    assert_eq!(previous, SIXTEEN_MINUTES_MS, "the top of the grid is reachable");
+}
+
+#[test]
+fn every_request_rounds_to_the_nearest_grid_duration() {
+    let mut grid: Vec<u32> = (0x10..=EXTENDED_FADE_GRID_TOP)
+        .filter_map(extended_fade_time_ms_from_byte)
+        .collect();
+    grid.sort_unstable();
+    grid.dedup();
+    for ms in 1..=SIXTEEN_MINUTES_MS {
+        let decoded = extended_fade_time_ms_from_byte(extended_fade_time_byte_from_ms(ms)).unwrap_or(0);
+        let next = grid.partition_point(|&g| g < ms);
+        let nearest = grid[next.saturating_sub(1)..(next + 1).min(grid.len())]
+            .iter()
+            .map(|g| g.abs_diff(ms))
+            .min()
+            .unwrap_or(u32::MAX);
+        assert_eq!(decoded.abs_diff(ms), nearest, "IEC 62386-102 Table 6, Table 7: {ms} ms gave {decoded} ms");
     }
 }
 
@@ -61,10 +83,15 @@ fn extended_fade_time_decode_handles_reserved_and_rounding() {
     assert_eq!(extended_fade_time_ms_from_byte(0x50), None, "reserved multiplier");
     assert_eq!(extended_fade_time_byte_from_ms(10), 0x10, "sub-unit rounds up to 100 ms");
     assert_eq!(extended_fade_time_byte_from_ms(550), 0x15, "rounds to the nearest step");
-    assert_eq!(extended_fade_time_ms_from_byte(0x4F), None, "16 min");
-    assert_eq!(extended_fade_time_ms_from_byte(0x41), None, "2 min");
-    assert_eq!(extended_fade_time_ms_from_byte(0x36), None, "70 s");
-    assert_eq!(extended_fade_time_ms_from_byte(0x35), Some(60_000), "60 s fits");
+    assert_eq!(extended_fade_time_byte_from_ms(1_650), 0x1F, "1.6 s is nearer than 2 s");
+    assert_eq!(extended_fade_time_byte_from_ms(1_800), 0x21, "a tie takes the longer fade");
+    assert_eq!(extended_fade_time_byte_from_ms(165_000), 0x3F, "160 s is nearer than 3 min");
+    assert_eq!(extended_fade_time_byte_from_ms(170_000), 0x42, "a tie takes the longer fade");
+    assert_eq!(extended_fade_time_ms_from_byte(0x4F), Some(960_000), "16 min");
+    assert_eq!(extended_fade_time_ms_from_byte(0x41), Some(120_000), "2 min");
+    assert_eq!(extended_fade_time_ms_from_byte(0x36), Some(70_000), "70 s");
+    assert_eq!(extended_fade_time_ms_from_byte(0x80), None, "the answer is 0YYYAAAAb");
+    assert_eq!(extended_fade_time_ms_from_byte(0xC1), None, "bit 7 never makes 2 min");
 }
 
 fn groups_query_frames(address: DaliAddress) -> (u16, u16) {
@@ -138,20 +165,22 @@ fn an_ungrouped_gear_is_not_the_doubled_signature_and_is_not_re_read() {
     assert_script_consumed(&transport);
 }
 
-const EXTENDED_FADE_SEVENTY_SECONDS: u8 = 0x36;
+const EXTENDED_FADE_RESERVED_MULTIPLIER: u8 = 0x5F;
 const EXTENDED_FADE_HALF_SECOND: u8 = 0x14;
+const EXTENDED_FADE_TWO_MINUTES: u8 = 0x41;
 
 #[test]
 fn an_extended_fade_the_re_read_corrects_is_counted_and_a_confirmed_or_silent_one_is_not() {
     let query = standard_query_frame(9, StandardCommand::QueryExtendedFadeTime);
     let mock = MockDaliTransport::new();
     for answer in [
-        Some(EXTENDED_FADE_SEVENTY_SECONDS),
+        Some(EXTENDED_FADE_RESERVED_MULTIPLIER),
         Some(EXTENDED_FADE_HALF_SECOND),
-        Some(EXTENDED_FADE_SEVENTY_SECONDS),
-        Some(EXTENDED_FADE_SEVENTY_SECONDS),
+        Some(EXTENDED_FADE_RESERVED_MULTIPLIER),
+        Some(EXTENDED_FADE_RESERVED_MULTIPLIER),
         None,
         None,
+        Some(EXTENDED_FADE_TWO_MINUTES),
     ] {
         mock.expect_forward_frame_with_backward(query, answer);
     }
@@ -170,8 +199,9 @@ fn an_extended_fade_the_re_read_corrects_is_counted_and_a_confirmed_or_silent_on
     };
     assert_eq!(read(), Some(500), "the re-read replaces the first answer");
     assert_eq!(counters.readback_extended_fade_corrected.load(Relaxed), 1);
-    assert_eq!(read(), None, "a confirmed 70 s is above the u16 ms field, not wrong");
+    assert_eq!(read(), None, "a confirmed reserved multiplier is unreadable, not wrong");
     assert_eq!(read(), None);
+    assert_eq!(read(), Some(120_000), "two minutes is a fade the record carries, read once");
     assert_eq!(
         counters.readback_extended_fade_corrected.load(Relaxed),
         1,

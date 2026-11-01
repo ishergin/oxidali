@@ -207,18 +207,19 @@ async fn then_pd_extended_versions(world: &mut DaliWorld, t1: u64, v1: u64, t2: 
     );
 }
 
-// PD-158 PD-273
-#[then("physical device 0 eventually exposes extended fade_time_ms 500 as read back")]
-async fn then_pd_extended_fade_time_read_back(world: &mut DaliWorld) {
+// PD-158 PD-273 PD-307 PD-309
+#[then(regex = r"^physical device 0 eventually exposes extended fade_time_ms (\d+) as (read back|written)$")]
+async fn then_pd_extended_fade_time_read_back(world: &mut DaliWorld, expected: u64, how: String) {
     let port = world.server_port();
+    let stamp = if how == "written" { "last_write_confirmed_ms" } else { "last_read_ms" };
     let read = |json: &Value| {
         let value = json
             .pointer("/attributes/extended/fade_time_ms/value")
             .and_then(Value::as_u64);
-        let read_stamped = json
-            .pointer("/attributes/extended/fade_time_ms/last_read_ms")
+        let stamped = json
+            .pointer(&format!("/attributes/extended/fade_time_ms/{stamp}"))
             .is_some_and(|v| !v.is_null());
-        (value == Some(500) && read_stamped).then_some(500u64)
+        (value == Some(expected) && stamped).then_some(expected)
     };
     wait_until(
         || fetch_physical_device_full(port, TEST_ADAPTER_ID, 0).as_ref().and_then(read).is_some(),
@@ -227,8 +228,8 @@ async fn then_pd_extended_fade_time_read_back(world: &mut DaliWorld) {
     let json = fetch_physical_device_full(port, TEST_ADAPTER_ID, 0);
     assert_eq!(
         json.as_ref().and_then(read),
-        Some(500),
-        "extended.fade_time_ms must expose the canonical 500 ms with last_read_ms set: {json:?}"
+        Some(expected),
+        "extended.fade_time_ms must expose the canonical {expected} ms with {stamp} set: {json:?}"
     );
 }
 

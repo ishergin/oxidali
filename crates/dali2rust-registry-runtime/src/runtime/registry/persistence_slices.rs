@@ -271,6 +271,37 @@ pub struct PersistablePhysicalDeviceRecord {
 }
 
 #[cfg(test)]
+mod extended_fade_shape_tests {
+    use super::{decode_persistence_blob, encode_persistence_blob};
+    use dali2rust_domain::registry::{AttributeSource, ExtendedAttributesView, ObservedValue};
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ExtendedAttributesBeforeWidening {
+        fade_time_ms: Option<ObservedValue<u16>>,
+        version_number: Option<ObservedValue<u8>>,
+    }
+
+    fn observed<T>(value: T) -> ObservedValue<T> {
+        ObservedValue { value, source: AttributeSource::Readback, last_read_ms: Some(1_234), last_write_confirmed_ms: None }
+    }
+
+    #[test]
+    fn a_physical_devices_slice_written_with_a_u16_extended_fade_still_decodes() {
+        let before = ExtendedAttributesBeforeWidening {
+            fade_time_ms: Some(observed(u16::MAX)),
+            version_number: Some(observed(2)),
+        };
+        let blob = encode_persistence_blob(&before).expect("encode");
+        let after: ExtendedAttributesView = decode_persistence_blob(&blob).expect(
+            "postcard writes u16 and u32 as the same varint, so the slice keeps its version",
+        );
+        assert_eq!(after.fade_time_ms, Some(observed(u32::from(u16::MAX))));
+        assert_eq!(after.version_number, Some(observed(2)));
+    }
+}
+
+#[cfg(test)]
 mod colour_shape_tests {
     use super::{encode_persistence_blob, SCENES_SLICE_VERSION};
     use dali2rust_contracts::msg::{ColorMode, ColorValue};

@@ -116,6 +116,28 @@ Feature: Physical device write-attributes
     And physical device 0 eventually exposes extended fade_time_ms 500 as read back
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-307
+  Scenario: The top of the extended fade grid survives a write round trip
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given an extended-fade-time write script for short address 0 storing byte 0x4F
+    When I POST JSON {"extended_fade_time_ms":960000} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And physical device 0 eventually exposes extended fade_time_ms 960000 as written
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-308
+  Scenario: Write-attributes rejects an extended fade past sixteen minutes
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    And the DALI mock transport frame log should be cleared
+    When I POST JSON {"extended_fade_time_ms":960001} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 422
+    And the DALI mock transport should have received 0 forward frame
+
   @id:PD-038
   Scenario: Write-attributes answers 202 without waiting for the bus
     Given a bus with confirmation timeout of 500 milliseconds

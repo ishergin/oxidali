@@ -1,4 +1,5 @@
 use cucumber::{given, then};
+use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::devices::dt8_color::{
     COLOUR_TYPE_BYTE_MASK, COLOUR_VALUE_TEMPORARY_COLOUR_TYPE,
 };
@@ -299,14 +300,24 @@ async fn then_pd_tc_range_kelvin(world: &mut DaliWorld, min_k: u64, max_k: u64) 
 // PD-158
 #[given("an extended-fade-time 500ms write-attributes script for short address 0")]
 async fn given_extended_fade_write_script(world: &mut DaliWorld) {
-    let mock = world.dali_mock().lock().expect("mock lock");
+    script_extended_fade_write(&world.dali_mock().lock().expect("mock lock"), 0x14);
+}
+
+// PD-307
+#[given(regex = r"^an extended-fade-time write script for short address 0 storing byte 0x([0-9A-F]{2})$")]
+async fn given_extended_fade_write_byte_script(world: &mut DaliWorld, byte: String) {
+    let byte = u8::from_str_radix(&byte, 16).expect("hex byte");
+    script_extended_fade_write(&world.dali_mock().lock().expect("mock lock"), byte);
+}
+
+fn script_extended_fade_write(mock: &MockDaliTransport, byte: u8) {
     mock.clear();
-    mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(0x14)));
+    mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(byte)));
     let set = standard_frame(TEST_SHORT_ADDRESS, StandardCommand::SetExtendedFadeTime);
     mock.expect_forward_frame(set);
     mock.expect_forward_frame(set);
     mock.expect_forward_frame_with_backward(
         standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryExtendedFadeTime),
-        Some(0x14),
+        Some(byte),
     );
 }

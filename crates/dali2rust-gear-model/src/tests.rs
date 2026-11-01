@@ -1446,6 +1446,20 @@ fn an_adjacent_prelude_still_arms_the_extended_command() {
 }
 
 #[test]
+fn an_extended_fade_byte_past_the_grid_stores_no_fade() {
+    let mut fleet = GearFleet::demo_bus();
+    let query = standard(4, StandardCommand::QueryExtendedFadeTime);
+
+    exchange(&mut fleet, special(SpecialCommand::Dtr0(0x4F)), false);
+    config(&mut fleet, standard(4, StandardCommand::SetExtendedFadeTime));
+    assert_eq!(exchange(&mut fleet, query, true), TransferOutcome::Answer(0x4F));
+
+    exchange(&mut fleet, special(SpecialCommand::Dtr0(0x50)), false);
+    config(&mut fleet, standard(4, StandardCommand::SetExtendedFadeTime));
+    assert_eq!(exchange(&mut fleet, query, true), TransferOutcome::Answer(0x00));
+}
+
+#[test]
 fn a_foreign_dtr_write_between_staging_and_use_produces_the_foreign_value() {
     let mut fleet = GearFleet::demo_bus();
     let ours = 0x64;

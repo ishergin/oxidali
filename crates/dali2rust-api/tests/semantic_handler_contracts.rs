@@ -673,7 +673,7 @@ fn physical_device_write_attributes_validation_and_happy_path() {
     );
     assert_eq!(
         error_code(
-            handler.handle_request("POST", "", br#"{"extended_fade_time_ms":70000}"#, &request_params)
+            handler.handle_request("POST", "", br#"{"extended_fade_time_ms":960001}"#, &request_params)
         ),
         "invalid_value"
     );

@@ -1,24 +1,28 @@
+use core::cmp::Reverse;
+
 use super::*;
 
+// IEC 62386-102 §9.5.4, Table 6, Table 7
 const EXTENDED_FADE_UNITS_MS: [(u32, u8); 4] = [(100, 1), (1_000, 2), (10_000, 3), (60_000, 4)];
+const EXTENDED_FADE_BASES: u32 = 16;
+const EXTENDED_FADE_TOP_BYTE: u8 = 0x4F;
 
-pub(super) fn extended_fade_time_byte_from_ms(ms: u16) -> u8 {
+pub(super) fn extended_fade_time_byte_from_ms(ms: u32) -> u8 {
     if ms == 0 {
         return 0;
     }
-    for (unit, mult) in EXTENDED_FADE_UNITS_MS {
-        if u32::from(ms) <= unit * 16 {
-            let base = ((u32::from(ms) + unit / 2) / unit).clamp(1, 16) as u8;
-            let contract_max_base = (u32::from(u16::MAX) / unit).clamp(1, 16) as u8;
-            let base = base.min(contract_max_base);
-            return (mult << 4) | (base - 1);
-        }
-    }
-    (4 << 4) | 0x0F
+    EXTENDED_FADE_UNITS_MS
+        .iter()
+        .map(|&(unit, mult)| {
+            let base = (ms.saturating_add(unit / 2) / unit).clamp(1, EXTENDED_FADE_BASES);
+            (unit * base, (mult << 4) | (base as u8 - 1))
+        })
+        .min_by_key(|&(grid, _)| (grid.abs_diff(ms), Reverse(grid)))
+        .map_or(EXTENDED_FADE_TOP_BYTE, |(_, byte)| byte)
 }
 
-pub(super) fn extended_fade_time_ms_from_byte(byte: u8) -> Option<u16> {
-    let mult = (byte >> 4) & 0x07;
+pub(super) fn extended_fade_time_ms_from_byte(byte: u8) -> Option<u32> {
+    let mult = byte >> 4;
     if mult == 0 {
         return Some(0);
     }
@@ -26,15 +30,14 @@ pub(super) fn extended_fade_time_ms_from_byte(byte: u8) -> Option<u16> {
         .iter()
         .find(|(_, m)| *m == mult)
         .map(|(u, _)| *u)?;
-    let base = u32::from(byte & 0x0F) + 1;
-    u16::try_from(unit * base).ok()
+    Some(unit * (u32::from(byte & 0x0F) + 1))
 }
 
 pub(super) fn write_extended_fade_time(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     tally: &mut WriteTally,
-    extended_fade_time_ms: Option<u16>,
+    extended_fade_time_ms: Option<u32>,
 ) -> Result<(), SemanticDaliError> {
     let Some(ms) = extended_fade_time_ms else {
         return Ok(());
@@ -51,7 +54,7 @@ pub(super) fn write_extended_fade_time(
 }
 
 pub(super) struct ExtendedReadSnapshot {
-    pub(super) fade_time_ms: Option<u16>,
+    pub(super) fade_time_ms: Option<u32>,
     pub(super) version_number: Option<u8>,
     pub(super) versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
 }
@@ -117,7 +120,7 @@ fn read_extended_fade_time(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     content_confirm: ContentConfirmPolicy,
-) -> Result<Option<u16>, SemanticDaliError> {
+) -> Result<Option<u32>, SemanticDaliError> {
     let first = read_extended_fade_byte(controller, address, content_confirm)?;
     if let Some(ms) = first.and_then(extended_fade_time_ms_from_byte) {
         return Ok(Some(ms));

@@ -252,7 +252,7 @@ pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChu
             snapshot: worst_dt6_snapshot(),
         },
         Chunk::Extended {
-            fade_time_ms: Some(u16::MAX),
+            fade_time_ms: Some(u32::MAX),
             version_number: Some(u8::MAX),
         },
         Chunk::RuntimeStatus {

@@ -229,6 +229,10 @@ filtered: they address one device.
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it
   says so.
+- A field widened within its varint (`u16` to `u32`) keeps the slice's version: the
+  stored bytes still decode. After a rollback the older image rejects only a bank that
+  holds a value past the old width, which loses that bank's device records and orphans
+  their virtual-lamp bindings; a bump would do that to every bank at every rollback.
 - A bump whose only purpose is to discard stored data is legitimate once per reason,
   named in the commit that bumps it; a second one needs a real mechanism.
 

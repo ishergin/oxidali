@@ -55,6 +55,8 @@ pub const DEFAULT_POWER_ON_LEVEL: u8 = 254;
 pub const DEFAULT_SYSTEM_FAILURE_LEVEL: u8 = 254;
 const DEFAULT_FADE_TIME: u8 = 0;
 const DEFAULT_FADE_RATE: u8 = 7;
+// IEC 62386-102 §9.5.4
+const EXTENDED_FADE_TIME_MAX: u8 = 0x4F;
 const PHYSICAL_MINIMUM: u8 = 1;
 // IEC 62386-102 §4.2, §11.5.10
 const VERSION_NUMBER_102: u8 = 0x08;
@@ -1412,7 +1414,9 @@ fn apply_config_write(gear: &mut Gear, command: StandardCommand, dtr0: u8) {
         }
         StandardCommand::SetFadeTime => gear.fade_time = dtr0,
         StandardCommand::SetFadeRate => gear.fade_rate = dtr0,
-        StandardCommand::SetExtendedFadeTime => gear.extended_fade_time = dtr0,
+        StandardCommand::SetExtendedFadeTime => {
+            gear.extended_fade_time = if dtr0 > EXTENDED_FADE_TIME_MAX { 0 } else { dtr0 }
+        }
         StandardCommand::SetScene { scene } => {
             set_scene_slot(gear, scene, dtr0);
             gear.store_scene_colour(scene);

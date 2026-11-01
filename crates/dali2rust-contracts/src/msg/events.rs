@@ -182,7 +182,7 @@ declare_bus_payloads! {
         pub fade_rate: Option<u8>,
         pub power_on_level: Option<u8>,
         pub system_failure_level: Option<u8>,
-        pub extended_fade_time_ms: Option<u16>,
+        pub extended_fade_time_ms: Option<u32>,
         pub registry_adapter_id: u8,
         pub tc_coolest_mirek: Option<u16>,
         pub tc_warmest_mirek: Option<u16>,
@@ -197,7 +197,7 @@ declare_bus_payloads! {
         fade_rate: Some(u8::MAX),
         power_on_level: Some(u8::MAX),
         system_failure_level: Some(u8::MAX),
-        extended_fade_time_ms: Some(u16::MAX),
+        extended_fade_time_ms: Some(u32::MAX),
         registry_adapter_id: u8::MAX,
         tc_coolest_mirek: Some(u16::MAX),
         tc_warmest_mirek: Some(u16::MAX),
@@ -970,7 +970,7 @@ pub enum DaliAttributeReadChunk {
         snapshot: Dt6ReadSnapshot,
     },
     Extended {
-        fade_time_ms: Option<u16>,
+        fade_time_ms: Option<u32>,
         version_number: Option<u8>,
     },
     RuntimeStatus {
