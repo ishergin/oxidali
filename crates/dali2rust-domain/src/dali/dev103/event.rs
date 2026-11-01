@@ -741,8 +741,8 @@ mod tests {
             manual_config([0xE4, 0xC0, 0x45]),
             (Some(5), ManualConfigSource::Device { variable_bit: 4 })
         );
-        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x81, 0xC5])), None);
-        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x80, 0xC5])), None);
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0xC0, 0xC5])), None);
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0xC1, 0x45])), None);
         assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x80, 0x45])), None);
     }
 

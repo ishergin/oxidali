@@ -38,7 +38,7 @@ Feature: IEC 62386-333 manual configuration events reach the rules and the regis
 
   @id:INP-103
   Scenario: A frame in the manual configuration space that Part 333 reserves stays unknown
-    When a 24-bit input event frame E4 81 C5 is observed on the bus
+    When a 24-bit input event frame E4 C0 C5 is observed on the bus
     Then diagnostics sniffer_translator unknown_seen should be at least 1
     And diagnostics sniffer_translator input_events_generic should be 0
     And diagnostics sniffer_translator input_lifecycle should be 0
