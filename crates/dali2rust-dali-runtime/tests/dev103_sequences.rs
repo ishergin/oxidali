@@ -518,9 +518,11 @@ fn manual_config_frame(command: Manual333Command, instance_number: u8) -> [u8; 3
         .as_bytes()
 }
 
+type ScriptedAnswers<'a> = &'a [([u8; 3], u8)];
+
 fn scan_push_buttons(
     instances: u8,
-    answers: &[([u8; 3], u8)],
+    answers: ScriptedAnswers<'_>,
     outcomes: &[TransferOutcome],
 ) -> (ScannedDevice, Scan103Summary, Vec<[u8; 3]>) {
     let (mut controller, transport) = controller();
@@ -552,11 +554,11 @@ fn scan_push_buttons(
 fn an_instance_is_under_local_control_when_either_part_holds_a_variable() {
     let part_103 = manual_config_frame(Manual333Command::QueryManualConfig103, 0);
     let part_3xx = manual_config_frame(Manual333Command::QueryManualConfig3xx, 0);
-    let scan = |answers: &[([u8; 3], u8)]| {
+    let scan = |answers: ScriptedAnswers<'_>| {
         let (device, _, frames) = scan_push_buttons(1, answers, &[]);
         (device.instance_facts[0].manual_config_active, frames.contains(&part_3xx))
     };
-    let cases: &[(&[([u8; 3], u8)], Option<bool>, bool, &str)] = &[
+    let cases: &[(ScriptedAnswers<'_>, Option<bool>, bool, &str)] = &[
         (&[(part_103, 0x08)], Some(true), false, "a 103 variable settles it, 3xx is not asked"),
         (&[(part_103, 0x7F)], Some(true), false, "the top of Table 6's range"),
         (&[(part_103, 0x00), (part_3xx, 0x04)], Some(true), true, "a 3xx variable alone"),
