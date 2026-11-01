@@ -187,7 +187,7 @@ effective-значений распространяется на привяза�
 | `power_on_level`, `system_failure_level` | `0..254` | 102 |
 | `fade_time_ms` | `0..90500`; округляется к коду Table 4, подтверждается длительность кода | 102 |
 | `fade_rate` | `0..15` | 102 |
-| `extended_fade_time_ms` | `0..65535` (пара множитель/база) | 102 |
+| `extended_fade_time_ms` | `0..960000`; округляется к сетке база × множитель (Table 6, 7), подтверждается длительность сетки | 102 |
 | `min_level`, `max_level` | `0..254` | 102 |
 | `tc_coolest_mirek`, `tc_warmest_mirek` | `1..65534` | DT8, rendered Tc-лимиты |
 | `dimming_curve` | `0` логарифмическая, `1` линейная | DT6, `SELECT DIMMING CURVE` |

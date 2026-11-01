@@ -114,7 +114,7 @@ attribute_section_dto!(Dt8ColorAttributesDto from Dt8ColorAttributesView {
 });
 
 attribute_section_dto!(ExtendedAttributesDto from ExtendedAttributesView {
-    fade_time_ms: u16,
+    fade_time_ms: u32,
     version_number: u8,
 });
 

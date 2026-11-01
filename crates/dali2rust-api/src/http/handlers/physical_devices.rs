@@ -283,7 +283,7 @@ pub struct PdWriteAttrData {
     fade_rate: Option<u8>,
     power_on_level: Option<u8>,
     system_failure_level: Option<u8>,
-    extended_fade_time_ms: Option<u16>,
+    extended_fade_time_ms: Option<u32>,
     tc_coolest_mirek: Option<u16>,
     tc_warmest_mirek: Option<u16>,
     min_level: Option<u8>,
@@ -696,9 +696,10 @@ fn parse_bounded_attr_field(
 fn parse_pd_write_attr_fields(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<PdWriteAttrData, HttpResponse> {
-    const U16_MAX: u64 = u16::MAX as u64;
     // IEC 62386-102 Table 4
     const FADE_TIME_MS_MAX: u64 = 90_500;
+    // IEC 62386-102 §9.5.4
+    const EXTENDED_FADE_TIME_MS_MAX: u64 = 960_000;
     // IEC 62386-209 Table 8
     const TC_LIMIT_MAX: u64 = 65_534;
     let tc_coolest_mirek = parse_bounded_attr_field(obj, "tc_coolest_mirek", TC_LIMIT_MAX)?;
@@ -726,8 +727,8 @@ fn parse_pd_write_attr_fields(
         power_on_level: parse_bounded_attr_field(obj, "power_on_level", 254)?.map(|x| x as u8),
         system_failure_level: parse_bounded_attr_field(obj, "system_failure_level", 254)?
             .map(|x| x as u8),
-        extended_fade_time_ms: parse_bounded_attr_field(obj, "extended_fade_time_ms", U16_MAX)?
-            .map(|x| x as u16),
+        extended_fade_time_ms: parse_bounded_attr_field(obj, "extended_fade_time_ms", EXTENDED_FADE_TIME_MS_MAX)?
+            .map(|x| x as u32),
         tc_coolest_mirek: tc_coolest_mirek.map(|x| x as u16),
         tc_warmest_mirek: tc_warmest_mirek.map(|x| x as u16),
         min_level: min_level.map(|x| x as u8),

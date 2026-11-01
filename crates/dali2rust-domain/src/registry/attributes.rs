@@ -79,7 +79,7 @@ pub struct Dt8ColorAttributesView {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedAttributesView {
-    pub fade_time_ms: Option<ObservedValue<u16>>,
+    pub fade_time_ms: Option<ObservedValue<u32>>,
     pub version_number: Option<ObservedValue<u8>>,
 }
 

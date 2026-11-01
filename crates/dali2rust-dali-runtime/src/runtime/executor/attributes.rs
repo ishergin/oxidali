@@ -96,7 +96,7 @@ pub struct AttributeReadExecution {
     pub dt8_color: Dt8ColorFields,
     pub dt8_rgbwaf_capable: bool,
     pub dt6: Option<Dt6ReadSnapshot>,
-    pub extended_fade_time_ms: Option<u16>,
+    pub extended_fade_time_ms: Option<u32>,
     pub extended_version_number: Option<u8>,
     pub extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
     pub has_scene_colours: bool,

@@ -1300,7 +1300,7 @@ impl RegistryStore {
         fade_rate: Option<u8>,
         power_on_level: Option<u8>,
         system_failure_level: Option<u8>,
-        extended_fade_time_ms: Option<u16>,
+        extended_fade_time_ms: Option<u32>,
         tc_limits_mirek: (Option<u16>, Option<u16>),
         min_max_levels: (Option<u8>, Option<u8>),
         dimming_curve: Option<u8>,
