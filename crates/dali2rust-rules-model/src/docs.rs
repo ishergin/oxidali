@@ -79,6 +79,8 @@ pub const DOCUMENTED_ACTION_KINDS: &[&str] = &[
     "light_rgb",
     "light_last_active",
     "light_stop_fade",
+    "light_recall_max",
+    "light_recall_min",
     "scene_recall",
     "scene_apply",
     "scene_cycle",

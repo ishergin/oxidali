@@ -406,6 +406,7 @@ fn refused_requests() -> Vec<BusCommandPayload> {
         m::DaliRecallSceneCommand::broadcast(0, 3).into(),
         m::DaliRecallLastActiveLevelCommand { registry_adapter_id: 0, scope: HclTargetScope::Broadcast, group_id: None }.into(),
         m::DaliStopFadeCommand { registry_adapter_id: 0, scope: DaliTargetScope::Broadcast, virtual_lamp_id: 0, short_address: 0, group_id: 0 }.into(),
+        m::DaliRecallLevelPresetCommand::broadcast(0, m::LevelPreset::MaxLevel).into(),
         m::Dali103FeedbackDriveCommand { registry_adapter_id: 0, action: 0, short_address: Some(5), feature_number: None, feature_group: None, selected_group: 0, opcode_map: 0 }.into(),
         m::Dali103InstanceActionCommand { registry_adapter_id: 0, short_address: 5, instance_number: 2, action: m::Dali103InstanceAction::CancelHoldTimer }.into(),
         m::Dali103HandoverCommand { registry_adapter_id: 0, peer_short_address: 7 }.into(),
@@ -760,6 +761,43 @@ fn a_lamp_recall_is_one_go_to_scene_to_the_short_address_it_is_bound_to() {
         &[DaliCommand::Standard {
             address: DaliAddress::short(12).expect("short"),
             command: StandardCommand::GoToScene { scene: 3 },
+        }]
+    );
+}
+
+#[test]
+fn a_lamp_level_recall_names_its_bound_short_and_leaves_the_answer_to_the_registry() {
+    let mut read_port = TestReadPort { enabled: true, ..Default::default() };
+    read_port.bindings.insert((0, 4), 12);
+    let harness = WorkerHarness::new(Arc::new(read_port), ControllerMode::NoAnswer);
+    harness.publish(dali2rust_contracts::bus::command_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        99,
+        BusId::default().0,
+        Some(Origin::Api),
+        m::DaliRecallLevelPresetCommand::for_virtual_lamp(0, 4, m::LevelPreset::MaxLevel),
+    ));
+
+    let ev = harness.recv_event_matching(99, |payload| {
+        matches!(payload, BusEventPayload::DaliLevelTransitionAppliedEvent(_))
+    });
+    let BusEventPayload::DaliLevelTransitionAppliedEvent(body) = &ev.payload else {
+        unreachable!("the predicate selected this variant");
+    };
+    assert_eq!(
+        (body.scope, body.virtual_lamp_id, body.short_address),
+        (DaliTargetScope::VirtualLamp, Some(4), Some(12)),
+        "the fact names the gear the frame went to, so a rebind before the commit is caught"
+    );
+    assert!(
+        harness.conf_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "a lamp's recall is answered by the registry once it has committed it"
+    );
+    assert_eq!(
+        harness.sent_commands.lock().expect("sent lock").as_slice(),
+        &[DaliCommand::Standard {
+            address: DaliAddress::short(12).expect("short"),
+            command: StandardCommand::RecallMaxLevel,
         }]
     );
 }

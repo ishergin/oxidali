@@ -62,7 +62,7 @@ cannot resolve.
 | 0xA6 | `QUERY MANUFACTURER SPECIFIC MODE` | Modelled, never sent (§9.9, §11.5.27). |
 | 0x23 / 0x9E | `SET` / `QUERY OPERATING MODE` | Never sent. A gear parked in a manufacturer-specific mode (0x80–0xFF) looks healthy, although there the standard guarantees only the 101 bus behaviour, the operating-mode commands and the special commands (§9.9) — not level commands or `QUERY STATUS`. |
 | 0xC9, 0x24 | `WRITE MEMORY LOCATION – NO REPLY`, `RESET MEMORY BANK` | Never sent: the bank 1 `memory_luminaire` write uses the answering form, and no bank is reset — §3. |
-| 0x05, 0x06, 0x08 | `RECALL MAX LEVEL`, `RECALL MIN LEVEL`, `ON AND STEP UP` | Never sent by the product. With the writable `maxLevel` / `minLevel` they are two of the three presets reachable by one group frame (the third is a scene); `ON AND STEP UP` lights dark members at their own `minLevel` (§11.3.10). |
+| 0x08 | `ON AND STEP UP` | Never sent by the product. It lights dark members at their own `minLevel` (§11.3.10). |
 | 0x01–0x04, 0x07 | `UP`, `DOWN`, `STEP UP`, `STEP DOWN`, `STEP DOWN AND OFF` | Never sent — §1.6. |
 
 ## 3. Memory banks

@@ -252,6 +252,8 @@ fn light_op(verb: &str, pos: Pos, bag: &mut ArgBag) -> Result<LightOp, CompileEr
         }),
         "last_active" => Ok(LightOp::LastActive),
         "stop_fade" => Ok(LightOp::StopFade),
+        "recall_max" => Ok(LightOp::RecallMax),
+        "recall_min" => Ok(LightOp::RecallMin),
         _ => Err(pos.err(format!("unknown light action \"{verb}\""))),
     }
 }

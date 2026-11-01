@@ -12,6 +12,7 @@ pub struct LevelContext {
 pub enum TransitionOutcome {
     Level(u8),
     Unchanged,
+    OnAtUnknownLevel,
     Unknown,
 }
 
@@ -30,7 +31,7 @@ pub fn resolve(transition: LevelTransition, ctx: &LevelContext) -> TransitionOut
 
 fn absolute(value: Option<u8>, stored: Option<u8>) -> TransitionOutcome {
     match (value, stored) {
-        (None, _) => TransitionOutcome::Unknown,
+        (None, _) => TransitionOutcome::OnAtUnknownLevel,
         (Some(level), Some(stored)) if level == stored => TransitionOutcome::Unchanged,
         (Some(level), _) => TransitionOutcome::Level(level),
     }
@@ -40,10 +41,10 @@ fn absolute(value: Option<u8>, stored: Option<u8>) -> TransitionOutcome {
 fn step(transition: LevelTransition, ctx: &LevelContext) -> TransitionOutcome {
     let (Some(target), Some(min), Some(max)) = (ctx.target_level, ctx.min_level, ctx.max_level)
     else {
-        return TransitionOutcome::Unknown;
+        return unresolved(transition);
     };
     if min > max {
-        return TransitionOutcome::Unknown;
+        return unresolved(transition);
     }
     match transition {
         LevelTransition::StepUp => match target {
@@ -68,11 +69,19 @@ fn step(transition: LevelTransition, ctx: &LevelContext) -> TransitionOutcome {
             0 => TransitionOutcome::Level(min),
             t if t >= max => TransitionOutcome::Unchanged,
             t if t >= min => TransitionOutcome::Level(t.saturating_add(1)),
-            _ => TransitionOutcome::Unknown,
+            _ => TransitionOutcome::OnAtUnknownLevel,
         },
         LevelTransition::RecallMaxLevel
         | LevelTransition::RecallMinLevel
         | LevelTransition::GoToLastActiveLevel => TransitionOutcome::Unknown,
+    }
+}
+
+// IEC 62386-102 §11.3.10
+fn unresolved(transition: LevelTransition) -> TransitionOutcome {
+    match transition {
+        LevelTransition::OnAndStepUp => TransitionOutcome::OnAtUnknownLevel,
+        _ => TransitionOutcome::Unknown,
     }
 }
 
@@ -135,9 +144,28 @@ mod tests {
             LevelTransition::StepUp,
             LevelTransition::StepDown,
             LevelTransition::StepDownAndOff,
-            LevelTransition::OnAndStepUp,
         ] {
             assert_eq!(resolve(verb, &bare), TransitionOutcome::Unknown, "{verb:?}");
+        }
+        assert_eq!(
+            resolve(LevelTransition::OnAndStepUp, &bare),
+            TransitionOutcome::OnAtUnknownLevel,
+            "ON AND STEP UP lights the gear whatever its bounds"
+        );
+    }
+
+    #[test]
+    fn an_absolute_verb_whose_level_is_unread_still_lights_the_gear() {
+        for verb in [
+            LevelTransition::RecallMaxLevel,
+            LevelTransition::RecallMinLevel,
+            LevelTransition::GoToLastActiveLevel,
+        ] {
+            assert_eq!(
+                resolve(verb, &LevelContext::default()),
+                TransitionOutcome::OnAtUnknownLevel,
+                "{verb:?}"
+            );
         }
     }
 
@@ -161,8 +189,8 @@ mod tests {
         };
         assert_eq!(
             resolve(LevelTransition::GoToLastActiveLevel, &never_lit),
-            TransitionOutcome::Unknown,
-            "a gear never seen lit has no level to recall"
+            TransitionOutcome::OnAtUnknownLevel,
+            "a gear never seen lit has no level to name, yet it is lit"
         );
     }
 }

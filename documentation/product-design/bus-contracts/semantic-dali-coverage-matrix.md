@@ -10,9 +10,9 @@
 
 | Источник | Сценарий | Payload |
 |---|---|---|
-| REST | target-state лампы | `DaliSetTargetStateCommand`, `scope = VirtualLamp`; непривязанная лампа — ничего |
-| REST | target-state устройства | `DaliSetTargetStateCommand`, `scope = Short` |
-| REST | target-state группы | `DaliSetTargetStateCommand`, `scope = Group` |
+| REST | target-state лампы | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = VirtualLamp`; непривязанная лампа — ничего |
+| REST | target-state устройства | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = Short` |
+| REST | target-state группы | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = Group` |
 | REST | apply матрицы групп / сцены | `GroupApplyExecuteCommand` / `SceneApplyExecuteCommand` (ячейки публикует оркестратор) |
 | REST | recall сцены | `DaliRecallSceneCommand`, `scope = Broadcast` (пустое тело) или `Group` |
 | REST | запись атрибутов | `DaliWriteAttributesCommand` (`signals_operation = true`) |
@@ -25,12 +25,12 @@
 | REST | применить политики ко всем | `PolicyApplyExecuteCommand` |
 | REST | плановое переключение роли | `Dali103HandoverCommand` |
 | REST | диагностика `/api/v1/dali/*` | `DaliCommandPayload` с `raw_mode` — **диагностическое исключение** |
-| Home Assistant | свет лампы | `DaliSetTargetStateCommand`, `scope = VirtualLamp` |
-| Home Assistant | свет группы | `DaliSetTargetStateCommand`, `scope = Group` |
+| Home Assistant | свет лампы | `DaliSetTargetStateCommand`, `scope = VirtualLamp`; effect `max_level` / `min_level` — `DaliRecallLevelPresetCommand` |
+| Home Assistant | свет группы | `DaliSetTargetStateCommand`, `scope = Group`; effect `max_level` / `min_level` — `DaliRecallLevelPresetCommand` |
 | Home Assistant | выбор сцены | `DaliRecallSceneCommand`, `scope = Broadcast` |
 | HCL | точка `level_mode = absolute` или `none` | `DaliSetTargetStateCommand`, `scope ∈ {Group, Broadcast}` (при `none` — только цвет) |
 | HCL | точка `level_mode = last_active` | `DaliRecallLastActiveLevelCommand` на ту же цель + отдельная команда цвета |
-| Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand` |
+| Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand`, `DaliRecallLevelPresetCommand` |
 | Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast` / `VirtualLamp`), `SceneApplyExecuteCommand` |
 | Правила | индикация панелей | `Dali103FeedbackDriveCommand` |
 | Правила | датчик присутствия (303) | `Dali103InstanceActionCommand` |

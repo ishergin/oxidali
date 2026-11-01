@@ -10,6 +10,7 @@ const SET_TARGET_STATE: &str = "DaliSetTargetStateCommand";
 const RECALL_LAST_ACTIVE_LEVEL: &str = "DaliRecallLastActiveLevelCommand";
 const RECALL_SCENE: &str = "DaliRecallSceneCommand";
 const STOP_FADE: &str = "DaliStopFadeCommand";
+const RECALL_LEVEL_PRESET: &str = "DaliRecallLevelPresetCommand";
 
 struct WireClass {
     variant: &'static str,
@@ -63,6 +64,14 @@ const WIRE_CLASSES: &[WireClass] = &[
     // IEC 62386-103 §9.13.1
     class(
         STOP_FADE,
+        WirePriority::Interactive,
+        YieldGranularity::Never,
+        true,
+        TransactionPriority::UserAction,
+    ),
+    // IEC 62386-103 §9.13.1
+    class(
+        RECALL_LEVEL_PRESET,
         WirePriority::Interactive,
         YieldGranularity::Never,
         true,
@@ -272,10 +281,10 @@ fn refine_by_origin(variant: &str, default: WirePriority, origin: Origin) -> Wir
     match (variant, origin) {
         (READ_ATTRIBUTES, Origin::Poller) => WirePriority::Unattended,
         (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL, Origin::Hcl) => WirePriority::Attended,
-        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE, Origin::Mqtt) => {
+        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET, Origin::Mqtt) => {
             WirePriority::Attended
         }
-        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE, Origin::Rules) => {
+        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET, Origin::Rules) => {
             WirePriority::Interactive
         }
         _ => default,
@@ -425,6 +434,7 @@ mod tests {
             RECALL_SCENE,
             RECALL_LAST_ACTIVE_LEVEL,
             STOP_FADE,
+            RECALL_LEVEL_PRESET,
         ];
         expected.sort_unstable();
         assert_eq!(flagged, expected, "the set of lamp-driving commands moved");
@@ -432,7 +442,7 @@ mod tests {
 
     #[test]
     fn an_ha_command_is_attended_so_a_slider_wins_and_two_ha_commands_do_not_preempt_each_other() {
-        for variant in [SET_TARGET_STATE, RECALL_LAST_ACTIVE_LEVEL, RECALL_SCENE] {
+        for variant in [SET_TARGET_STATE, RECALL_LAST_ACTIVE_LEVEL, RECALL_SCENE, RECALL_LEVEL_PRESET] {
             assert_eq!(
                 wire_priority(variant, Origin::Mqtt),
                 Some(WirePriority::Attended),

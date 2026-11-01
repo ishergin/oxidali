@@ -137,10 +137,10 @@ Detail: [06](documentation/architecture/06-registry-and-persistence.md),
 - Everyone else reads through the read-port traits; none of them returns a whole device
   record.
 - Runtime fields live on the physical-device record and change only through
-  `RegistryRuntimeUpdateCommand` and `RegistryLevelTransitionCommand` (an observed arc
-  command without a level, whose level the registry computes); in production the
-  state-fanout projector is their only publisher. Every commit publishes a
-  `RuntimeStateChangedEvent` with the real observation; an entry naming an unbound
+  `RegistryRuntimeUpdateCommand` and `RegistryLevelTransitionCommand` (an arc command
+  without a level, observed or our own recall, whose level the registry computes); in
+  production the state-fanout projector is their only publisher. Every commit publishes
+  a `RuntimeStateChangedEvent` with the real observation; an entry naming an unbound
   virtual lamp is refused (`VlUnbound`).
 - Runtime fields and operation status are not persisted. Group and scene diffs are
   expanded by the apply orchestrator, never by the registry or a handler.

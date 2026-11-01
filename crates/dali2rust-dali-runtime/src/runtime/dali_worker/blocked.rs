@@ -206,6 +206,7 @@ fn blocked_refusal<'c>(ce: &CommandEnvelope, counters: &'c DaliWorkerCounters) -
         | BusCommandPayload::DaliRecallSceneCommand(_)
         | BusCommandPayload::DaliRecallLastActiveLevelCommand(_)
         | BusCommandPayload::DaliStopFadeCommand(_)
+        | BusCommandPayload::DaliRecallLevelPresetCommand(_)
         | BusCommandPayload::Dali103FeedbackDriveCommand(_)
         | BusCommandPayload::Dali103InstanceActionCommand(_)
         | BusCommandPayload::Dali103HandoverCommand(_)
@@ -268,6 +269,7 @@ fn control_gear_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::DaliRecallSceneCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliRecallLastActiveLevelCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliStopFadeCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::DaliRecallLevelPresetCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliWriteAttributesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliDiscoverDevicesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadAttributesCommand(cmd) => Some(cmd.registry_adapter_id),

@@ -17,6 +17,8 @@ pub enum ActionKind {
     LightRgb,
     LightLastActive,
     LightStopFade,
+    LightRecallMax,
+    LightRecallMin,
     SceneRecall,
     SceneApply,
     SceneCycle,
@@ -46,7 +48,7 @@ pub enum ActionKind {
     StatCount,
 }
 
-pub const ACTION_KIND_COUNT: usize = 38;
+pub const ACTION_KIND_COUNT: usize = 40;
 
 const ACTION_KIND_NAMES: [&str; ACTION_KIND_COUNT] = [
     "light_on",
@@ -60,6 +62,8 @@ const ACTION_KIND_NAMES: [&str; ACTION_KIND_COUNT] = [
     "light_rgb",
     "light_last_active",
     "light_stop_fade",
+    "light_recall_max",
+    "light_recall_min",
     "scene_recall",
     "scene_apply",
     "scene_cycle",
@@ -102,6 +106,8 @@ impl ActionKind {
         ActionKind::LightRgb,
         ActionKind::LightLastActive,
         ActionKind::LightStopFade,
+        ActionKind::LightRecallMax,
+        ActionKind::LightRecallMin,
         ActionKind::SceneRecall,
         ActionKind::SceneApply,
         ActionKind::SceneCycle,
@@ -181,6 +187,10 @@ pub enum LightOp {
     LastActive,
     #[serde(rename = "light_stop_fade")]
     StopFade,
+    #[serde(rename = "light_recall_max")]
+    RecallMax,
+    #[serde(rename = "light_recall_min")]
+    RecallMin,
 }
 
 impl LightOp {
@@ -197,6 +207,8 @@ impl LightOp {
             LightOp::Rgb { .. } => ActionKind::LightRgb,
             LightOp::LastActive => ActionKind::LightLastActive,
             LightOp::StopFade => ActionKind::LightStopFade,
+            LightOp::RecallMax => ActionKind::LightRecallMax,
+            LightOp::RecallMin => ActionKind::LightRecallMin,
         }
     }
 }

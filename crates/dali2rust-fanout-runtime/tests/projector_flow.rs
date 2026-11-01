@@ -17,6 +17,9 @@ use dali2rust_contracts::msg::{
     ObservedFrameWidth, ObservedKind, Origin, PowerState, RegistryRuntimeUpdateCommand,
     RuntimeObservation, RuntimeSource, StatusFlags,
 };
+use dali2rust_contracts::msg::{
+    DaliLevelTransitionAppliedEvent, LevelTransition, RegistryLevelTransitionCommand,
+};
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
     AdapterReadPort, AdapterView, CapabilityFlagsView, GroupApplyRowView, GroupApplySnapshot,
@@ -321,6 +324,87 @@ fn applied_virtual_lamp_scope_projects_dual_entry_with_correlation_fan001() {
     assert_eq!(cmd.update.last_dapc_source, Some(LastDapcSource::Unknown));
     assert_eq!(cmd.update.setpoint.as_ref().map(|sp| sp.level), Some(Some(180)));
     assert_no_more_updates(tap);
+}
+
+fn recv_transition(tap: &BusSubscriberRx) -> (u64, RegistryLevelTransitionCommand) {
+    let ce = recv_command_matching(tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusCommandPayload::RegistryLevelTransitionCommand(_))
+    });
+    let BusCommandPayload::RegistryLevelTransitionCommand(cmd) = &ce.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    (ce.meta.correlation_id, cmd.clone())
+}
+
+fn level_recall(scope: DaliTargetScope, source: RuntimeSource, hold_hcl: bool) -> DaliLevelTransitionAppliedEvent {
+    DaliLevelTransitionAppliedEvent {
+        registry_adapter_id: 0,
+        scope,
+        virtual_lamp_id: None,
+        short_address: None,
+        group_id: None,
+        transition: LevelTransition::RecallMinLevel,
+        source,
+        applied_at_mono_ms: PRODUCER_MONO_MS,
+        hold_hcl,
+    }
+}
+
+#[test]
+fn a_lamp_level_recall_is_one_transition_the_registry_answers() {
+    let h = spawn_harness(FakeReadPort::default());
+    let mut body = level_recall(DaliTargetScope::VirtualLamp, RuntimeSource::Rules, false);
+    body.virtual_lamp_id = Some(12);
+    body.short_address = Some(17);
+    publish_event(&h.publisher, 81, body);
+
+    let (corr, cmd) = recv_transition(&h.tap);
+    assert_eq!(corr, 81, "the request's correlation rides into the commit, which answers it");
+    assert_eq!(
+        (cmd.virtual_lamp_id, cmd.short_address),
+        (Some(12), Some(17)),
+        "the gear the frame went to rides along, so a rebind is caught at the commit"
+    );
+    assert_eq!(cmd.transition, LevelTransition::RecallMinLevel);
+    assert_eq!(cmd.source, RuntimeSource::Rules);
+    assert!(!cmd.hold_hcl, "a rule that leaves the schedule running says so to the registry");
+    assert_eq!(cmd.observed_at_mono_ms, Some(PRODUCER_MONO_MS));
+    assert!(h.tap.recv_timeout(Duration::from_millis(100)).is_err(), "one lamp, one transition");
+}
+
+#[test]
+fn a_device_level_recall_names_the_device_only_even_when_a_lamp_is_bound_to_it() {
+    let h = spawn_harness(FakeReadPort { lamps: vec![bound_lamp(5, 17)], ..FakeReadPort::default() });
+    let mut body = level_recall(DaliTargetScope::Short, RuntimeSource::Api, true);
+    body.short_address = Some(17);
+    publish_event(&h.publisher, 83, body);
+
+    let (corr, cmd) = recv_transition(&h.tap);
+    assert_eq!(corr, 83);
+    assert_eq!(
+        (cmd.virtual_lamp_id, cmd.short_address),
+        (None, Some(17)),
+        "the route named the device, so a rebind of its lamp cannot refuse the commit"
+    );
+}
+
+#[test]
+fn a_group_level_recall_expands_to_its_members_and_answers_none_of_them() {
+    let port = FakeReadPort { group_rows: vec![group_row(1, 2), group_row(2, 3)], ..FakeReadPort::default() };
+    let h = spawn_harness(port);
+    let mut body = level_recall(DaliTargetScope::Group, RuntimeSource::Api, true);
+    body.group_id = Some(7);
+    publish_event(&h.publisher, 82, body);
+
+    let mut lamps = Vec::new();
+    for _ in 0..2 {
+        let (corr, cmd) = recv_transition(&h.tap);
+        assert_eq!(corr, CORRELATION_NONE, "the worker answered the group; members never confirm");
+        assert!(cmd.hold_hcl);
+        lamps.push(cmd.virtual_lamp_id.expect("a member lamp"));
+    }
+    lamps.sort_unstable();
+    assert_eq!(lamps, vec![1, 2]);
 }
 
 #[test]

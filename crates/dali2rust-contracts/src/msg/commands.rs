@@ -5,7 +5,7 @@ use super::kinds::{
     CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DiscoveryMode,
     HclAlgorithm,
     HclLevelMode,
-    HclTargetScope, HclTimeRef, InitialiseScope, MemoryBankReadPreset, OperationType, PowerState,
+    HclTargetScope, HclTimeRef, InitialiseScope, LevelPreset, MemoryBankReadPreset, OperationType, PowerState,
     RuntimeSource,
 };
 use super::payload_macros::declare_bus_payloads;
@@ -1064,6 +1064,7 @@ declare_bus_payloads! {
         pub observation: Option<RuntimeObservation>,
         pub source: RuntimeSource,
         pub observed_at_mono_ms: Option<u32>,
+        pub hold_hcl: bool,
     }
     budget = RegistryLevelTransitionCommand {
         adapter_id: u8::MAX,
@@ -1073,6 +1074,7 @@ declare_bus_payloads! {
         observation: Some(crate::msg::payload_test_samples::worst_observation()),
         source: RuntimeSource::Sniffer,
         observed_at_mono_ms: Some(u32::MAX),
+        hold_hcl: true,
     };
 
     pub struct HclScheduleEnableCommand {
@@ -1151,6 +1153,25 @@ declare_bus_payloads! {
         registry_adapter_id: u8::MAX,
         short_address: Some(u8::MAX),
         device_groups: u32::MAX,
+    };
+
+    pub struct DaliRecallLevelPresetCommand {
+        pub registry_adapter_id: u8,
+        pub scope: DaliTargetScope,
+        pub virtual_lamp_id: u8,
+        pub short_address: u8,
+        pub group_id: u8,
+        pub preset: LevelPreset,
+        pub hold_hcl: bool,
+    }
+    budget = DaliRecallLevelPresetCommand {
+        registry_adapter_id: u8::MAX,
+        scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: 63,
+        short_address: 63,
+        group_id: 15,
+        preset: LevelPreset::MinLevel,
+        hold_hcl: true,
     };
 }
 
@@ -1436,6 +1457,32 @@ impl DaliRecallSceneCommand {
             scope: DaliTargetScope::VirtualLamp,
             ..Self::broadcast(registry_adapter_id, scene_id)
         }
+    }
+}
+
+impl DaliRecallLevelPresetCommand {
+    pub fn broadcast(registry_adapter_id: u8, preset: LevelPreset) -> Self {
+        Self {
+            registry_adapter_id,
+            scope: DaliTargetScope::Broadcast,
+            virtual_lamp_id: 0,
+            short_address: 0,
+            group_id: 0,
+            preset,
+            hold_hcl: true,
+        }
+    }
+
+    pub fn for_short(registry_adapter_id: u8, short_address: u8, preset: LevelPreset) -> Self {
+        Self { scope: DaliTargetScope::Short, short_address, ..Self::broadcast(registry_adapter_id, preset) }
+    }
+
+    pub fn for_group(registry_adapter_id: u8, group_id: u8, preset: LevelPreset) -> Self {
+        Self { scope: DaliTargetScope::Group, group_id, ..Self::broadcast(registry_adapter_id, preset) }
+    }
+
+    pub fn for_virtual_lamp(registry_adapter_id: u8, virtual_lamp_id: u8, preset: LevelPreset) -> Self {
+        Self { scope: DaliTargetScope::VirtualLamp, virtual_lamp_id, ..Self::broadcast(registry_adapter_id, preset) }
     }
 }
 

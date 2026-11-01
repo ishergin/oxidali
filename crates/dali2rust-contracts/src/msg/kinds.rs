@@ -87,6 +87,13 @@ pub enum DaliTargetScope {
     AddressRange = 4,
 }
 
+impl DaliTargetScope {
+    #[must_use]
+    pub const fn names_one_lamp(self) -> bool {
+        matches!(self, Self::Short | Self::VirtualLamp)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ConfigWriteResource {
@@ -634,6 +641,23 @@ pub enum LevelTransition {
     StepDownAndOff = 4,
     OnAndStepUp = 5,
     GoToLastActiveLevel = 6,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum LevelPreset {
+    MaxLevel = 0,
+    MinLevel = 1,
+}
+
+impl LevelPreset {
+    #[must_use]
+    pub const fn transition(self) -> LevelTransition {
+        match self {
+            Self::MaxLevel => LevelTransition::RecallMaxLevel,
+            Self::MinLevel => LevelTransition::RecallMinLevel,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

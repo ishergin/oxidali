@@ -55,10 +55,12 @@ pub enum SemanticDaliError {
 }
 
 pub const DEVICE_ABSENT_MESSAGE: &str = "device_absent";
+pub const VL_UNBOUND_MESSAGE: &str = "vl_unbound";
 
 impl SemanticDaliError {
     pub fn code(self) -> ErrorCode {
         match self {
+            Self::Conflict(VL_UNBOUND_MESSAGE) => ErrorCode::VlUnbound,
             Self::Conflict(_) => ErrorCode::Conflict,
             _ if self.is_device_absent() => ErrorCode::DeviceAbsent,
             _ if self.is_preempted() => ErrorCode::Preempted,

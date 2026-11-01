@@ -26,7 +26,7 @@ pub use kinds::{
     AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup,
     DaliTargetScope,
     BusUnitNvmRow, DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
-    LevelTransition,
+    LevelPreset, LevelTransition,
     MemoryBankReadPreset,
     CommissioningStep, IdentifyMechanism, InitialiseScope, InputDeviceLifecycleKind,
     InputEventKind, MessageKind, ObservedFrameWidth, ObservedKind, OperationStatus,
@@ -104,6 +104,7 @@ pub use commands::{
 };
 pub use commands::DaliBusHealthProbeCommand;
 pub use commands::DaliStopFadeCommand;
+pub use commands::DaliRecallLevelPresetCommand;
 pub use commands::RegistryLevelTransitionCommand;
 pub use commands::{
     DaliWriteMemoryLuminaireCommand, LuminaireNumbers, LuminaireText, LuminaireTextField,
@@ -117,7 +118,7 @@ pub use events::{
 };
 pub use events::{ConfigSlicePersistedEvent, PeerConfigChangedEvent};
 pub use events::{
-    BusHealthVerdict, BusUnitNvmObservedEvent, BusUnitQuiescenceObservedEvent,
+    BusHealthVerdict, BusUnitNvmObservedEvent, BusUnitQuiescenceObservedEvent, DaliLevelTransitionAppliedEvent,
     Dali103ApplicationControlObservedEvent,
     Dali103InstanceConfiguredEvent,
     Dali103ScanProgressEvent,

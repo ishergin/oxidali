@@ -44,7 +44,7 @@ use crate::runtime::executor::{
     program_group_membership, replace_device, run_commissioning_step,
     read_attributes,
     read_memory_bank, group_address, send_standard, write_short_attributes, DiscoveredDevice,
-    SemanticDaliError,
+    SemanticDaliError, VL_UNBOUND_MESSAGE,
 };
 use dali2rust_bsp::esp_thread;
 
@@ -54,6 +54,7 @@ mod commissioning;
 mod counters;
 mod dev103;
 mod discovery;
+mod level_preset;
 mod membership;
 mod memory_bank;
 mod program_outcome;
@@ -61,6 +62,7 @@ mod publish;
 mod scene;
 mod scheduling;
 mod stop_fade;
+mod target_address;
 mod target_state;
 mod wire;
 mod write_attributes;
@@ -96,6 +98,7 @@ use scene::{
 };
 use scheduling::run_command_loop;
 use stop_fade::handle_stop_fade;
+use level_preset::handle_recall_level_preset;
 use target_state::handle_set_target_state;
 use wire::process_wire_payload;
 use write_attributes::handle_write_attributes;
@@ -276,6 +279,8 @@ dali2rust_contracts::dispatch_bus_commands! {
         command,
         counters,
     ),
+    DaliRecallLevelPresetCommand(command) =>
+        handle_recall_level_preset(controller, env, correlation_id, origin, command),
     DaliStopFadeCommand(command) => handle_stop_fade(
         controller,
         read_port,

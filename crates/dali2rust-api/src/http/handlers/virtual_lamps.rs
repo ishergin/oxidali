@@ -4,7 +4,6 @@ use std::io::Write;
 use std::sync::Arc;
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
-use dali2rust_contracts::msg::LightSetpoint;
 
 use crate::bus_codec::SOURCE_ID_UNSPECIFIED;
 use crate::confirmation_bridge::PendingConfirmationSlots;
@@ -23,7 +22,7 @@ use super::common::{
     MAX_SHORT_ADDRESS,
     parse_metadata_name,
 };
-use crate::http::target_state_request::TargetStateBody;
+use crate::http::target_state_request::{TargetRequest, TargetStateBody};
 
 const MAX_LAMP_ID: u16 = 63;
 
@@ -292,7 +291,7 @@ declare_handler_shell! {
 }
 
 impl crate::http::handlers::common::MutatingHandler for VirtualLampTargetStateHandler {
-    type Validated = (u8, u8, LightSetpoint);
+    type Validated = (u8, u8, TargetRequest);
     type Executed = (u8, u8);
 
     fn expected_method(&self) -> &'static str {
@@ -303,12 +302,12 @@ impl crate::http::handlers::common::MutatingHandler for VirtualLampTargetStateHa
         &self,
         params: &HashMap<String, String>,
         body: &[u8],
-    ) -> Result<(u8, u8, LightSetpoint), HttpResponse> {
+    ) -> Result<(u8, u8, TargetRequest), HttpResponse> {
         let (aid, lid) = parse_adapter_and_lamp(self.state.adapter_count(), params)?;
         let vl = self.state.virtual_lamp_dto(aid, lid);
 
         let request = parse_typed_body::<TargetStateBody>(body)?;
-        let sp = crate::http::target_state_request::parse_light_setpoint(&request, |cm| {
+        let target = crate::http::target_state_request::parse_target_request(&request, |cm| {
             vl_cap_supports_color_mode(&vl, cm)
         })?;
 
@@ -318,13 +317,13 @@ impl crate::http::handlers::common::MutatingHandler for VirtualLampTargetStateHa
                 serde_json::to_vec(&vl).unwrap_or_else(|_| b"{}".to_vec()),
             ));
         }
-        Ok((aid, lid, sp))
+        Ok((aid, lid, target))
     }
 
-    fn execute(&self, args: (u8, u8, LightSetpoint)) -> Result<(u8, u8), HttpResponse> {
-        let (aid, lid, sp) = args;
+    fn execute(&self, args: (u8, u8, TargetRequest)) -> Result<(u8, u8), HttpResponse> {
+        let (aid, lid, target) = args;
         let correlation_id = self.correlation.next_id();
-        let cmd = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliSetTargetStateCommand::for_virtual_lamp(aid, lid, &sp));
+        let cmd = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), target.for_virtual_lamp(aid, lid));
         let frame = BusFrame::command(cmd);
 
         crate::http::dispatcher::dispatch_and_wait_for_success(

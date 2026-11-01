@@ -144,6 +144,58 @@ fn a_foreign_group_frame_arms_the_tile_and_a_group_off_clears_it() {
 }
 
 #[test]
+fn a_level_recall_of_a_group_arms_its_tile() {
+    let stack = spawn_registry_stack(1, 32);
+    seed_lit_member(&stack);
+    assert!(!group_state(&stack).commanded, "nothing commanded yet");
+
+    publish_event(
+        &stack.publisher,
+        dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            11,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Internal),
+            dali2rust_contracts::msg::DaliLevelTransitionAppliedEvent {
+                registry_adapter_id: 0,
+                scope: DaliTargetScope::Group,
+                virtual_lamp_id: None,
+                short_address: None,
+                group_id: Some(GROUP),
+                transition: dali2rust_contracts::msg::LevelTransition::RecallMinLevel,
+                source: dali2rust_contracts::msg::RuntimeSource::Api,
+                applied_at_mono_ms: 2_800,
+                hold_hcl: true,
+            },
+        ),
+    );
+    wait_until(|| group_state(&stack).commanded, WAIT);
+    assert!(group_state(&stack).commanded, "RECALL MIN LEVEL lights the group, so its tile is ON");
+}
+
+#[test]
+fn a_foreign_group_recall_of_the_maximum_arms_the_tile() {
+    let stack = spawn_registry_stack(1, 32);
+    seed_lit_member(&stack);
+    let mut frame = observed_group_frame(GROUP, None, false);
+    frame.observed_kind = ObservedKind::LevelTransitionObserved;
+    frame.level_transition = Some(dali2rust_contracts::msg::LevelTransition::RecallMaxLevel);
+
+    publish_event(
+        &stack.publisher,
+        dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            12,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Internal),
+            frame,
+        ),
+    );
+    wait_until(|| group_state(&stack).commanded, WAIT);
+    assert!(group_state(&stack).commanded, "a foreign master's RECALL MAX LEVEL lights the group too");
+}
+
+#[test]
 fn scene_recalls_and_colour_only_commands_never_arm_a_tile() {
     let stack = spawn_registry_stack(1, 32);
     seed_lit_member(&stack);

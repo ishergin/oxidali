@@ -30,3 +30,13 @@ Feature: Group target state
     And the DALI mock transport should have sent forward frame 0xA34D
     And the DALI mock transport should have sent forward frame 0xC301
     And the DALI mock transport should have sent forward frame 0x8FE7
+
+  @id:GRP-078
+  Scenario: A group recall is one group-addressed RECALL MAX LEVEL
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 desired membership includes virtual lamp 1 in group 7
+    And a DALI mock transport with no response
+    When I PUT JSON {"recall":"max_level"} to "/api/v1/adapters/0/groups/7/target-state"
+    Then the response status should be 202
+    And the DALI mock transport should have sent forward frame 0x8F05
+    And the DALI mock transport should have received 1 forward frame

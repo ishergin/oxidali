@@ -2,10 +2,10 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use dali2rust_api::ha::{
-    caps_accept, caps_accept_for_group, ha_light_command_to_setpoint, HaCommandTarget, HaTopics,
+    caps_accept, caps_accept_for_group, ha_light_command_to_request, HaCommandTarget, HaTopics,
 };
 use dali2rust_bus::worker_counters::bump;
-use dali2rust_contracts::msg::{DaliRecallSceneCommand, DaliSetTargetStateCommand};
+use dali2rust_contracts::msg::DaliRecallSceneCommand;
 use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_platform::mqtt::MqttIncoming;
 
@@ -103,14 +103,11 @@ fn lamp_command(
     };
     let caps = lamp.capabilities;
     WORKER_STACK.note("inbound:lamp-view");
-    let Ok(setpoint) = ha_light_command_to_setpoint(payload, |m| caps_accept(&caps, m)) else {
+    let Ok(request) = ha_light_command_to_request(payload, |m| caps_accept(&caps, m)) else {
         return false;
     };
     WORKER_STACK.note("inbound:parsed");
-    publish_command(
-        ports,
-        DaliSetTargetStateCommand::for_virtual_lamp(adapter_id, virtual_lamp_id, &setpoint),
-    );
+    publish_command(ports, request.for_virtual_lamp(adapter_id, virtual_lamp_id));
     WORKER_STACK.note("inbound:published");
     true
 }
@@ -120,14 +117,11 @@ fn group_command(ports: &MqttWorkerPorts, adapter_id: u8, group_id: u8, payload:
         return false;
     };
     let caps = group.capabilities;
-    let Ok(setpoint) = ha_light_command_to_setpoint(payload, |m| caps_accept_for_group(&caps, m))
+    let Ok(request) = ha_light_command_to_request(payload, |m| caps_accept_for_group(&caps, m))
     else {
         return false;
     };
-    publish_command(
-        ports,
-        DaliSetTargetStateCommand::for_group(adapter_id, group_id, &setpoint),
-    );
+    publish_command(ports, request.for_group(adapter_id, group_id));
     true
 }
 

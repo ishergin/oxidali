@@ -11,6 +11,7 @@ pub const DALI_WORKER_REQUIRED_EVENTS: &[&str] = &[
     "DaliSceneProgrammedEvent",
     "DaliGroupMembershipProgrammedEvent",
     "DaliTargetStateAppliedEvent",
+    "DaliLevelTransitionAppliedEvent",
     "DaliAddressingCompletedEvent",
     "DaliDeviceIdentifiedEvent",
     "DaliDeviceReplacedEvent",

@@ -116,6 +116,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "DaliSetTargetStateCommand",
     "DaliRecallSceneCommand",
     "DaliStopFadeCommand",
+    "DaliRecallLevelPresetCommand",
     "SceneApplyExecuteCommand",
     "OperationBeginCommand",
     "Dali103FeedbackDriveCommand",
@@ -1073,6 +1074,49 @@ fn stop_fade_publishes_its_own_command_for_a_group() {
     assert_eq!(cmd.group_id, 2);
 }
 
+#[test]
+fn a_recall_publishes_its_own_command_and_carries_the_rule_s_hold() {
+    let h = harness("rules-recall-min-group");
+    publish_document(
+        &h,
+        1,
+        "rule \"минимум\" hold_hcl false {\n  when http trigger\n  do group(2).level(90)\n     group(2).recall_min()\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 1);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    publish(
+        &h,
+        2,
+        dali2rust_contracts::msg::RuleRunCommand {
+            name: dali2rust_contracts::msg::fixed_text_64("минимум"),
+            dry: false,
+        },
+    );
+
+    let published = dali2rust_test_support::try_recv_command_matching(
+        &h.out_rx,
+        COMMAND_WAIT,
+        |payload| {
+            matches!(
+                payload,
+                dali2rust_contracts::msg::BusCommandPayload::DaliRecallLevelPresetCommand(_)
+            )
+        },
+    )
+    .expect("a group recall_min must reach the bus");
+    let dali2rust_contracts::msg::BusCommandPayload::DaliRecallLevelPresetCommand(cmd) = published.payload
+    else {
+        unreachable!("filtered above")
+    };
+    assert_eq!(cmd.scope, dali2rust_contracts::msg::DaliTargetScope::Group);
+    assert_eq!(cmd.group_id, 2);
+    assert_eq!(cmd.preset, dali2rust_contracts::msg::LevelPreset::MinLevel);
+    assert!(!cmd.hold_hcl, "the rule said hold_hcl false, and the recall says so too");
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Landing {
     Bus(&'static str),
@@ -1100,6 +1144,8 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("light_rgb", "broadcast.rgb(254, 0, 0)", Landing::Bus("DaliSetTargetStateCommand")),
     ("light_last_active", "broadcast.last_active()", Landing::Bus("DaliSetTargetStateCommand")),
     ("light_stop_fade", "broadcast.stop_fade()", Landing::Bus("DaliStopFadeCommand")),
+    ("light_recall_max", "broadcast.recall_max()", Landing::Bus("DaliRecallLevelPresetCommand")),
+    ("light_recall_min", "broadcast.recall_min()", Landing::Bus("DaliRecallLevelPresetCommand")),
     ("scene_recall", "scene(3).recall(broadcast)", Landing::Bus("DaliRecallSceneCommand")),
     ("scene_apply", "scene(3).apply()", Landing::Bus("SceneApplyExecuteCommand")),
     ("scene_cycle", "scene.cycle(1, 3, 7)", Landing::Bus("DaliRecallSceneCommand")),

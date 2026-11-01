@@ -4,9 +4,9 @@ use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, CorrelationIdAllo
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand,
-    DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
+    DaliRecallLevelPresetCommand, DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
     ErrorCode, FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
-    HclScheduleEnableCommand, LightSetpoint, MqttPublishCommand, OperationBeginCommand,
+    HclScheduleEnableCommand, LevelPreset, LightSetpoint, MqttPublishCommand, OperationBeginCommand,
     OperationType, OperationWorkerSignalEvent, Origin, PowerState, SceneApplyExecuteCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -101,8 +101,8 @@ impl EffectExecutor<'_> {
         let mut lights = self.merge_lights(effects, snapshot);
         for (index, effect) in effects.iter().enumerate() {
             let published = match effect {
-                Effect::Light { target, verb: LightVerb::StopFade, .. } => {
-                    self.stop_fade(target, snapshot, corr)
+                Effect::Light { target, verb, hold_hcl } if verb.stands_alone() => {
+                    self.standalone_light(target, *verb, *hold_hcl, snapshot, corr)
                 }
                 Effect::Light { .. } => match lights.iter().position(|light| light.at == index) {
                     Some(slot) => self.publish_light(lights.remove(slot), corr),
@@ -122,7 +122,7 @@ impl EffectExecutor<'_> {
                 series.close();
                 continue;
             };
-            if matches!(verb, LightVerb::StopFade) {
+            if verb.stands_alone() {
                 series.close();
                 continue;
             }
@@ -273,6 +273,22 @@ impl EffectExecutor<'_> {
         )
     }
 
+    fn standalone_light(
+        &self,
+        target: &LightTarget,
+        verb: LightVerb,
+        hold_hcl: bool,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        match verb {
+            LightVerb::RecallMax => self.recall_preset(target, LevelPreset::MaxLevel, hold_hcl, snapshot, corr),
+            LightVerb::RecallMin => self.recall_preset(target, LevelPreset::MinLevel, hold_hcl, snapshot, corr),
+            LightVerb::StopFade => self.stop_fade(target, snapshot, corr),
+            _ => self.misrouted(),
+        }
+    }
+
     // IEC 62386-102 §9.5.9
     fn stop_fade(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
         let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
@@ -289,6 +305,35 @@ impl EffectExecutor<'_> {
                 virtual_lamp_id,
                 short_address: 0,
                 group_id,
+            },
+        )
+    }
+
+    // IEC 62386-102 §11.3.7, §11.3.8
+    fn recall_preset(
+        &self,
+        target: &LightTarget,
+        preset: LevelPreset,
+        hold_hcl: bool,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
+            return false;
+        };
+        if !lamp_bound(target, snapshot) {
+            return self.unbound_lamp();
+        }
+        self.publish(
+            corr,
+            DaliRecallLevelPresetCommand {
+                registry_adapter_id: adapter,
+                scope,
+                virtual_lamp_id,
+                short_address: 0,
+                group_id,
+                preset,
+                hold_hcl,
             },
         )
     }
@@ -490,7 +535,7 @@ fn setpoint_of(
             ..LightSetpoint::default()
         },
         LightVerb::LastActive => powered(PowerState::On),
-        LightVerb::StopFade => return None,
+        LightVerb::StopFade | LightVerb::RecallMax | LightVerb::RecallMin => return None,
     })
 }
 

@@ -6,7 +6,10 @@ use serde::Deserialize;
 use crate::http::handlers::common::{json_err, parse_color_mode, parse_power};
 use crate::http::lenient::{MaybeF64, MaybeObj, MaybeString, MaybeU64};
 use crate::http::types::HttpResponse;
-use dali2rust_contracts::msg::{ColorMode, ColorValue, LightSetpoint, PowerState};
+use dali2rust_contracts::msg::{
+    BusCommandPayload, ColorMode, ColorValue, DaliRecallLevelPresetCommand,
+    DaliSetTargetStateCommand, LevelPreset, LightSetpoint, PowerState,
+};
 
 pub const TARGET_STATE_ALLOWED_KEYS: &[&str] = &[
     "power",
@@ -17,6 +20,7 @@ pub const TARGET_STATE_ALLOWED_KEYS: &[&str] = &[
     "rgb",
     "rgbwaf",
     "transition",
+    "recall",
 ];
 
 pub const TARGET_STATE_RUNTIME_READONLY_KEYS: &[&str] = &[
@@ -117,16 +121,66 @@ pub struct TargetStateBody {
     setpoint: SetpointFields,
     #[allow(dead_code, reason = "`transition` is allowed and ignored (legacy-pinned): a known field so it never lands in `extra`, but its value is never read")]
     transition: Option<IgnoredAny>,
+    recall: Option<MaybeString>,
     #[serde(flatten)]
     extra: BTreeMap<String, IgnoredAny>,
 }
 
-pub fn parse_light_setpoint(
+#[derive(Debug, Clone, PartialEq)]
+pub enum TargetRequest {
+    Setpoint(LightSetpoint),
+    Recall(LevelPreset),
+}
+
+impl TargetRequest {
+    pub fn for_short(&self, registry_adapter_id: u8, short_address: u8) -> BusCommandPayload {
+        match self {
+            Self::Setpoint(sp) => DaliSetTargetStateCommand::for_short(registry_adapter_id, short_address, sp).into(),
+            Self::Recall(preset) => DaliRecallLevelPresetCommand::for_short(registry_adapter_id, short_address, *preset).into(),
+        }
+    }
+
+    pub fn for_group(&self, registry_adapter_id: u8, group_id: u8) -> BusCommandPayload {
+        match self {
+            Self::Setpoint(sp) => DaliSetTargetStateCommand::for_group(registry_adapter_id, group_id, sp).into(),
+            Self::Recall(preset) => DaliRecallLevelPresetCommand::for_group(registry_adapter_id, group_id, *preset).into(),
+        }
+    }
+
+    pub fn for_virtual_lamp(&self, registry_adapter_id: u8, virtual_lamp_id: u8) -> BusCommandPayload {
+        match self {
+            Self::Setpoint(sp) => DaliSetTargetStateCommand::for_virtual_lamp(registry_adapter_id, virtual_lamp_id, sp).into(),
+            Self::Recall(preset) => DaliRecallLevelPresetCommand::for_virtual_lamp(registry_adapter_id, virtual_lamp_id, *preset).into(),
+        }
+    }
+}
+
+pub fn parse_target_request(
     body: &TargetStateBody,
     supports_color_mode: impl Fn(ColorMode) -> bool,
-) -> Result<LightSetpoint, HttpResponse> {
+) -> Result<TargetRequest, HttpResponse> {
     validate_target_state_keys(&body.extra)?;
-    apply_setpoint_fields(&body.setpoint, supports_color_mode)
+    match &body.recall {
+        Some(recall) => parse_recall(recall, &body.setpoint).map(TargetRequest::Recall),
+        None => apply_setpoint_fields(&body.setpoint, supports_color_mode).map(TargetRequest::Setpoint),
+    }
+}
+
+pub const LEVEL_PRESETS: [(&str, LevelPreset); 2] =
+    [("max_level", LevelPreset::MaxLevel), ("min_level", LevelPreset::MinLevel)];
+
+fn parse_recall(recall: &MaybeString, fields: &SetpointFields) -> Result<LevelPreset, HttpResponse> {
+    if fields.has_any_value() {
+        return Err(json_err(422, "invalid_value"));
+    }
+    let MaybeString::Valid(name) = recall else {
+        return Err(json_err(422, "invalid_value"));
+    };
+    LEVEL_PRESETS
+        .iter()
+        .find(|(preset_name, _)| *preset_name == name.as_str())
+        .map(|&(_, preset)| preset)
+        .ok_or_else(|| json_err(422, "invalid_enum"))
 }
 
 pub(crate) fn apply_setpoint_fields(
@@ -330,6 +384,16 @@ mod tests {
 
     fn body(value: serde_json::Value) -> TargetStateBody {
         serde_json::from_value(value).expect("target-state body")
+    }
+
+    fn parse_light_setpoint(
+        body: &TargetStateBody,
+        supports_color_mode: impl Fn(ColorMode) -> bool,
+    ) -> Result<LightSetpoint, HttpResponse> {
+        match parse_target_request(body, supports_color_mode)? {
+            TargetRequest::Setpoint(sp) => Ok(sp),
+            TargetRequest::Recall(_) => panic!("a setpoint test sent a recall"),
+        }
     }
 
     fn parse_ok(value: serde_json::Value) -> LightSetpoint {
@@ -560,6 +624,35 @@ mod tests {
         let color = sp.color.expect("rgb color");
         assert_eq!(color.mode, ColorMode::Rgb);
         assert_eq!((color.r, color.g, color.b), (10, 20, 30));
+    }
+
+    fn request_ok(value: serde_json::Value) -> TargetRequest {
+        parse_target_request(&body(value), |_| true).unwrap_or_else(|_| panic!("expected a request"))
+    }
+
+    fn request_err_code(value: serde_json::Value) -> String {
+        let Err(err) = parse_target_request(&body(value), |_| true) else {
+            panic!("expected a refusal");
+        };
+        let body: serde_json::Value =
+            serde_json::from_slice(&err.into_body_bytes()).expect("error json");
+        body["error"].as_str().expect("error code").to_string()
+    }
+
+    #[test]
+    fn a_recall_names_its_preset() {
+        assert_eq!(request_ok(json!({ "recall": "max_level" })), TargetRequest::Recall(LevelPreset::MaxLevel));
+        assert_eq!(request_ok(json!({ "recall": "min_level" })), TargetRequest::Recall(LevelPreset::MinLevel));
+        assert!(matches!(request_ok(json!({ "recall": null, "level": 3 })), TargetRequest::Setpoint(_)));
+    }
+
+    #[test]
+    fn a_recall_stands_alone_and_names_a_known_preset() {
+        for mixed in [json!({ "recall": "max_level", "power": "on" }), json!({ "recall": "min_level", "rgb": { "r": 1, "g": 2, "b": 3 } })] {
+            assert_eq!(request_err_code(mixed), "invalid_value");
+        }
+        assert_eq!(request_err_code(json!({ "recall": 5 })), "invalid_value");
+        assert_eq!(request_err_code(json!({ "recall": "last_active_level" })), "invalid_enum");
     }
 
     #[test]

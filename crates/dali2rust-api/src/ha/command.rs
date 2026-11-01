@@ -1,12 +1,18 @@
-use dali2rust_contracts::msg::{ColorMode, LightSetpoint};
+use dali2rust_contracts::msg::ColorMode;
 use dali2rust_domain::registry::CapabilityFlagsView;
 use serde_json::{Map, Value};
 
 use super::brightness::ha_to_level;
-use crate::http::target_state_request::{parse_light_setpoint, TargetStateBody};
+use crate::http::target_state_request::{
+    parse_target_request, TargetRequest, TargetStateBody, LEVEL_PRESETS,
+};
 use crate::http::types::HttpResponse;
 
 const HA_COMMAND_MAX_DEPTH: usize = 2;
+
+pub fn ha_effects() -> impl Iterator<Item = &'static str> {
+    LEVEL_PRESETS.iter().map(|&(name, _)| name)
+}
 
 pub fn caps_accept(caps: &CapabilityFlagsView, mode: ColorMode) -> bool {
     dali2rust_domain::registry::capability_supports_color_mode(*caps, mode)
@@ -16,10 +22,10 @@ pub fn caps_accept_for_group(caps: &CapabilityFlagsView, mode: ColorMode) -> boo
     dali2rust_domain::registry::capability_accepts_color_mode(*caps, mode)
 }
 
-pub fn ha_light_command_to_setpoint(
+pub fn ha_light_command_to_request(
     payload: &[u8],
     supports_color_mode: impl Fn(ColorMode) -> bool,
-) -> Result<LightSetpoint, HttpResponse> {
+) -> Result<TargetRequest, HttpResponse> {
     if crate::json_depth::depth_exceeds(payload, HA_COMMAND_MAX_DEPTH) {
         return Err(crate::http::handlers::common::json_err(400, "invalid_json"));
     }
@@ -31,12 +37,17 @@ pub fn ha_light_command_to_setpoint(
     let translated = Value::Object(translate(obj));
     let body: TargetStateBody = serde_json::from_value(translated)
         .map_err(|_| crate::http::handlers::common::json_err(422, "invalid_value"))?;
-    parse_light_setpoint(&body, supports_color_mode)
+    parse_target_request(&body, supports_color_mode)
 }
 
 fn translate(obj: &Map<String, Value>) -> Map<String, Value> {
     let mut out = Map::new();
-    if let Some(state) = obj.get("state").and_then(Value::as_str) {
+    let effect = obj.get("effect").filter(|effect| !effect.is_null());
+    if let Some(effect) = effect {
+        out.insert("recall".into(), effect.clone());
+    }
+    let state = obj.get("state").and_then(Value::as_str);
+    if let Some(state) = state.filter(|state| effect.is_none() || !state.eq_ignore_ascii_case("ON")) {
         out.insert(
             "power".into(),
             Value::String(if state.eq_ignore_ascii_case("ON") {
@@ -85,17 +96,35 @@ fn translate_color(obj: &Map<String, Value>, out: &mut Map<String, Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_contracts::msg::PowerState;
+    use dali2rust_contracts::msg::{LevelPreset, LightSetpoint, PowerState};
 
     fn anything(_: ColorMode) -> bool {
         true
     }
 
     fn parse(payload: &str) -> LightSetpoint {
-        match ha_light_command_to_setpoint(payload.as_bytes(), anything) {
-            Ok(sp) => sp,
-            Err(_) => panic!("expected {payload} to parse"),
+        match ha_light_command_to_request(payload.as_bytes(), anything) {
+            Ok(TargetRequest::Setpoint(sp)) => sp,
+            _ => panic!("expected {payload} to parse as a setpoint"),
         }
+    }
+
+    #[test]
+    fn an_effect_is_a_recall_and_the_on_beside_it_is_implied() {
+        for (effect, preset) in [("max_level", LevelPreset::MaxLevel), ("min_level", LevelPreset::MinLevel)] {
+            let payload = format!(r#"{{"state":"ON","effect":"{effect}"}}"#);
+            assert_eq!(
+                ha_light_command_to_request(payload.as_bytes(), anything).ok(),
+                Some(TargetRequest::Recall(preset))
+            );
+        }
+    }
+
+    #[test]
+    fn an_effect_beside_a_brightness_or_an_unknown_effect_is_refused() {
+        assert!(ha_light_command_to_request(br#"{"effect":"max_level","brightness":40}"#, anything).is_err());
+        assert!(ha_light_command_to_request(br#"{"state":"OFF","effect":"max_level"}"#, anything).is_err());
+        assert!(ha_light_command_to_request(br#"{"effect":"colorloop"}"#, anything).is_err());
     }
 
     #[test]
@@ -150,13 +179,13 @@ mod tests {
     #[test]
     fn a_command_nested_past_the_colour_object_is_refused_before_parsing() {
         let at_limit = state_on_nested(HA_COMMAND_MAX_DEPTH - 1);
-        assert!(ha_light_command_to_setpoint(at_limit.as_bytes(), anything).is_ok());
+        assert!(ha_light_command_to_request(at_limit.as_bytes(), anything).is_ok());
         let past = state_on_nested(HA_COMMAND_MAX_DEPTH);
-        assert!(ha_light_command_to_setpoint(past.as_bytes(), anything).is_err());
+        assert!(ha_light_command_to_request(past.as_bytes(), anything).is_err());
     }
 
     #[test]
     fn an_impossible_colour_temperature_is_still_refused() {
-        assert!(ha_light_command_to_setpoint(br#"{"color_temp":99999}"#, anything).is_err());
+        assert!(ha_light_command_to_request(br#"{"color_temp":99999}"#, anything).is_err());
     }
 }

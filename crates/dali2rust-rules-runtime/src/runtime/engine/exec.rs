@@ -410,6 +410,8 @@ fn light_verb(
         })),
         LightOp::LastActive => Ok(Some(LightVerb::LastActive)),
         LightOp::StopFade => Ok(Some(LightVerb::StopFade)),
+        LightOp::RecallMax => Ok(Some(LightVerb::RecallMax)),
+        LightOp::RecallMin => Ok(Some(LightVerb::RecallMin)),
     }
 }
 

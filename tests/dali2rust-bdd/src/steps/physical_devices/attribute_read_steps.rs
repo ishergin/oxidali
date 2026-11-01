@@ -187,6 +187,13 @@ async fn given_common102_policy_levels_script(world: &mut DaliWorld, power_on_le
     );
 }
 
+// PD-303
+#[given(regex = r"^a common-102 attribute-read script where short address 0 holds min level (\d+) and max level (\d+)$")]
+async fn given_common102_bounds_script(world: &mut DaliWorld, min_level: u8, max_level: u8) {
+    let mock = world.dali_mock().lock().expect("mock lock");
+    script_common102_read(&mock, Common102Answers { min_level, max_level, ..Common102Answers::default() });
+}
+
 // PD-156
 #[given("an attribute-read script where the common_102 group aborts after contention retries")]
 async fn given_contended_abort_attribute_read_script(world: &mut DaliWorld) {
@@ -340,7 +347,7 @@ async fn when_start_runtime_status_attribute_read(world: &mut DaliWorld) {
     );
 }
 
-// PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022
+// PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303
 #[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only"#)]
 async fn when_start_common102_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["common_102"],"memory_banks":"none"}"#;

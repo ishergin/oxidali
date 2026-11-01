@@ -75,6 +75,6 @@ pub use discovery::{
     scene_select_discovery_payload, supported_color_modes, HaDevice, DISCOVERY_RETRACTION,
     SCENE_SELECT_NONE,
 };
-pub use command::{caps_accept, caps_accept_for_group, ha_light_command_to_setpoint};
+pub use command::{caps_accept, caps_accept_for_group, ha_light_command_to_request};
 pub use state::{input_event_state_payload, group_state_payload, light_state_payload};
 pub use topics::{is_topic_safe, HaCommandTarget, HaTopics, COMMAND_SUBSCRIPTIONS};

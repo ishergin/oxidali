@@ -14,7 +14,7 @@ broadcast и сцены по участникам.
 ## Входы и выходы
 
 - **Потребляет**: `DaliTargetStateAppliedEvent`, `DaliSceneRecalledEvent`,
-  `DaliObservedFrameEvent`, секцию `RuntimeStatus` из `DaliAttributesReadEvent` и
+  `DaliLevelTransitionAppliedEvent`, `DaliObservedFrameEvent`, секцию `RuntimeStatus` из `DaliAttributesReadEvent` и
   `DaliAttributeReadOutcomesEvent` (устройство не ответило).
 - **Публикует** только `RegistryRuntimeUpdateCommand` и
   `RegistryLevelTransitionCommand`, через `publish_required`. DALI-команд не
@@ -34,6 +34,7 @@ broadcast и сцены по участникам.
 | Recall сцены на короткий адрес (наш — на лампу — или чужой) | applied-строка лампы, привязанной к адресу |
 | Чужой кадр по короткому адресу | лампа, привязанная к адресу, и само устройство |
 | Арк-команда без уровня (`LevelTransitionObserved`) | `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
+| Наш recall границы (`DaliLevelTransitionAppliedEvent`) | то же, с источником и `hold_hcl` команды |
 | Секция `RuntimeStatus` чтения | один коммит устройства |
 | Исход чтения «устройство не ответило» | наблюдение отсутствия (`device_absent`) без уровня и без `last_seen_ms` |
 
