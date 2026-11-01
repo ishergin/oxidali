@@ -1140,6 +1140,145 @@ fn a_recall_of_an_unread_preset_lights_the_lamp_at_no_level_and_keeps_the_rule_s
     );
 }
 
+fn level_transition(short: u8, transition: LevelTransition, at_ms: u32, hold_hcl: bool) -> RegistryLevelTransitionCommand {
+    RegistryLevelTransitionCommand {
+        adapter_id: 0,
+        virtual_lamp_id: None,
+        short_address: Some(short),
+        transition,
+        observation: Some(runtime_observation_api_timestamped(u64::from(at_ms))),
+        source: RuntimeSource::Rules,
+        observed_at_mono_ms: Some(at_ms),
+        hold_hcl,
+    }
+}
+
+#[test]
+fn an_up_or_down_on_a_lit_lamp_keeps_it_on_at_a_level_nobody_computed() {
+    for (short, transition) in [(24u8, LevelTransition::Up), (25, LevelTransition::Down)] {
+        let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
+        seed_physical(&publisher, &store, short);
+        let lit = LightSetpoint::from_level(137, None);
+        publish_cmd(
+            &publisher,
+            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 930, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(short, &lit, 53_000))),
+        );
+        assert_ok(&recv_confirm_for(&conf_rx, 930));
+
+        publish_cmd(
+            &publisher,
+            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 931, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), level_transition(short, transition, 54_000, false)),
+        );
+        assert_ok(&recv_confirm_for(&conf_rx, 931));
+        let event = support::recv_runtime_state_changed(&ev_rx, 931);
+        assert!(!event.commit_holds_hcl, "{transition:?} carries the rule's hold");
+        let state = core_view_of(&store, short).state;
+        assert_eq!(state.power, "on", "{transition:?} fades a lit gear, it never switches it off");
+        assert_eq!(state.level, None, "{transition:?} ends where the gear's fade rate took it");
+
+        publish_cmd(
+            &publisher,
+            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 932, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), level_transition(short, LevelTransition::GoToLastActiveLevel, 55_000, true)),
+        );
+        assert_ok(&recv_confirm_for(&conf_rx, 932));
+        assert_eq!(core_view_of(&store, short).state.level, None, "{transition:?} left 137 behind");
+    }
+}
+
+#[test]
+fn an_up_or_down_on_dark_gear_changes_nothing() {
+    for (short, transition) in [(26u8, LevelTransition::Up), (27, LevelTransition::Down)] {
+        let (publisher, conf_rx, store, _counters, _host) = spawn_cmd_stack(1);
+        seed_physical(&publisher, &store, short);
+        let dark = LightSetpoint { power: PowerState::Off, level: Some(0), color: None };
+        publish_cmd(
+            &publisher,
+            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 940, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(short, &dark, 56_000))),
+        );
+        assert_ok(&recv_confirm_for(&conf_rx, 940));
+
+        publish_cmd(
+            &publisher,
+            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 941, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), level_transition(short, transition, 57_000, true)),
+        );
+        assert_ok(&recv_confirm_for(&conf_rx, 941));
+        let state = core_view_of(&store, short).state;
+        assert_eq!(state.power, "off", "{transition:?} is ignored by gear at level 0");
+        assert_eq!(state.level, Some(0), "{transition:?} leaves the level it found");
+    }
+}
+
+const QUIET_DRAIN: Duration = Duration::from_millis(300);
+
+fn runtime_changes_for(rx: &std::sync::mpsc::Receiver<BusFrame>, correlation_id: u64) -> usize {
+    std::iter::from_fn(|| rx.recv_timeout(QUIET_DRAIN).ok())
+        .filter(|frame| {
+            matches!(frame, BusFrame::Event(event)
+                if event.meta.correlation_id == correlation_id
+                    && matches!(event.payload, BusEventPayload::RuntimeStateChangedEvent(_)))
+        })
+        .count()
+}
+
+fn commit_transition(
+    publisher: &dali2rust_bus::BusPublisher,
+    conf_rx: &std::sync::mpsc::Receiver<BusFrame>,
+    ev_rx: &std::sync::mpsc::Receiver<BusFrame>,
+    corr: u64,
+    command: RegistryLevelTransitionCommand,
+) -> usize {
+    publish_cmd(
+        publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), command),
+    );
+    assert_ok(&recv_confirm_for(conf_rx, corr));
+    runtime_changes_for(ev_rx, corr)
+}
+
+#[test]
+fn a_repeat_of_an_up_or_down_that_moves_nothing_known_is_answered_and_not_announced() {
+    let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
+    seed_physical(&publisher, &store, 28);
+    let lit = LightSetpoint::from_level(137, None);
+    publish_cmd(
+        &publisher,
+        dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, 950, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(28, &lit, 58_000))),
+    );
+    assert_ok(&recv_confirm_for(&conf_rx, 950));
+
+    let first = commit_transition(&publisher, &conf_rx, &ev_rx, 951, level_transition(28, LevelTransition::Up, 59_000, false));
+    assert_eq!(first, 1, "the first UP turns 137 into a level nobody knows");
+    for (corr, transition, at_ms) in [(952, LevelTransition::Up, 59_160), (953, LevelTransition::Down, 59_320)] {
+        let repeat = commit_transition(&publisher, &conf_rx, &ev_rx, corr, level_transition(28, transition, at_ms, false));
+        assert_eq!(repeat, 0, "a repeat of the iteration changes nothing a client could see");
+    }
+    let state = core_view_of(&store, 28).state;
+    assert_eq!(state.power, "on");
+    assert_eq!(state.level, None);
+    assert_eq!(state.last_seen_ms, Some(59_000), "the silent repeats leave no field behind that no event announced");
+}
+
+#[test]
+fn an_up_on_dark_gear_is_not_announced_and_a_recall_that_moves_nothing_still_is() {
+    let (publisher, conf_rx, ev_rx, store, _counters, _host) = spawn_cmd_stack_with_events(1);
+    seed_physical(&publisher, &store, 29);
+    seed_physical(&publisher, &store, 30);
+    let dark = LightSetpoint { power: PowerState::Off, level: Some(0), color: None };
+    let lit = LightSetpoint::from_level(137, None);
+    for (corr, short, setpoint) in [(960u64, 29u8, &dark), (961, 30, &lit)] {
+        publish_cmd(
+            &publisher,
+            dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, corr, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::RegistryRuntimeUpdateCommand::internal(0, RuntimeRegistryUpdateEntry::api_short_physical(short, setpoint, 60_000))),
+        );
+        assert_ok(&recv_confirm_for(&conf_rx, corr));
+    }
+
+    let dark_up = commit_transition(&publisher, &conf_rx, &ev_rx, 962, level_transition(29, LevelTransition::Up, 61_000, true));
+    assert_eq!(dark_up, 0, "gear at level 0 ignores UP");
+    let recall = commit_transition(&publisher, &conf_rx, &ev_rx, 963, level_transition(30, LevelTransition::GoToLastActiveLevel, 61_000, true));
+    assert_eq!(recall, 1, "a recall is no iteration: it still announces its hold on the schedule");
+}
+
 #[test]
 fn a_transition_naming_gear_its_lamp_is_no_longer_bound_to_is_refused() {
     let (publisher, conf_rx, store, _counters, _host) = spawn_cmd_stack(1);

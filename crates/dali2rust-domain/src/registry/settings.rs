@@ -156,6 +156,7 @@ pub struct PollTargetView {
     pub is_dt6: bool,
     pub declares_energy: bool,
     pub declares_diagnostics: bool,
+    pub dali_groups: u16,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

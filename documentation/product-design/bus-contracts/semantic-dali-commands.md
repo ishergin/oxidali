@@ -68,6 +68,16 @@ broadcast (продюсер — HCL для `level_mode = last_active`). Applied-
 `runtime_binding_mismatch`), группу и broadcast — воркер; непривязанная лампа даёт
 `vl_unbound`.
 
+**`DaliDimCommand`** — один кадр `UP` или `DOWN` (102 §11.3.3, §11.3.4) на любой класс
+адреса: прибор 200 мс идёт к своей границе со скоростью `fadeRate`, а повторы
+складываются в итерацию
+([conformance gaps §1.6](../../reference/iec62386-conformance-gaps.md)). Достигнутый
+уровень не вычислим, поэтому applied-факт несёт глагол: реестр оставляет горящий прибор
+включённым с уровнем `null`, а прибор на нуле или на своей границе не трогает; уровень
+читает обратно поллер ([`../runtime-modules/poller/README.md`](../runtime-modules/poller/README.md)
+§Чтение после UP и DOWN). `hold_hcl`, ответ и отказ непривязанной лампы — как у
+`DaliRecallLevelPresetCommand`. Публикует только исполнитель правил.
+
 **`DaliRecallSceneCommand`** — единственная продуктовая активация сцены: нативный
 `GO TO SCENE`, яркость и цвет одним кадром. Scope — `Broadcast`, `Group`, `Short` или
 `VirtualLamp`; лампу воркер разрешает в короткий адрес в момент исполнения, как у
@@ -183,6 +193,7 @@ min/max — только когда ответы так и не устоялис
 | `DaliRecallLastActiveLevelCommand` | applied-факт без уровня | проектор → RRUC; уровень из тени реестра |
 | `DaliStopFadeCommand` | подтверждение | ничего не проецируется |
 | `DaliRecallLevelPresetCommand` | `DaliLevelTransitionAppliedEvent` | проектор → `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
+| `DaliDimCommand` | `DaliLevelTransitionAppliedEvent` | проектор → `RegistryLevelTransitionCommand` на каждого участника; поллер читает `runtime_status` каждого |
 | `DaliRecallSceneCommand` | `DaliSceneRecalledEvent` | проектор раскрывает по applied-строкам сцены |
 | `DaliProgramGroupMembershipCommand` | `DaliGroupMembershipProgrammedEvent` | реестр: applied-членство, `GroupMatrixChangedEvent` |
 | `DaliProgramSceneCommand` | `DaliSceneProgrammedEvent` (+ чанки цвета сцены) | реестр: applied-строка, `SceneMatrixChangedEvent` |

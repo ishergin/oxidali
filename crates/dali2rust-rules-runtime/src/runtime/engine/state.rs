@@ -10,7 +10,6 @@ pub const CHAIN_WINDOW_MS: u64 = 2_000;
 pub const MAX_PENDING_CONTINUATIONS: usize = 32;
 pub const MAX_TIMERS: usize = 16;
 pub const MAX_VARS: usize = 16;
-pub const DIM_HOLD_RESET_MS: u64 = 2_000;
 pub const INPUT_VALUE_MASK_10BIT: u16 = 0x3FF;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -19,7 +18,6 @@ pub(crate) struct EventCtx {
     pub device: Option<i64>,
     pub instance: Option<i64>,
     pub option: Option<i64>,
-    pub source: Option<(u8, u8, u8)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +72,6 @@ pub(crate) struct Volatile {
     pub continuations: Vec<Continuation>,
     pub every: Vec<EverySlot>,
     pub chain: Vec<ChainEntry>,
-    pub hold_marks: BTreeMap<(u8, u8, u8), u64>,
     pub light_edge: BTreeMap<(u8, u8, u8), u16>,
     pub stats: BTreeMap<String, u32>,
     pub prev_week_min: Option<u32>,

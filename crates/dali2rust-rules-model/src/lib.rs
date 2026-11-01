@@ -13,8 +13,8 @@ pub mod trigger;
 pub mod value;
 
 pub use action::{
-    Action, ActionKind, CctSpec, FlowAction, HclAction, InputAction, LevelSpec, LightAction,
-    LightOp, SceneAction, StateAction,
+    Action, ActionKind, CctSpec, DimDirection, FlowAction, HclAction, InputAction, LevelSpec,
+    LightAction, LightOp, SceneAction, StateAction,
 };
 pub use compiler::{NameResolver, RuleCompiler};
 pub use condition::{Cmp, Condition, ConditionKind, HclState, VarOperand};

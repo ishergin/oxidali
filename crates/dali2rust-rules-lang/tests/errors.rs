@@ -192,7 +192,6 @@ fn garbage_never_panics_and_always_carries_coordinates() {
 fn a_relative_step_on_a_group_or_broadcast_is_refused_at_the_verb() {
     for (snippet, verb) in [
         ("group(\"кухня\").dim(-8)", "dim"),
-        ("group(2).dim_hold(+60)", "dim_hold"),
         ("broadcast.level(+8)", "level"),
         ("group(2).cct(-200)", "cct"),
     ] {
@@ -205,6 +204,8 @@ fn a_relative_step_on_a_group_or_broadcast_is_refused_at_the_verb() {
         "group(2).level(200)",
         "broadcast.cct(2700)",
         "group(2).on()",
+        "group(2).dim_down()",
+        "broadcast.dim_hold(+60)",
     ] {
         compile_ok(&wrap_action(snippet));
     }

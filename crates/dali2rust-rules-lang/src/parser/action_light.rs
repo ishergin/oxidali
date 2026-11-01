@@ -4,7 +4,7 @@ use crate::parser::expr;
 use crate::parser::refs;
 use dali2rust_rules_model::limits::MAX_LEVEL;
 use dali2rust_rules_model::{
-    Action, CctSpec, CompileError, LevelSpec, LightAction, LightOp, LightTarget, ValueExpr,
+    Action, CctSpec, CompileError, DimDirection, LevelSpec, LightAction, LightOp, LightTarget, ValueExpr,
 };
 
 const MAX_XY_1E4: u32 = 10_000;
@@ -237,8 +237,13 @@ fn light_op(verb: &str, pos: Pos, bag: &mut ArgBag) -> Result<LightOp, CompileEr
         "toggle" => Ok(LightOp::Toggle { level: optional_level(bag)? }),
         "level" => Ok(LightOp::Level { level: level_spec(bag, pos)? }),
         "dim" => Ok(LightOp::Dim { delta: signed_step(bag.take_positional(), ".dim", pos)? }),
+        "dim_up" => Ok(LightOp::DimHold { direction: DimDirection::Up }),
+        "dim_down" => Ok(LightOp::DimHold { direction: DimDirection::Down }),
         "dim_hold" => Ok(LightOp::DimHold {
-            rate_per_s: signed_step(bag.take_positional(), ".dim_hold", pos)?,
+            direction: match signed_step(bag.take_positional(), ".dim_hold", pos)? {
+                step if step > 0 => DimDirection::Up,
+                _ => DimDirection::Down,
+            },
         }),
         "cct" => Ok(LightOp::Cct { cct: cct_spec(bag, pos)? }),
         "xy" => Ok(LightOp::Xy {
@@ -263,7 +268,6 @@ fn steps_from_current(op: &LightOp) -> bool {
         op,
         LightOp::Level { level: LevelSpec::Relative { .. } }
             | LightOp::Dim { .. }
-            | LightOp::DimHold { .. }
             | LightOp::Cct { cct: CctSpec::Relative { .. } }
     )
 }

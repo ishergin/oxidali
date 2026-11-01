@@ -227,7 +227,7 @@ fn one_button_document_from_section_7_compiles() {
         Action::Light(light) => {
             assert!(matches!(
                 light.op,
-                dali2rust_rules_model::LightOp::DimHold { rate_per_s: 60 }
+                dali2rust_rules_model::LightOp::DimHold { direction: dali2rust_rules_model::DimDirection::Up }
             ));
         }
         other => panic!("expected a light action, got {other:?}"),

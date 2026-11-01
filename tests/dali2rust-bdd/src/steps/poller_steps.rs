@@ -64,7 +64,7 @@ async fn given_discovered_unbound_device(world: &mut DaliWorld) {
     world.dali_mock().lock().expect("mock lock").clear();
 }
 
-// POL-006 POL-008 POL-030 POL-031 SYS-230 SYS-231 SYS-232 SYS-233 SYS-236 SYS-238 SYS-239
+// POL-006 POL-008 POL-030 POL-031 SYS-230 SYS-231 SYS-232 SYS-233 SYS-236 SYS-238 SYS-239 RULE-092 RULE-094 RULE-095
 #[given(regex = r"^the DALI mock answers every query with (\d+)$")]
 async fn given_mock_answers_every_query(world: &mut DaliWorld, value: u8) {
     world
@@ -138,7 +138,7 @@ async fn then_no_poller_operations(world: &mut DaliWorld) {
     );
 }
 
-// POL-008 RULE-033 RULE-036
+// POL-008 RULE-033 RULE-036 RULE-092 RULE-095
 #[then(regex = r#"^virtual lamp (\d+) on adapter (\d+) should eventually report level (\d+) from value_source "([a-z_]+)"$"#)]
 async fn then_vl_reports_level_from_source(
     world: &mut DaliWorld,

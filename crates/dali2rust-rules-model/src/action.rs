@@ -156,6 +156,13 @@ pub enum CctSpec {
     Relative { delta_k: i32 },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DimDirection {
+    Up,
+    Down,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind")]
 pub enum LightOp {
@@ -176,7 +183,7 @@ pub enum LightOp {
     #[serde(rename = "light_dim")]
     Dim { delta: i16 },
     #[serde(rename = "light_dim_hold")]
-    DimHold { rate_per_s: i16 },
+    DimHold { direction: DimDirection },
     #[serde(rename = "light_cct")]
     Cct { cct: CctSpec },
     #[serde(rename = "light_xy")]

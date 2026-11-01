@@ -54,7 +54,7 @@ mod commissioning;
 mod counters;
 mod dev103;
 mod discovery;
-mod level_preset;
+mod level_transition;
 mod membership;
 mod memory_bank;
 mod program_outcome;
@@ -98,7 +98,7 @@ use scene::{
 };
 use scheduling::run_command_loop;
 use stop_fade::handle_stop_fade;
-use level_preset::handle_recall_level_preset;
+use level_transition::{handle_level_transition, LevelTransitionRequest};
 use target_state::handle_set_target_state;
 use wire::process_wire_payload;
 use write_attributes::handle_write_attributes;
@@ -280,7 +280,9 @@ dali2rust_contracts::dispatch_bus_commands! {
         counters,
     ),
     DaliRecallLevelPresetCommand(command) =>
-        handle_recall_level_preset(controller, env, correlation_id, origin, command),
+        handle_level_transition(controller, env, correlation_id, origin, &LevelTransitionRequest::from(command)),
+    DaliDimCommand(command) =>
+        handle_level_transition(controller, env, correlation_id, origin, &LevelTransitionRequest::from(command)),
     DaliStopFadeCommand(command) => handle_stop_fade(
         controller,
         read_port,

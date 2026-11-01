@@ -59,8 +59,8 @@
   перекомпилируется; `RegistrySliceReloadedEvent` — слайс-стор сменился под нами
   (импорт или репликация), документ перечитывается и грузится в движок безусловно, а не
   по смене ревизии: у документа пира может быть та же ревизия при других байтах.
-- **Публикует** с `Origin::Rules`: `DaliSetTargetStateCommand`, `DaliStopFadeCommand` и
-  `DaliRecallLevelPresetCommand` — свет; `DaliRecallSceneCommand` и `SceneApplyExecuteCommand` —
+- **Публикует** с `Origin::Rules`: `DaliSetTargetStateCommand`, `DaliStopFadeCommand`,
+  `DaliRecallLevelPresetCommand` и `DaliDimCommand` — свет; `DaliRecallSceneCommand` и `SceneApplyExecuteCommand` —
   сцены, перед вторым — `OperationBeginCommand` его операции; `HclOverrideHoldCommand` — `hcl.hold`; `HclOverrideResumeCommand` — `hcl.resume`;
   `HclScheduleEnableCommand` —
   `hcl.enable` / `hcl.disable` (исполняет реестр); `Dali103FeedbackDriveCommand` —
@@ -98,8 +98,8 @@
    другой цели он её полей не переносит
    ([03](../../../architecture/03-bus-and-backpressure.md) §Coalescing). Сливаются они
    только внутри непрерывной серии световых действий:
-   не-световой эффект, `.stop_fade()` и `.recall_max()` / `.recall_min()` закрывают
-   серию, иначе слияние подняло бы более поздний глагол раньше них. Эффект с другим `hold_hcl` на ту же цель начинает новую
+   не-световой эффект, `.stop_fade()`, `.recall_max()` / `.recall_min()` и
+   `.dim_up()` / `.dim_down()` закрывают серию, иначе слияние подняло бы более поздний глагол раньше них. Эффект с другим `hold_hcl` на ту же цель начинает новую
    уставку: одна команда не объявила бы расписанию два разных решения.
 7. Исход — `ok`, `partial`, `failed` или `refused` — ложится в блок `runtime` правила
    (REST), а сама активация — в `RulesActivationEvent`, WebSocket-канал `rules` и

@@ -397,7 +397,9 @@ fn transition_power(transition: LevelTransition) -> Option<bool> {
         LevelTransition::StepUp
         | LevelTransition::StepDown
         | LevelTransition::StepDownAndOff
-        | LevelTransition::GoToLastActiveLevel => None,
+        | LevelTransition::GoToLastActiveLevel
+        | LevelTransition::Up
+        | LevelTransition::Down => None,
     }
 }
 

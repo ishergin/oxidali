@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText60, FixedText64, FixedText96};
 use super::kinds::{
-    CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DiscoveryMode,
+    CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DimDirection, DiscoveryMode,
     HclAlgorithm,
     HclLevelMode,
     HclTargetScope, HclTimeRef, InitialiseScope, LevelPreset, MemoryBankReadPreset, OperationType, PowerState,
@@ -1171,6 +1171,25 @@ declare_bus_payloads! {
         short_address: 63,
         group_id: 15,
         preset: LevelPreset::MinLevel,
+        hold_hcl: true,
+    };
+
+    pub struct DaliDimCommand {
+        pub registry_adapter_id: u8,
+        pub scope: DaliTargetScope,
+        pub virtual_lamp_id: u8,
+        pub short_address: u8,
+        pub group_id: u8,
+        pub direction: DimDirection,
+        pub hold_hcl: bool,
+    }
+    budget = DaliDimCommand {
+        registry_adapter_id: u8::MAX,
+        scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: 63,
+        short_address: 63,
+        group_id: 15,
+        direction: DimDirection::Down,
         hold_hcl: true,
     };
 }

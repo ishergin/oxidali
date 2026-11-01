@@ -15,6 +15,7 @@ async fn when_put_oversized_document(world: &mut DaliWorld) {
 use std::time::Duration;
 
 use cucumber::then;
+use dali2rust_test_support::remains_false_for;
 use dali2rust_test_support::sync::wait_until;
 
 // RULE-020 RULE-021 RULE-023 RULE-024 RULE-027 RULE-032 RULE-080 RULE-081 RULE-084 RULE-085 RULE-025
@@ -97,7 +98,7 @@ async fn then_rule_eventually_fired(world: &mut DaliWorld, name: String, expecte
     assert_eq!(rule_fire_count(port, &name), Some(expected), "fire count of rule {name}");
 }
 
-// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039 RULE-061
+// RULE-030 RULE-034 RULE-035 RULE-037 RULE-038 RULE-039 RULE-061 RULE-092
 #[then(regex = r#"^the rule "([^"]+)" should have fired (\d+) times?$"#)]
 async fn then_rule_has_fired(world: &mut DaliWorld, name: String, expected: u64) {
     let port = world.server_port();
@@ -116,7 +117,7 @@ async fn then_rule_eventually_fired_at_least(world: &mut DaliWorld, name: String
     assert!(count.is_some_and(|count| count >= expected), "fire count of rule {name}: {count:?}");
 }
 
-// RULE-032 RULE-060 RULE-061 RULE-064 RULE-065 RULE-066 RULE-070
+// RULE-032 RULE-060 RULE-061 RULE-064 RULE-065 RULE-066 RULE-070 RULE-093
 #[then(regex = r#"^the rule "([^"]+)" should have the last outcome "([a-z_]+)"$"#)]
 async fn then_rule_last_outcome(world: &mut DaliWorld, name: String, expected: String) {
     let port = world.server_port();
@@ -141,6 +142,23 @@ async fn then_forward_frame_eventually_sent(world: &mut DaliWorld, hex: String) 
         Duration::from_secs(5),
     );
 }
+
+// RULE-092 RULE-093 RULE-094 RULE-095
+#[then(regex = r#"^the DALI mock transport forward trace should eventually be exactly "([0-9A-Fa-f, ]+)"$"#)]
+async fn then_forward_trace_eventually_exactly(world: &mut DaliWorld, trace: String) {
+    let expected: Vec<u16> = trace
+        .split(',')
+        .map(|frame| u16::from_str_radix(frame.trim(), 16).expect("hex frame"))
+        .collect();
+    let mock = world.dali_mock().clone();
+    let sent = || mock.lock().expect("mock lock").sent_frames();
+    wait_until(|| sent().len() >= expected.len(), Duration::from_secs(5));
+    assert_eq!(sent(), expected, "the frames, their address bytes and their order are the contract");
+    let nothing_follows = remains_false_for(|| sent().len() > expected.len(), TRACE_TAIL_WINDOW);
+    assert!(nothing_follows, "a frame followed the trace: {:04X?}", sent());
+}
+
+const TRACE_TAIL_WINDOW: Duration = Duration::from_millis(800);
 
 fn rule_counter(port: u16, name: &str) -> Option<u64> {
     let json = crate::steps::polling::fetch_json(port, "/api/v1/stats")?;

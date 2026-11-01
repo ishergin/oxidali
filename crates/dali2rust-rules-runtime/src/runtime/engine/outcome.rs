@@ -14,11 +14,13 @@ pub enum LightVerb {
     StopFade,
     RecallMax,
     RecallMin,
+    DimUp,
+    DimDown,
 }
 
 impl LightVerb {
     pub fn stands_alone(self) -> bool {
-        matches!(self, Self::StopFade | Self::RecallMax | Self::RecallMin)
+        matches!(self, Self::StopFade | Self::RecallMax | Self::RecallMin | Self::DimUp | Self::DimDown)
     }
 }
 

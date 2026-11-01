@@ -200,22 +200,30 @@ fn blocked_refusal<'c>(ce: &CommandEnvelope, counters: &'c DaliWorkerCounters) -
             BlockedRefusal::Operation(Some(&counters.semantic_program_scene_handled))
         }
         payload if is_untallied_operation(payload) => BlockedRefusal::Operation(None),
-        BusCommandPayload::DaliCommissioningStepCommand(_)
-        | BusCommandPayload::DaliCommandPayload(_)
-        | BusCommandPayload::DaliSetTargetStateCommand(_)
-        | BusCommandPayload::DaliRecallSceneCommand(_)
-        | BusCommandPayload::DaliRecallLastActiveLevelCommand(_)
-        | BusCommandPayload::DaliStopFadeCommand(_)
-        | BusCommandPayload::DaliRecallLevelPresetCommand(_)
-        | BusCommandPayload::Dali103FeedbackDriveCommand(_)
-        | BusCommandPayload::Dali103InstanceActionCommand(_)
-        | BusCommandPayload::Dali103HandoverCommand(_)
-        | BusCommandPayload::Dali103ArbitrationProbeCommand(_)
-        | BusCommandPayload::Dali103TestFrameCommand(_)
-        | BusCommandPayload::Dali103PowerNotificationCommand(_)
-        | BusCommandPayload::DaliBusHealthProbeCommand(_) => BlockedRefusal::Confirmation,
+        payload if is_confirmed_request(payload) => BlockedRefusal::Confirmation,
         _ => BlockedRefusal::NotGated,
     }
+}
+
+fn is_confirmed_request(payload: &BusCommandPayload) -> bool {
+    matches!(
+        payload,
+        BusCommandPayload::DaliCommissioningStepCommand(_)
+            | BusCommandPayload::DaliCommandPayload(_)
+            | BusCommandPayload::DaliSetTargetStateCommand(_)
+            | BusCommandPayload::DaliRecallSceneCommand(_)
+            | BusCommandPayload::DaliRecallLastActiveLevelCommand(_)
+            | BusCommandPayload::DaliStopFadeCommand(_)
+            | BusCommandPayload::DaliRecallLevelPresetCommand(_)
+            | BusCommandPayload::DaliDimCommand(_)
+            | BusCommandPayload::Dali103FeedbackDriveCommand(_)
+            | BusCommandPayload::Dali103InstanceActionCommand(_)
+            | BusCommandPayload::Dali103HandoverCommand(_)
+            | BusCommandPayload::Dali103ArbitrationProbeCommand(_)
+            | BusCommandPayload::Dali103TestFrameCommand(_)
+            | BusCommandPayload::Dali103PowerNotificationCommand(_)
+            | BusCommandPayload::DaliBusHealthProbeCommand(_)
+    )
 }
 
 fn is_untallied_operation(payload: &BusCommandPayload) -> bool {
@@ -270,6 +278,7 @@ fn control_gear_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::DaliRecallLastActiveLevelCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliStopFadeCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliRecallLevelPresetCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::DaliDimCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliWriteAttributesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliDiscoverDevicesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadAttributesCommand(cmd) => Some(cmd.registry_adapter_id),

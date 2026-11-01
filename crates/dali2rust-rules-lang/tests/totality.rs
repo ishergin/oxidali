@@ -95,6 +95,8 @@ rule "periodic" {
   when every 15m
   if var("b") == lamp("шкаф").is_on and var("g") == group("кухня").any_on
   do lamp("коридор").level(lamp("шкаф").last_level)
+     group("кухня").dim_up()
+     broadcast.dim_down()
 }
 
 rule "lamp state" {

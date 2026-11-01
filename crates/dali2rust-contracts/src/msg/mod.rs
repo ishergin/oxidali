@@ -26,7 +26,7 @@ pub use kinds::{
     AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup,
     DaliTargetScope,
     BusUnitNvmRow, DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
-    LevelPreset, LevelTransition,
+    DimDirection, LevelPreset, LevelTransition,
     MemoryBankReadPreset,
     CommissioningStep, IdentifyMechanism, InitialiseScope, InputDeviceLifecycleKind,
     InputEventKind, MessageKind, ObservedFrameWidth, ObservedKind, OperationStatus,
@@ -105,6 +105,7 @@ pub use commands::{
 pub use commands::DaliBusHealthProbeCommand;
 pub use commands::DaliStopFadeCommand;
 pub use commands::DaliRecallLevelPresetCommand;
+pub use commands::DaliDimCommand;
 pub use commands::RegistryLevelTransitionCommand;
 pub use commands::{
     DaliWriteMemoryLuminaireCommand, LuminaireNumbers, LuminaireText, LuminaireTextField,
