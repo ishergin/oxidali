@@ -15,8 +15,8 @@ use dali2rust_contracts::msg::{
     DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
     InputDeviceLifecycleKind,
     LevelTransition,
-    InputEventKind, LightSetpoint, ObservedFrameWidth, ObservedKind, Origin, PowerState,
-    RuntimeSource,
+    InputEventKind, LightSetpoint, ManualConfigSource, ObservedFrameWidth, ObservedKind, Origin,
+    PowerState, RuntimeSource,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::dali::dev103::{
@@ -747,16 +747,9 @@ fn translate_forward24(
                 },
             );
         }
-        InputEvent::ManualConfig { short_address, source } => {
-            let body = DaliInputManualConfigEvent {
-                registry_adapter_id,
-                short_address,
-                source,
-                observed_at_ms: raw.observed_at_ms,
-                observed_at_mono_ms: raw.observed_at_mono_ms,
-            };
-            publish_manual_config(publisher, bus_id, counters, body);
-        }
+        InputEvent::ManualConfig { short_address, source } => publish_manual_config(
+            publisher, bus_id, counters, raw, registry_adapter_id, short_address, source,
+        ),
         InputEvent::Instance { source, info } => publish_instance_event(
             publisher,
             bus_id,
@@ -775,8 +768,18 @@ fn publish_manual_config(
     publisher: &BusPublisher,
     bus_id: BusId,
     counters: &Arc<SnifferTranslatorCounters>,
-    body: DaliInputManualConfigEvent,
+    raw: &ObservedRawFrame,
+    registry_adapter_id: u8,
+    short_address: Option<u8>,
+    source: ManualConfigSource,
 ) {
+    let body = DaliInputManualConfigEvent {
+        registry_adapter_id,
+        short_address,
+        source,
+        observed_at_ms: raw.observed_at_ms,
+        observed_at_mono_ms: raw.observed_at_mono_ms,
+    };
     publish_required_fact(publisher, bus_id, counters, body);
 }
 
