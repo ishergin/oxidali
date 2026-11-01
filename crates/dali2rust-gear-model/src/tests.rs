@@ -51,8 +51,12 @@ fn special(command: SpecialCommand) -> u16 {
     frame(DaliCommand::Special(command))
 }
 
+fn indirect(addr: u8, opcode: u8) -> u16 {
+    (u16::from(short(addr).encode_address_byte() | 0x01) << 8) | u16::from(opcode)
+}
+
 fn dt8(addr: u8, command: Dt8Command) -> u16 {
-    (u16::from(short(addr).encode_address_byte() | 0x01) << 8) | u16::from(command.opcode())
+    indirect(addr, command.opcode())
 }
 
 fn exchange(fleet: &mut GearFleet, f: u16, backward: bool) -> TransferOutcome {
@@ -2439,7 +2443,7 @@ fn bank_1_declares_the_length_its_content_format_requires() {
 }
 
 fn dt6(addr: u8, command: Dt6Command) -> u16 {
-    (u16::from(short(addr).encode_address_byte() | 0x01) << 8) | u16::from(command.opcode())
+    indirect(addr, command.opcode())
 }
 
 fn enable_dt6(fleet: &mut GearFleet) {
@@ -3326,4 +3330,232 @@ fn an_unstoring_gear_confirms_a_write_it_does_not_keep() {
     config(&mut fleet, standard(0, StandardCommand::EnableWriteMemory));
     assert_eq!(write_location(&mut fleet, 24), TransferOutcome::Answer(24));
     assert_eq!(fleet.gears()[0].memory_location(1, WRITE_YEAR_OFFSET), before, "Note 1 of 102 9.10.5");
+}
+
+mod dt7_switching {
+    use super::*;
+    use dali2rust_domain::dali::devices::dt7_switching::{
+        Dt7Command, Threshold, FEATURE_ADJUSTABLE_HOLD_OFF, FEATURE_ADJUSTABLE_THRESHOLDS,
+        FEATURE_REFERENCE_SYSTEM_POWER, SWITCH_STATUS_REFERENCE_FAILED, THRESHOLD_MASK,
+    };
+
+    const SWITCH: u8 = 0;
+    const ADJUSTABLE: u8 = FEATURE_ADJUSTABLE_THRESHOLDS | FEATURE_ADJUSTABLE_HOLD_OFF;
+    const RELAY_DEFAULT_OPEN: u8 = 0x02;
+    const HOLD_OFF_TWO_MINUTES: u8 = 12;
+
+    fn switching_bus(features: u8) -> GearFleet {
+        let switch = GearSpec::dt7(Some(SWITCH), demo_random_address(SWITCH), features, RELAY_DEFAULT_OPEN);
+        let led = GearSpec::dt6(Some(1), demo_random_address(1));
+        GearFleet::new(vec![switch, led], 0, 7)
+    }
+
+    fn dt7(addr: u8, command: Dt7Command) -> u16 {
+        indirect(addr, command.opcode())
+    }
+
+    fn enable_dt7(fleet: &mut GearFleet) {
+        exchange(
+            fleet,
+            special(SpecialCommand::EnableDeviceType(DeviceType::Switching.code())),
+            false,
+        );
+    }
+
+    fn ask(fleet: &mut GearFleet, addr: u8, command: Dt7Command) -> TransferOutcome {
+        enable_dt7(fleet);
+        exchange(fleet, dt7(addr, command), true)
+    }
+
+    fn store(fleet: &mut GearFleet, command: Dt7Command, dtr0: u8) {
+        exchange(fleet, special(SpecialCommand::Dtr0(dtr0)), false);
+        enable_dt7(fleet);
+        config(fleet, dt7(SWITCH, command));
+    }
+
+    fn thresholds(fleet: &mut GearFleet) -> [TransferOutcome; 4] {
+        Threshold::ALL.map(|t| ask(fleet, SWITCH, Dt7Command::QueryThreshold(t)))
+    }
+
+    #[test]
+    fn a_switching_gear_answers_its_part_208_registers_at_their_factory_values() {
+        let mut fleet = switching_bus(ADJUSTABLE);
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QueryFeatures), TransferOutcome::Answer(ADJUSTABLE));
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QueryGearType), TransferOutcome::Answer(RELAY_DEFAULT_OPEN));
+        assert_eq!(
+            thresholds(&mut fleet),
+            [1, THRESHOLD_MASK, THRESHOLD_MASK, 0].map(TransferOutcome::Answer),
+            "IEC 62386-208 Table 2"
+        );
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QueryErrorHoldOffTime), TransferOutcome::Answer(0));
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QuerySwitchStatus), TransferOutcome::Answer(0));
+        assert_eq!(
+            ask(&mut fleet, SWITCH, Dt7Command::QueryExtendedVersionNumber),
+            TransferOutcome::Answer(1),
+            "IEC 62386-208 §11.3.4.2 command 255"
+        );
+        for (query, level) in [
+            (StandardCommand::QueryDeviceType, DeviceType::Switching.code()),
+            (StandardCommand::QueryPhysicalMinimum, 254),
+            (StandardCommand::QueryMinLevel, 254),
+            (StandardCommand::QueryMaxLevel, 254),
+        ] {
+            assert_eq!(exchange(&mut fleet, standard(SWITCH, query), true), TransferOutcome::Answer(level), "{query:?}");
+        }
+    }
+
+    #[test]
+    fn stored_thresholds_and_hold_off_read_back_and_an_up_threshold_never_holds_zero() {
+        let mut fleet = switching_bus(ADJUSTABLE);
+        store(&mut fleet, Dt7Command::StoreDtrAsThreshold(Threshold::UpSwitchOn), 0);
+        store(&mut fleet, Dt7Command::StoreDtrAsThreshold(Threshold::UpSwitchOff), 200);
+        store(&mut fleet, Dt7Command::StoreDtrAsThreshold(Threshold::DownSwitchOn), 150);
+        store(&mut fleet, Dt7Command::StoreDtrAsThreshold(Threshold::DownSwitchOff), THRESHOLD_MASK);
+        store(&mut fleet, Dt7Command::StoreDtrAsErrorHoldOffTime, HOLD_OFF_TWO_MINUTES);
+        assert_eq!(
+            thresholds(&mut fleet),
+            [1, 200, 150, THRESHOLD_MASK].map(TransferOutcome::Answer),
+            "IEC 62386-208 §11.3.4: a DTR below the range of validity stores its lower limit"
+        );
+        assert_eq!(
+            ask(&mut fleet, SWITCH, Dt7Command::QueryErrorHoldOffTime),
+            TransferOutcome::Answer(HOLD_OFF_TWO_MINUTES)
+        );
+        exchange(&mut fleet, special(SpecialCommand::Dtr0(0)), false);
+        config(&mut fleet, standard(SWITCH, StandardCommand::SetMinLevel));
+        assert_eq!(
+            exchange(&mut fleet, standard(SWITCH, StandardCommand::QueryMinLevel), true),
+            TransferOutcome::Answer(1),
+            "IEC 62386-208 Table 2: with adjustable thresholds MIN LEVEL ranges from 1"
+        );
+    }
+
+    #[test]
+    fn one_half_of_a_store_pair_does_nothing() {
+        let mut fleet = switching_bus(ADJUSTABLE);
+        exchange(&mut fleet, special(SpecialCommand::Dtr0(HOLD_OFF_TWO_MINUTES)), false);
+        enable_dt7(&mut fleet);
+        exchange(&mut fleet, dt7(SWITCH, Dt7Command::StoreDtrAsErrorHoldOffTime), false);
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QueryErrorHoldOffTime), TransferOutcome::Answer(0));
+    }
+
+    #[test]
+    fn a_gear_without_the_features_keeps_its_factory_thresholds_hold_off_and_levels() {
+        let mut fleet = switching_bus(0);
+        store(&mut fleet, Dt7Command::StoreDtrAsThreshold(Threshold::UpSwitchOff), 200);
+        store(&mut fleet, Dt7Command::StoreDtrAsErrorHoldOffTime, HOLD_OFF_TWO_MINUTES);
+        assert_eq!(thresholds(&mut fleet), [1, THRESHOLD_MASK, THRESHOLD_MASK, 0].map(TransferOutcome::Answer));
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QueryErrorHoldOffTime), TransferOutcome::Answer(0));
+        exchange(&mut fleet, special(SpecialCommand::Dtr0(100)), false);
+        config(&mut fleet, standard(SWITCH, StandardCommand::SetMaxLevel));
+        config(&mut fleet, standard(SWITCH, StandardCommand::SetMinLevel));
+        assert_eq!(
+            [StandardCommand::QueryMinLevel, StandardCommand::QueryMaxLevel]
+                .map(|q| exchange(&mut fleet, standard(SWITCH, q), true)),
+            [TransferOutcome::Answer(254); 2],
+            "IEC 62386-208 §9.4: without programmable thresholds MIN stays at 254, and MAX cannot go below it"
+        );
+    }
+
+    #[test]
+    fn each_feature_bit_opens_only_its_own_store() {
+        let mut thresholds_only = switching_bus(FEATURE_ADJUSTABLE_THRESHOLDS);
+        store(&mut thresholds_only, Dt7Command::StoreDtrAsThreshold(Threshold::UpSwitchOff), 200);
+        store(&mut thresholds_only, Dt7Command::StoreDtrAsErrorHoldOffTime, HOLD_OFF_TWO_MINUTES);
+        assert_eq!(
+            ask(&mut thresholds_only, SWITCH, Dt7Command::QueryThreshold(Threshold::UpSwitchOff)),
+            TransferOutcome::Answer(200)
+        );
+        assert_eq!(
+            ask(&mut thresholds_only, SWITCH, Dt7Command::QueryErrorHoldOffTime),
+            TransferOutcome::Answer(0),
+            "IEC 62386-208 §11.3.4.2: the hold-off is adjustable only with bit 4"
+        );
+
+        let mut hold_off_only = switching_bus(FEATURE_ADJUSTABLE_HOLD_OFF);
+        store(&mut hold_off_only, Dt7Command::StoreDtrAsThreshold(Threshold::UpSwitchOff), 200);
+        store(&mut hold_off_only, Dt7Command::StoreDtrAsErrorHoldOffTime, HOLD_OFF_TWO_MINUTES);
+        assert_eq!(
+            ask(&mut hold_off_only, SWITCH, Dt7Command::QueryThreshold(Threshold::UpSwitchOff)),
+            TransferOutcome::Answer(THRESHOLD_MASK),
+            "IEC 62386-208 §11.3.4.2: the thresholds are adjustable only with bit 3"
+        );
+        assert_eq!(
+            ask(&mut hold_off_only, SWITCH, Dt7Command::QueryErrorHoldOffTime),
+            TransferOutcome::Answer(HOLD_OFF_TWO_MINUTES)
+        );
+        exchange(&mut hold_off_only, special(SpecialCommand::Dtr0(100)), false);
+        config(&mut hold_off_only, standard(SWITCH, StandardCommand::SetMinLevel));
+        assert_eq!(
+            exchange(&mut hold_off_only, standard(SWITCH, StandardCommand::QueryMinLevel), true),
+            TransferOutcome::Answer(254),
+            "IEC 62386-208 §9.4: MIN LEVEL is fixed unless the thresholds are programmable"
+        );
+    }
+
+    #[test]
+    fn reset_restores_the_thresholds_and_hold_off_but_keeps_the_switch_status() {
+        let mut fleet = switching_bus(ADJUSTABLE | FEATURE_REFERENCE_SYSTEM_POWER);
+        store(&mut fleet, Dt7Command::StoreDtrAsThreshold(Threshold::DownSwitchOn), 150);
+        store(&mut fleet, Dt7Command::StoreDtrAsErrorHoldOffTime, HOLD_OFF_TWO_MINUTES);
+        fleet.gears_mut()[0].switching.switch_status = 0;
+        config(&mut fleet, standard(SWITCH, StandardCommand::Reset));
+        assert_eq!(thresholds(&mut fleet), [1, THRESHOLD_MASK, THRESHOLD_MASK, 0].map(TransferOutcome::Answer));
+        assert_eq!(ask(&mut fleet, SWITCH, Dt7Command::QueryErrorHoldOffTime), TransferOutcome::Answer(0));
+        assert_eq!(
+            ask(&mut fleet, SWITCH, Dt7Command::QuerySwitchStatus),
+            TransferOutcome::Answer(0),
+            "IEC 62386-208 Table 2: RESET leaves SWITCH STATUS unchanged"
+        );
+    }
+
+    #[test]
+    fn a_reference_measurement_never_made_reads_as_failed_only_where_the_feature_exists() {
+        let mut referencing = switching_bus(FEATURE_REFERENCE_SYSTEM_POWER);
+        assert_eq!(
+            ask(&mut referencing, SWITCH, Dt7Command::QueryReferenceMeasurementFailed),
+            TransferOutcome::Answer(0xFF)
+        );
+        assert_eq!(
+            ask(&mut referencing, SWITCH, Dt7Command::QuerySwitchStatus),
+            TransferOutcome::Answer(SWITCH_STATUS_REFERENCE_FAILED)
+        );
+        let mut plain = switching_bus(0);
+        assert_eq!(
+            ask(&mut plain, SWITCH, Dt7Command::QueryReferenceMeasurementFailed),
+            TransferOutcome::NoAnswer
+        );
+        assert_eq!(ask(&mut plain, SWITCH, Dt7Command::QueryReferenceRunning), TransferOutcome::NoAnswer);
+    }
+
+    #[test]
+    fn only_a_switching_gear_answers_under_enable_device_type_7() {
+        let mut fleet = switching_bus(ADJUSTABLE);
+        assert_eq!(
+            ask(&mut fleet, 1, Dt7Command::QueryFeatures),
+            TransferOutcome::NoAnswer,
+            "a DT6 gear must not take a Part 208 query"
+        );
+        enable_dt7(&mut fleet);
+        assert_eq!(
+            exchange(&mut fleet, standard(SWITCH, StandardCommand::QueryDeviceType), true),
+            TransferOutcome::Answer(DeviceType::Switching.code()),
+            "IEC 62386-102 §11.3.4: the prelude reaches only an application extended command"
+        );
+        enable_dt7(&mut fleet);
+        assert_eq!(exchange(&mut fleet, dt7(SWITCH, Dt7Command::QueryFeatures), true), TransferOutcome::Answer(ADJUSTABLE));
+    }
+
+    #[test]
+    fn the_backward_window_under_a_dt7_prelude_opens_for_queries_only() {
+        let mut fleet = switching_bus(ADJUSTABLE);
+        enable_dt7(&mut fleet);
+        assert!(fleet.expects_backward(dt7(SWITCH, Dt7Command::QueryErrorHoldOffTime)));
+        assert!(!fleet.expects_backward(dt7(SWITCH, Dt7Command::StoreDtrAsErrorHoldOffTime)));
+        assert!(fleet.expects_backward(dt7(SWITCH, Dt7Command::QueryFeatures)));
+        assert!(
+            !fleet.expects_backward(dt7(SWITCH, Dt7Command::QueryFeatures) & 0xFF00 | 0xEE),
+            "IEC 62386-208 §11.3.4.1: 238 is reserved"
+        );
+    }
 }

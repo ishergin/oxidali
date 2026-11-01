@@ -2,6 +2,7 @@ use crate::dali::frame::ForwardFrame;
 use crate::dali::types::DaliAddress;
 
 pub mod dt6_led;
+pub mod dt7_switching;
 pub mod dt8_color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

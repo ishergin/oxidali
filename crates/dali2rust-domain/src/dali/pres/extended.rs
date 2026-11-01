@@ -1,4 +1,5 @@
 use crate::dali::devices::dt6_led::Dt6Command;
+use crate::dali::devices::dt7_switching::Dt7Command;
 use crate::dali::devices::dt8_color::Dt8Command;
 use crate::dali::devices::{DeviceCommandMetadata, DeviceType};
 use crate::dali::frame::ForwardFrame;
@@ -10,6 +11,7 @@ pub const QUERY_EXTENDED_VERSION_NUMBER_OPCODE: u8 = 0xFF;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtendedCommand {
     Dt6(Dt6Command),
+    Dt7(Dt7Command),
     Dt8(Dt8Command),
     ExtendedVersion { device_type: u8 },
 }
@@ -24,6 +26,7 @@ impl ExtendedCommand {
     pub fn to_forward_frame(&self, address: &DaliAddress) -> ForwardFrame {
         match self {
             Self::Dt6(c) => c.to_forward_frame(address),
+            Self::Dt7(c) => c.to_forward_frame(address),
             Self::Dt8(c) => c.to_forward_frame(address),
             Self::ExtendedVersion { .. } => ForwardFrame::new(
                 address.encode_address_byte() | 0x01,
@@ -35,6 +38,7 @@ impl ExtendedCommand {
     pub fn is_query(&self) -> bool {
         match self {
             Self::Dt6(c) => c.is_query(),
+            Self::Dt7(c) => c.is_query(),
             Self::Dt8(c) => c.is_query(),
             Self::ExtendedVersion { .. } => true,
         }
@@ -43,6 +47,7 @@ impl ExtendedCommand {
     pub fn requires_repeat(&self) -> bool {
         match self {
             Self::Dt6(c) => c.requires_repeat(),
+            Self::Dt7(c) => c.requires_repeat(),
             Self::Dt8(c) => c.requires_repeat(),
             Self::ExtendedVersion { .. } => false,
         }
@@ -52,6 +57,7 @@ impl ExtendedCommand {
     pub fn enable_device_type(&self) -> u8 {
         let md = match self {
             Self::Dt6(c) => c.metadata(),
+            Self::Dt7(c) => c.metadata(),
             Self::Dt8(c) => c.metadata(),
             Self::ExtendedVersion { device_type } => return *device_type,
         };
@@ -85,6 +91,28 @@ mod tests {
         ));
         assert!(cmd.is_query());
         assert_eq!(cmd.enable_device_type(), DeviceType::Led.code());
+    }
+
+    #[test]
+    fn a_dt7_command_goes_behind_enable_device_type_7_and_its_store_is_sent_twice() {
+        let store = ExtendedCommand::Dt7(Dt7Command::StoreDtrAsErrorHoldOffTime);
+        let frame = store.to_forward_frame(&DaliAddress::short(2).unwrap());
+        assert_eq!(frame.address_byte(), 0x05, "short address 2, selector bit set");
+        assert_eq!(frame.command_byte(), 0xE5);
+        assert_eq!(store.enable_device_type(), DeviceType::Switching.code());
+        assert!(store.requires_repeat() && !store.is_query());
+
+        let query = ExtendedCommand::Dt7(Dt7Command::QuerySwitchStatus);
+        assert!(query.is_query() && !query.requires_repeat());
+        assert_eq!(query.enable_device_type(), DeviceType::Switching.code());
+    }
+
+    #[test]
+    fn a_dt7_opcode_without_its_prelude_decodes_as_an_earlier_part() {
+        for opcode in [0xE0, 0xE5, 0xF0, 0xF6, 0xFF] {
+            let cmd = ExtendedCommand::from_opcode(opcode).expect("a shared opcode");
+            assert!(!matches!(cmd, ExtendedCommand::Dt7(_)), "{opcode:#04X} decodes as {cmd:?}");
+        }
     }
 
     #[test]

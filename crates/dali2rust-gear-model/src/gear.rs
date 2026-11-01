@@ -26,6 +26,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_platform::dali::TransferOutcome;
 
 use crate::luminaire::LuminaireBank;
+use crate::switching::Switching;
 
 pub const DALI_YES: u8 = 0xFF;
 pub const SCENE_UNSET: u8 = 0xFF;
@@ -58,6 +59,8 @@ const DEFAULT_FADE_RATE: u8 = 7;
 // IEC 62386-102 §9.5.4
 const EXTENDED_FADE_TIME_MAX: u8 = 0x4F;
 const PHYSICAL_MINIMUM: u8 = 1;
+// IEC 62386-208 Table 2
+const DT7_PHYSICAL_MINIMUM: u8 = 254;
 // IEC 62386-102 §4.2, §11.5.10
 const VERSION_NUMBER_102: u8 = 0x08;
 const VERSION_NUMBER_101: u8 = 0x08;
@@ -97,6 +100,8 @@ pub struct GearSpec {
     pub luminaire_format: Option<LuminaireFormat>,
     pub holds_dtr0_on_unimplemented: bool,
     pub indicator_byte_unimplemented: bool,
+    pub switching_features: u8,
+    pub switching_gear_type: u8,
 }
 
 impl GearSpec {
@@ -117,6 +122,8 @@ impl GearSpec {
             luminaire_format: None,
             holds_dtr0_on_unimplemented: false,
             indicator_byte_unimplemented: false,
+            switching_features: 0,
+            switching_gear_type: 0,
         }
     }
 
@@ -143,11 +150,24 @@ impl GearSpec {
             luminaire_format: None,
             holds_dtr0_on_unimplemented: false,
             indicator_byte_unimplemented: false,
+            switching_features: 0,
+            switching_gear_type: 0,
         }
     }
 }
 
 impl GearSpec {
+    // IEC 62386-208 Table 2
+    pub fn dt7(short_address: Option<u8>, random_address: u32, features: u8, gear_type: u8) -> Self {
+        Self {
+            device_types: vec![DeviceType::Switching.code()],
+            phm: DT7_PHYSICAL_MINIMUM,
+            switching_features: features,
+            switching_gear_type: gear_type,
+            ..Self::dt6(short_address, random_address)
+        }
+    }
+
     pub fn rgb_capable(&self) -> bool {
         self.rgbwaf_channels > 0
     }
@@ -298,6 +318,7 @@ pub struct Gear {
     pub initialise: bool,
     pub withdrawn: bool,
     pub identifying: bool,
+    pub switching: Switching,
     pub dimming_curve: u8,
     pub write_enabled: bool,
     device_type_walk: Option<usize>,
@@ -503,6 +524,7 @@ impl Gear {
             banks: ProfileBanks::build(&spec),
             metering: build_metering(&spec),
             power_on: LevelSetting::factory(DEFAULT_POWER_ON_LEVEL, &spec),
+            switching: Switching::factory(spec.switching_features),
             system_failure: LevelSetting::factory(DEFAULT_SYSTEM_FAILURE_LEVEL, &spec),
             spec,
             enabled: true,
@@ -661,6 +683,10 @@ impl Gear {
 
     pub fn is_dt6(&self) -> bool {
         self.spec.device_types.contains(&DeviceType::Led.code())
+    }
+
+    pub fn is_dt7(&self) -> bool {
+        self.spec.device_types.contains(&DeviceType::Switching.code())
     }
 
     pub(crate) fn holds(&self, frame: u16) -> bool {
@@ -991,8 +1017,12 @@ impl Gear {
     }
 
     fn set_min_level(&mut self, dtr0: u8) {
-        self.min_level = if dtr0 <= self.spec.phm {
-            self.spec.phm
+        if self.levels_fixed() {
+            return;
+        }
+        let floor = self.min_level_floor();
+        self.min_level = if dtr0 <= floor {
+            floor
         } else if dtr0 >= self.max_level {
             self.max_level
         } else {
@@ -1465,6 +1495,7 @@ fn reset_gear(gear: &mut Gear) {
     let tc_out_of_range = gear.tc_out_of_range;
     let rgbwaf_levels = gear.rgbwaf.levels;
     let rgbwaf_control = gear.rgbwaf.control;
+    let switch_status = gear.switching.switch_status;
     *gear = Gear::new(spec);
     gear.enabled = enabled;
     gear.faults = faults;
@@ -1477,6 +1508,7 @@ fn reset_gear(gear: &mut Gear) {
     gear.tc_out_of_range = tc_out_of_range;
     gear.rgbwaf.levels = rgbwaf_levels;
     gear.rgbwaf.control = rgbwaf_control;
+    gear.switching.switch_status = switch_status;
 }
 
 pub fn gear_query_reply(gear: &mut Gear, command: StandardCommand) -> TransferOutcome {

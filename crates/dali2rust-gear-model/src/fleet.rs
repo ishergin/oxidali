@@ -4,11 +4,12 @@ use dali2rust_domain::dali::devices::dt8_color::{colour_value_is_wide,
     Dt8Command, GEAR_FEATURES_AUTOMATIC_ACTIVATION, GEAR_FEATURES_STORE_RESERVED_MASK,
 };
 use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
+use dali2rust_domain::dali::devices::dt7_switching::Dt7Command;
 use dali2rust_domain::dali::devices::{DeviceCommandMetadata, DeviceType};
 use dali2rust_domain::dali::net::address::decode_wire_address;
 use dali2rust_domain::dali::pres::codec::dali_command_from_wire;
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
-use dali2rust_domain::dali::pres::opcode::READ_MEMORY_LOCATION_OPCODE;
+use dali2rust_domain::dali::pres::opcode::{EXTENDED_START, READ_MEMORY_LOCATION_OPCODE};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_domain::dali::types::DaliAddress;
@@ -215,6 +216,9 @@ impl GearFleet {
                     || (self.armed_device_type() == Some(DeviceType::Led.code())
                         && Dt6Command::from_opcode(opcode)
                             .is_some_and(|c| c.metadata().expects_backward))
+                    || (self.armed_device_type() == Some(DeviceType::Switching.code())
+                        && Dt7Command::from_opcode(opcode)
+                            .is_some_and(|c| c.metadata().expects_backward))
             }
         }
     }
@@ -245,6 +249,9 @@ impl GearFleet {
         }
         if enabled == Some(DeviceType::Led.code()) && is_dt6_opcode(opcode) {
             return self.on_extended_dt6(address, opcode, expects_backward);
+        }
+        if enabled == Some(DeviceType::Switching.code()) && opcode >= EXTENDED_START {
+            return self.on_extended_dt7(address, opcode, expects_backward);
         }
         if is_dt8_opcode(opcode)
             || (enabled == Some(DeviceType::Color.code())
@@ -603,6 +610,40 @@ impl GearFleet {
         self.publish_one(None)
     }
 
+    fn on_extended_dt7(
+        &mut self,
+        address: DaliAddress,
+        opcode: u8,
+        expects_backward: bool,
+    ) -> TransferOutcome {
+        let Some(command) = Dt7Command::from_opcode(opcode) else {
+            return self.publish_one(None);
+        };
+        if expects_backward {
+            return self.on_dt7_query(address, command);
+        }
+        let dtr0 = self.regs.dtr0;
+        for gear in self
+            .gears
+            .iter_mut()
+            .filter(|g| g.matches(address) && g.is_dt7() && g.executes_now)
+        {
+            gear.switching.store(gear.spec.switching_features, command, dtr0);
+        }
+        self.publish_one(None)
+    }
+
+    fn on_dt7_query(&mut self, address: DaliAddress, command: Dt7Command) -> TransferOutcome {
+        let mut buf = self.take_scratch();
+        buf.extend(
+            self.gears
+                .iter()
+                .filter(|g| g.matches(address) && g.is_dt7())
+                .filter_map(|g| g.dt7_answer(command)),
+        );
+        self.publish(buf)
+    }
+
     fn dt6_failure_query(&mut self, address: DaliAddress, opcode: u8) -> Option<TransferOutcome> {
         if opcode == Dt6Command::QueryFeatures.opcode() {
             return Some(self.constant_reply(address, DT6_FEATURES_QUERYABLE, Gear::is_dt6));
@@ -945,17 +986,19 @@ fn requires_repeat_under(
     device_type: Option<u8>,
 ) -> bool {
     let indirect = wire_address & 0x01 != 0;
-    if indirect && device_type == Some(DeviceType::Color.code()) {
-        if let Some(command) = Dt8Command::from_opcode(opcode) {
-            return ExtendedCommand::Dt8(command).requires_repeat();
-        }
+    match device_type.filter(|_| indirect).and_then(|t| extended_under(t, opcode)) {
+        Some(command) => command.requires_repeat(),
+        None => decoded.is_some_and(DaliCommand::requires_repeat),
     }
-    if indirect && device_type == Some(DeviceType::Led.code()) {
-        if let Some(command) = Dt6Command::from_opcode(opcode) {
-            return ExtendedCommand::Dt6(command).requires_repeat();
-        }
+}
+
+fn extended_under(device_type: u8, opcode: u8) -> Option<ExtendedCommand> {
+    match DeviceType::from_u8(device_type)? {
+        DeviceType::Color => Dt8Command::from_opcode(opcode).map(ExtendedCommand::Dt8),
+        DeviceType::Led => Dt6Command::from_opcode(opcode).map(ExtendedCommand::Dt6),
+        DeviceType::Switching => Dt7Command::from_opcode(opcode).map(ExtendedCommand::Dt7),
+        _ => None,
     }
-    decoded.is_some_and(DaliCommand::requires_repeat)
 }
 
 fn is_dt8_opcode(opcode: u8) -> bool {
