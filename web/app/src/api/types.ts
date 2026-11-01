@@ -1223,6 +1223,7 @@ export type InputDeviceDetail = InputDeviceSummary & {
   version_number: number | null
   now_ms: number
   nvm_settling_until_ms: number | null
+  manual_config_changed_at_ms: number | null
   instances: InputInstance[]
 }
 

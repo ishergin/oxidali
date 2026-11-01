@@ -35,7 +35,7 @@ pub const RULES_WORKER_HANDLED_EVENTS: &[&str] = &[
     "SceneChangedEvent",
     "InputDeviceChangedEvent",
     "RedundancyTransitionEvent",
-    "Dali103InstanceConfiguredEvent",
+    "DaliInputManualConfigEvent",
     "RegistrySliceReloadedEvent",
     "MqttRuleMessageEvent",
 ];

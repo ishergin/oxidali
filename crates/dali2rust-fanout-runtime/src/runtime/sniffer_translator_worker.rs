@@ -11,11 +11,12 @@ use dali2rust_contracts::bus::{command_envelope, event_envelope};
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusUnitNvmObservedEvent, BusUnitNvmRow, BusUnitQuiescenceObservedEvent, ColorMode,
     Dali103PowerNotificationCommand, Dali103TestFrameCommand, ColorValue, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
+    DaliInputManualConfigEvent,
     DaliObservedFrameEvent, DaliSceneRecalledEvent, DaliTargetScope, DecodeStatus,
     InputDeviceLifecycleKind,
     LevelTransition,
-    InputEventKind, LightSetpoint, ObservedFrameWidth, ObservedKind, Origin, PowerState,
-    RuntimeSource,
+    InputEventKind, LightSetpoint, ManualConfigSource, ObservedFrameWidth, ObservedKind, Origin,
+    PowerState, RuntimeSource,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::dali::dev103::{
@@ -50,6 +51,7 @@ const DAPC_MASK_LEVEL: u8 = 255;
 pub const SNIFFER_TRANSLATOR_REQUIRED_EVENTS: &[&str] = &[
     "DaliInputEventObservedEvent",
     "DaliInputDeviceLifecycleEvent",
+    "DaliInputManualConfigEvent",
     "DaliSceneRecalledEvent",
     "BusUnitNvmObservedEvent",
     "BusUnitQuiescenceObservedEvent",
@@ -745,6 +747,9 @@ fn translate_forward24(
                 },
             );
         }
+        InputEvent::ManualConfig { short_address, source } => publish_manual_config(
+            publisher, bus_id, counters, raw, registry_adapter_id, short_address, source,
+        ),
         InputEvent::Instance { source, info } => publish_instance_event(
             publisher,
             bus_id,
@@ -756,6 +761,26 @@ fn translate_forward24(
             info,
         ),
     }
+}
+
+#[inline(never)]
+fn publish_manual_config(
+    publisher: &BusPublisher,
+    bus_id: BusId,
+    counters: &Arc<SnifferTranslatorCounters>,
+    raw: &ObservedRawFrame,
+    registry_adapter_id: u8,
+    short_address: Option<u8>,
+    source: ManualConfigSource,
+) {
+    let body = DaliInputManualConfigEvent {
+        registry_adapter_id,
+        short_address,
+        source,
+        observed_at_ms: raw.observed_at_ms,
+        observed_at_mono_ms: raw.observed_at_mono_ms,
+    };
+    publish_required_fact(publisher, bus_id, counters, body);
 }
 
 #[allow(clippy::too_many_arguments, reason = "threaded, not rebuilt per call")]

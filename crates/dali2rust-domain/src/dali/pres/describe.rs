@@ -1,6 +1,7 @@
 use crate::dali::dev103::{
     decode_event, instance_type, ButtonEvent, EventSource, ForwardFrame24, InputEvent,
 };
+use dali2rust_contracts::msg::ManualConfigSource;
 use crate::dali::devices::dt7_switching::Dt7Command;
 use crate::dali::devices::{DeviceCommandMetadata, DeviceType};
 use crate::dali::net::address::{decode_wire_address, DaliAddress};
@@ -351,18 +352,36 @@ pub fn describe_forward24(bytes: [u8; 3]) -> FrameDescription {
             detail: Some(describe_power_cycle(short_address, device_group)),
             is_query: false,
         },
+        Some(InputEvent::ManualConfig {
+            short_address,
+            source,
+        }) => FrameDescription {
+            target: None,
+            name: "MANUAL CONFIGURATION".to_string(),
+            detail: Some(describe_manual_config(short_address, source)),
+            is_query: false,
+        },
         Some(InputEvent::Instance { source, info }) => FrameDescription {
             target: None,
             name: describe_event_name(&source, info),
             detail: Some(describe_event_source(&source, info)),
             is_query: false,
         },
-        None => FrameDescription {
-            target: None,
-            name: "24-BIT COMMAND".to_string(),
-            detail: Some(format!("{raw} (IEC 62386-103 command)")),
-            is_query: false,
-        },
+        None => describe_undecoded24(frame, &raw),
+    }
+}
+
+fn describe_undecoded24(frame: ForwardFrame24, raw: &str) -> FrameDescription {
+    let (name, detail) = if frame.is_command() {
+        ("24-BIT COMMAND", format!("{raw} (IEC 62386-103 command)"))
+    } else {
+        ("24-BIT EVENT", format!("{raw} (reserved IEC 62386-103 event)"))
+    };
+    FrameDescription {
+        target: None,
+        name: name.to_string(),
+        detail: Some(detail),
+        is_query: false,
     }
 }
 
@@ -403,6 +422,33 @@ fn describe_power_cycle(short_address: Option<u8>, device_group: Option<u8>) -> 
         (None, Some(g)) => format!("group {g}, no short address"),
         (None, None) => "unaddressed device".to_string(),
     }
+}
+
+fn describe_manual_config(short_address: Option<u8>, source: ManualConfigSource) -> String {
+    let device =
+        short_address.map_or_else(|| "unaddressed device".to_string(), |a| format!("device {a}"));
+    let changed = match source {
+        ManualConfigSource::Instance103 { instance_type, variable_bit } => {
+            format!("instance type {instance_type}, Part 103 variable bit {variable_bit}")
+        }
+        ManualConfigSource::Instance3xx { instance_type, variable_bit } => {
+            format!("instance type {instance_type}, Part 3xx variable bit {variable_bit}")
+        }
+        ManualConfigSource::Device { variable_bit } => {
+            format!("device variable bit {variable_bit}")
+        }
+        ManualConfigSource::ShortAddress { previous } => previous.map_or_else(
+            || "short address, previously MASK".to_string(),
+            |p| format!("short address, previously {p}"),
+        ),
+        ManualConfigSource::InstanceFeature { feature_type, variable_bit } => {
+            format!("instance feature type {feature_type}, variable bit {variable_bit}")
+        }
+        ManualConfigSource::DeviceFeature { feature_type, variable_bit } => {
+            format!("device feature type {feature_type}, variable bit {variable_bit}")
+        }
+    };
+    format!("{device}, {changed}")
 }
 
 pub fn describe_backward8(value: u8) -> FrameDescription {
@@ -617,6 +663,25 @@ mod tests {
         let d = describe_forward24([0xFE, 0b111_0_0000, 0b01_000101]);
         assert_eq!(d.name, "POWER NOTIFICATION");
         assert_eq!(d.detail.as_deref(), Some("device 5"));
+    }
+
+    #[test]
+    fn a_manual_configuration_event_names_the_device_and_what_changed() {
+        let d = describe_forward24([0xE0, 0xB0, 0xC5]);
+        assert_eq!(d.name, "MANUAL CONFIGURATION");
+        assert_eq!(
+            d.detail.as_deref(),
+            Some("device 5, instance type 1, Part 103 variable bit 3")
+        );
+        let moved = describe_forward24([0xE6, 0xA2, 0xC7]);
+        assert_eq!(moved.detail.as_deref(), Some("device 7, short address, previously 5"));
+    }
+
+    #[test]
+    fn a_reserved_event_encoding_is_named_an_event_not_a_command() {
+        let d = describe_forward24([0xE4, 0x81, 0xC5]);
+        assert_eq!(d.name, "24-BIT EVENT");
+        assert_eq!(d.detail.as_deref(), Some("0xE4 0x81 0xC5 (reserved IEC 62386-103 event)"));
     }
 
     #[test]

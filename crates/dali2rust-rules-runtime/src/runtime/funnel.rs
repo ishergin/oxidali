@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use dali2rust_contracts::msg::{
-    BusEventPayload, DaliInputEventObservedEvent, InputEventKind as WireKind,
-    RuntimeStateChangedEvent,
+    BusEventPayload, DaliInputEventObservedEvent, DaliInputManualConfigEvent,
+    InputEventKind as WireKind, RuntimeStateChangedEvent,
 };
 
 use crate::runtime::engine::{EngineInput, InputEventKind};
@@ -23,6 +23,17 @@ fn button_kind(code: u16) -> Option<InputEventKind> {
     })
 }
 
+fn manual_config_inputs(ev: &DaliInputManualConfigEvent) -> Vec<EngineInput<'static>> {
+    ev.named_short_addresses()
+        .into_iter()
+        .flatten()
+        .map(|short_address| EngineInput::ManualConfigChanged {
+            adapter_id: ev.registry_adapter_id,
+            short_address,
+        })
+        .collect()
+}
+
 const OCCUPANCY_OCCUPIED_BIT: u16 = 1 << 1;
 const OCCUPANCY_MOVEMENT_BIT: u16 = 1 << 0;
 
@@ -34,7 +45,6 @@ pub(crate) struct FunnelState {
     devices: HashMap<(u8, u8), bool>,
     active: Option<bool>,
     hcl: HashMap<dali2rust_rules_model::LightTarget, bool>,
-    manual_config: HashMap<(u8, u8, u8), bool>,
     watch_groups: bool,
 }
 
@@ -57,7 +67,7 @@ impl FunnelState {
                     scene_id: ev.scene_id,
                 }]
             }
-            BusEventPayload::Dali103InstanceConfiguredEvent(ev) => self.manual_config_edge(ev),
+            BusEventPayload::DaliInputManualConfigEvent(ev) => manual_config_inputs(ev),
             BusEventPayload::DaliInputDeviceLifecycleEvent(ev) => {
                 vec![EngineInput::PowerCycled {
                     adapter_id: ev.registry_adapter_id,
@@ -160,24 +170,6 @@ impl FunnelState {
             level,
             was_on,
             previous_level,
-        }]
-    }
-
-    fn manual_config_edge<'a>(
-        &mut self,
-        ev: &dali2rust_contracts::msg::Dali103InstanceConfiguredEvent,
-    ) -> Vec<EngineInput<'a>> {
-        let Some(active) = ev.manual_config_active else {
-            return Vec::new();
-        };
-        let key = (ev.registry_adapter_id, ev.short_address, ev.instance_number);
-        let previous = self.manual_config.insert(key, active);
-        if previous.is_none() || previous == Some(active) {
-            return Vec::new();
-        }
-        vec![EngineInput::ManualConfigChanged {
-            adapter_id: ev.registry_adapter_id,
-            short_address: ev.short_address,
         }]
     }
 

@@ -45,10 +45,8 @@
   `RuntimeStateChangedEvent` (лампы и агрегаты групп), `DaliSceneRecalledEvent`
   (случившийся recall — наш или чужой, увиденный сниффером), `RedundancyTransitionEvent`
   (`controller becomes active`), `DaliSettingsChangedEvent`,
-  `Dali103InstanceConfiguredEvent` (`manual config changed`; не срабатывает, пока флаг
-  Part 333 не читается —
-  [`../../../reference/iec62386-conformance-gaps.md`](../../../reference/iec62386-conformance-gaps.md)
-  §9.4).
+  `DaliInputManualConfigEvent` (`manual config changed`: устройство само сообщило, что
+  его настроили вручную, Part 333 §9.3).
 - **Сообщения брокера**: `MqttRuleMessageEvent` (`when mqtt`) публикует мост MQTT. Топики
   триггеров мост читает из стора правил, когда сдвигается поколение документа — его
   двигает каждая замена документа, гидрация и перечитка слайсов включительно

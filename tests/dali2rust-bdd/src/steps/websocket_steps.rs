@@ -77,7 +77,7 @@ fn wait_for_counter(world: &mut DaliWorld, name: &str, check: impl Fn(u64) -> bo
     websocket_counter(world, name)
 }
 
-// WS-001 WS-007 WS-011 WS-012 WS-031 INP-006 WS-050
+// WS-001 WS-007 WS-011 WS-012 WS-031 INP-006 WS-050 INP-104
 #[when("I open a WebSocket connection")]
 async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -160,7 +160,7 @@ async fn then_hello_channels(world: &mut DaliWorld) {
     assert_eq!(channel_list(&frame), V1_CHANNELS);
 }
 
-// WS-002 WS-006 WS-008 WS-009 WS-041 WS-042 WS-043 WS-044 INP-006 WS-053
+// WS-002 WS-006 WS-008 WS-009 WS-041 WS-042 WS-043 WS-044 INP-006 WS-053 INP-104
 #[when(regex = r#"^the WebSocket client subscribes to "([^"]+)"$"#)]
 async fn when_subscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).subscribe(&channels);
@@ -180,7 +180,7 @@ async fn when_unsubscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).unsubscribe(&channels);
 }
 
-// WS-002 WS-005 WS-006 WS-008 WS-009 WS-011 WS-045 INP-006 WS-057
+// WS-002 WS-005 WS-006 WS-008 WS-009 WS-011 WS-045 INP-006 WS-057 INP-104
 #[then(regex = r#"^the WebSocket client should receive op "([^"]+)"$"#)]
 async fn then_receive_op(world: &mut DaliWorld, op: String) {
     let frame = last_client(world)
@@ -235,7 +235,7 @@ async fn then_receive_event(world: &mut DaliWorld, event_type: String, channel: 
     world.remembered_json = Some(frame);
 }
 
-// COMM-112 COMM-113 POLICY-022
+// COMM-112 COMM-113 POLICY-022 INP-104
 #[then(regex = r#"^the WebSocket client should receive a "([^"]+)" frame on channel "([^"]+)" whose payload "([a-z_]+)" is (\d+)$"#)]
 async fn then_receive_event_naming(
     world: &mut DaliWorld,

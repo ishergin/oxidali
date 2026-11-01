@@ -8,8 +8,9 @@ use super::errors::CompactErrorPayload;
 use super::kinds::{
     AttributeGroupReadOutcome, BusUnitNvmRow, ColorMode, DaliTargetScope, DecodeStatus,
     DeviceCommandScope, DeviceType, DeviceTypeSet,
-    IdentifyMechanism, InputDeviceLifecycleKind, InputEventKind, ObservedFrameWidth, ObservedKind,
-    OperationStatus, OperationType, OperationWorkerSignal, RuntimeSource,
+    IdentifyMechanism, InputDeviceLifecycleKind, InputEventKind, ManualConfigSource,
+    ObservedFrameWidth, ObservedKind, OperationStatus, OperationType, OperationWorkerSignal,
+    RuntimeSource,
 };
 use super::payload_macros::declare_bus_payloads;
 use super::state::{
@@ -910,6 +911,34 @@ declare_bus_payloads! {
         hold_hcl: true,
     };
 
+    pub struct DaliInputManualConfigEvent {
+        pub registry_adapter_id: u8,
+        pub short_address: Option<u8>,
+        pub source: ManualConfigSource,
+        pub observed_at_ms: u64,
+        pub observed_at_mono_ms: u32,
+    }
+    budget = DaliInputManualConfigEvent {
+        registry_adapter_id: u8::MAX,
+        short_address: Some(63),
+        source: ManualConfigSource::DeviceFeature { feature_type: u8::MAX, variable_bit: u8::MAX },
+        observed_at_ms: u64::MAX,
+        observed_at_mono_ms: u32::MAX,
+    };
+
+}
+
+impl DaliInputManualConfigEvent {
+    #[must_use]
+    pub fn named_short_addresses(&self) -> [Option<u8>; 2] {
+        let previous = match self.source {
+            ManualConfigSource::ShortAddress { previous } if previous != self.short_address => {
+                previous
+            }
+            _ => None,
+        };
+        [self.short_address, previous]
+    }
 }
 
 pub const APPLICATION_ACTIVE_UNMOVED: u8 = 0;
@@ -1106,5 +1135,35 @@ impl IpAddressAssignedEvent {
         Self {
             ip_v4: if ok && idx == OCTETS { out } else { [0u8; OCTETS] },
         }
+    }
+}
+
+#[cfg(test)]
+mod manual_config_tests {
+    use super::*;
+
+    fn event(short_address: Option<u8>, source: ManualConfigSource) -> DaliInputManualConfigEvent {
+        DaliInputManualConfigEvent {
+            registry_adapter_id: 0,
+            short_address,
+            source,
+            observed_at_ms: 0,
+            observed_at_mono_ms: 0,
+        }
+    }
+
+    #[test]
+    fn an_address_changed_by_hand_names_each_address_once() {
+        let moved = |short, previous| {
+            event(short, ManualConfigSource::ShortAddress { previous }).named_short_addresses()
+        };
+        assert_eq!(moved(Some(7), Some(5)), [Some(7), Some(5)]);
+        assert_eq!(moved(Some(5), Some(5)), [Some(5), None]);
+        assert_eq!(moved(None, Some(5)), [None, Some(5)]);
+        assert_eq!(moved(Some(7), None), [Some(7), None]);
+        assert_eq!(
+            event(Some(5), ManualConfigSource::Device { variable_bit: 1 }).named_short_addresses(),
+            [Some(5), None]
+        );
     }
 }

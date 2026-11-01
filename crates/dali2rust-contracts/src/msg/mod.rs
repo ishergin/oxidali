@@ -29,8 +29,8 @@ pub use kinds::{
     DimDirection, LevelPreset, LevelTransition,
     MemoryBankReadPreset,
     CommissioningStep, IdentifyMechanism, InitialiseScope, InputDeviceLifecycleKind,
-    InputEventKind, MessageKind, ObservedFrameWidth, ObservedKind, OperationStatus,
-    OperationType, OperationWorkerSignal, Origin, PowerState, RuntimeSource,
+    InputEventKind, ManualConfigSource, MessageKind, ObservedFrameWidth, ObservedKind,
+    OperationStatus, OperationType, OperationWorkerSignal, Origin, PowerState, RuntimeSource,
 };
 pub use state::{
     CapabilityFlags, ColorValue, Dt6ReadSnapshot, Dt7ReadSnapshot, Dt7SwitchingWrite, ExtendedVersionEntry, FailureStatus, Level,
@@ -125,7 +125,7 @@ pub use events::{
     Dali103ScanProgressEvent,
     Dali103ScanStartedEvent,
     DaliBusHealthProbedEvent, DaliInputDeviceLifecycleEvent, DaliInputEventObservedEvent,
-    InputDeviceChangedEvent,
+    DaliInputManualConfigEvent, InputDeviceChangedEvent,
 };
 pub use events::PollerSettingsChangedEvent;
 pub use commands::{

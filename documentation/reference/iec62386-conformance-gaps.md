@@ -189,7 +189,6 @@ supersedes both.
 | --- | --- |
 | 305, 306 | Colour and general-purpose sensor events are carried untyped (instance type and raw value). |
 | 302, 304 | Input values travel as the raw 10-bit magnitude: the scaling (103 AMD1 §9.8.2) is not available. |
-| 333 | Manual configuration: not implemented. Neither its event nor an instance's manual-configuration state is read, so the REST field `manual_config_active` stays `false` and the rules trigger `manual config changed` never fires. |
 | DiiA 341, 342 | Bluetooth Mesh and Zigbee gateways: relevant only if the controller becomes a gateway. |
 | DiiA 351 | Luminaire-mounted control devices: not implemented as a device; the controller answers their arbitration probe (§8). |
 | 104, 105, DiiA 150 | Not needed: alternative media, firmware update over DALI, auxiliary supply. |
@@ -213,6 +212,15 @@ it then sends no forward frames but still answers and monitors. The input-device
 reads `QUERY DEVICE CAPABILITIES` (bit 0 `applicationControllerPresent`) and
 `QUERY DEVICE STATUS`, so such a unit is visible, but no product path sends it
 `DISABLE APPLICATION CONTROLLER`: it keeps driving gear beside this controller.
+
+### 15.4 Part 333 manual configuration is heard, not managed — `GAP`
+
+The manual configuration event (333 §9.3) is decoded, fires the rules trigger
+`manual config changed` and dates the record of every address it names. What the device
+holds is not read: no scan sends `QUERY MANUAL CONFIGURATION 103` / `3xx`, so
+`manual_config_active` stays `false`, and a write to a variable under local control is
+discarded by the device without the product knowing. `SET MANUAL CONFIGURATION`, the
+capability queries and `QUERY ANY MANUAL CONFIGURATION ENABLED` are never sent.
 
 ## 16. Control gear never speaks unbidden
 

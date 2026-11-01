@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, BusUnitNvmRow, ColorMode, DaliInputEventObservedEvent, DaliObservedFrameEvent,
     DaliTargetScope, DecodeStatus, InputDeviceLifecycleKind, InputEventKind,
-    LevelTransition, ObservedKind, Origin,
+    LevelTransition, ManualConfigSource, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
 use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence, PowerNotice};
@@ -626,6 +626,25 @@ fn a_power_notification_becomes_a_lifecycle_event_snif044() {
     assert_eq!(body.kind, InputDeviceLifecycleKind::PowerCycle);
     assert_eq!(body.short_address, Some(5));
     assert_eq!(harness.counters.input_lifecycle.load(Relaxed), 1);
+}
+
+#[test]
+fn a_manual_configuration_frame_becomes_its_own_event_and_no_instance_event() {
+    let harness = spawn_harness();
+    harness.tx.send(forward24([0xE6, 0xA2, 0xC7])).expect("send");
+
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusEventPayload::DaliInputManualConfigEvent(_))
+    });
+    let BusEventPayload::DaliInputManualConfigEvent(body) = &ev.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    assert_eq!(body.short_address, Some(7));
+    assert_eq!(body.source, ManualConfigSource::ShortAddress { previous: Some(5) });
+    assert_eq!(ev.meta.origin, Origin::Sniffer);
+    assert_eq!(harness.counters.unknown_seen.load(Relaxed), 0);
+    assert_eq!(harness.counters.input_events_generic.load(Relaxed), 0);
+    assert_eq!(harness.counters.input_lifecycle.load(Relaxed), 0);
 }
 
 #[test]

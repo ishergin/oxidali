@@ -5,7 +5,7 @@ use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResu
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, ColorMode, Dali103InstanceAction, DaliTargetScope,
-    DimDirection, OperationType, Origin,
+    DimDirection, ManualConfigSource, OperationType, Origin,
     PowerState, RULE_SOURCE_CHUNK_BYTES, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -940,7 +940,7 @@ fn a_target_two_schedules_drive_fires_its_override_edge_once() {
 }
 
 #[test]
-fn a_part_333_flag_moving_fires_the_rule_that_watches_the_device() {
+fn a_manual_configuration_event_fires_the_rule_of_each_address_it_names() {
     let h = harness("rules-manual-config");
     publish_document(
         &h,
@@ -953,14 +953,38 @@ fn a_part_333_flag_moving_fires_the_rule_that_watches_the_device() {
     wait_revision(&h.store, 1);
 
     publish_bus_event(&h, 132, instance_configured(false));
+    publish_bus_event(&h, 133, instance_configured(true));
+    let elsewhere = ManualConfigSource::Device { variable_bit: 1 };
+    publish_bus_event(&h, 134, manual_config(Some(4), elsewhere));
+    publish_bus_event(
+        &h,
+        135,
+        manual_config(Some(9), ManualConfigSource::ShortAddress { previous: Some(3) }),
+    );
+    let (_, level) = recv_setpoint(&h).expect("the address the device left must fire its rule");
+    assert_eq!(level, Some(33));
     assert!(
         recv_setpoint(&h).is_none(),
-        "the first reading of an instance is a seed, not a change"
+        "a scan reading the flag and another device's event fire nothing"
     );
 
-    publish_bus_event(&h, 133, instance_configured(true));
-    let (_, level) = recv_setpoint(&h).expect("the flag moving must fire the rule");
+    let changed = ManualConfigSource::Instance103 { instance_type: 1, variable_bit: 3 };
+    publish_bus_event(&h, 136, manual_config(Some(3), changed));
+    let (_, level) = recv_setpoint(&h).expect("the device's own event must fire its rule");
     assert_eq!(level, Some(33));
+}
+
+fn manual_config(
+    short_address: Option<u8>,
+    source: ManualConfigSource,
+) -> dali2rust_contracts::msg::DaliInputManualConfigEvent {
+    dali2rust_contracts::msg::DaliInputManualConfigEvent {
+        registry_adapter_id: 0,
+        short_address,
+        source,
+        observed_at_ms: 1,
+        observed_at_mono_ms: 1,
+    }
 }
 
 fn instance_configured(manual: bool) -> dali2rust_contracts::msg::Dali103InstanceConfiguredEvent {
