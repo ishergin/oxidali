@@ -248,6 +248,7 @@ impl OperationType {
         !matches!(
             self,
             Self::ConfigWrite
+                | Self::AttributeWrite
                 | Self::GroupApply
                 | Self::SceneApply
                 | Self::PolicyApply
