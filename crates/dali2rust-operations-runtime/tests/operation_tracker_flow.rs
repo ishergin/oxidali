@@ -494,6 +494,33 @@ fn a_commissioning_begin_never_marks_a_running_one_cancelled() {
 }
 
 #[test]
+fn a_second_write_of_one_device_leaves_the_first_its_own_outcome() {
+    let (publisher, tracker, _host) = spawn_harness();
+    for (corr, family) in [(9950u64, "pd-wattr"), (9960, "pd-memlum")] {
+        let (first, second) = (format!("{family}-0-3-{corr}"), format!("{family}-0-3-{}", corr + 1));
+        for (workflow, key) in [(corr, &first), (corr + 1, &second)] {
+            publish(&publisher, BusChannel::Commands, begin_envelope(workflow, key, OperationType::AttributeWrite, 600_000));
+        }
+        wait_until(
+            || tail_for(&tracker, &second).first().copied() == Some(OperationStatus::Accepted),
+            Duration::from_millis(500),
+        );
+        publish(&publisher, BusChannel::Events, signal_event(corr, OperationWorkerSignal::WorkerFailed, ErrorCode::VerifyFailed));
+        publish(&publisher, BusChannel::Events, signal_event(corr + 1, OperationWorkerSignal::WorkerSucceeded, ErrorCode::InvalidJson));
+        wait_until(
+            || tail_for(&tracker, &second).last().copied() == Some(OperationStatus::Succeeded),
+            Duration::from_millis(500),
+        );
+        assert_eq!(
+            tail_for(&tracker, &first),
+            vec![OperationStatus::Accepted, OperationStatus::Failed],
+            "the worker runs both writes in turn, so the first's own outcome is the one to show"
+        );
+        assert_eq!(last_error_for(&tracker, &first), Some(ErrorCode::VerifyFailed));
+    }
+}
+
+#[test]
 fn registry_reset_cancels_active_operations_op005() {
     let (publisher, tracker, _host) = spawn_harness();
     publish(

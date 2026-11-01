@@ -14,6 +14,25 @@ Feature: Physical device write-attributes
     And the last operation eventually succeeds
     And all scripted DALI exchanges should be consumed without errors
 
+  @id:PD-306
+  Scenario: A second write of one device leaves the first its own outcome
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a fade-time script for short address 0 writing 500ms and then 2000ms
+    And the DALI transport blocks indefinitely
+    When I POST JSON {"fade_time_ms":500} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    When I POST JSON {"fade_time_ms":2000} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually becomes active
+    When the DALI transport unblocks
+    Then every operation eventually finishes
+    And the operations list should contain exactly 3 operations
+    And every listed operation should have succeeded
+    And physical device 0 eventually exposes fade_time_ms 2000
+    And all scripted DALI exchanges should be consumed without errors
+
   @id:PD-034
   Scenario: Fade-time write then attribute read returns the canonical IEC milliseconds
     Given a golden control-gear discovery script for short address 0

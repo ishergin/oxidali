@@ -14,6 +14,7 @@ use super::attribute_read_scripts::script_dt8_colour_value;
 use super::read_model::{fetch_physical_device_full, wait_for_physical_device, READ_MODEL_TIMEOUT};
 use super::write_scripts::{
     script_dimming_curve_write, script_dimming_curve_write_no_clear, script_fade_time_write,
+    script_fade_time_writes_in_turn,
     script_addressed_config_triple, script_fade_time_write_answered,
     script_fade_time_write_violated, script_level_store, script_narrow_colour_value,
     script_level_store_keeping_tc, script_max_triple, script_min_triple,
@@ -227,7 +228,13 @@ async fn given_fade_time_2000_write_script(world: &mut DaliWorld) {
     script_fade_time_write(&world.dali_mock().lock().expect("mock lock"), 4);
 }
 
-// PD-034 PD-241 PD-242 PD-243 SYS-233
+// PD-306
+#[given("a fade-time script for short address 0 writing 500ms and then 2000ms")]
+async fn given_two_fade_time_writes_in_turn(world: &mut DaliWorld) {
+    script_fade_time_writes_in_turn(&world.dali_mock().lock().expect("mock lock"), &[1, 4]);
+}
+
+// PD-034 PD-241 PD-242 PD-243 SYS-233 PD-306
 #[then(regex = r"^physical device 0 eventually exposes fade_time_ms (\d+)$")]
 async fn then_pd_fade_time_ms(world: &mut DaliWorld, expected: u64) {
     let port = world.server_port();

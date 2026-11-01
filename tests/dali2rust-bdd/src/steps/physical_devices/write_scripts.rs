@@ -38,11 +38,23 @@ pub(super) fn script_fade_time_write(mock: &MockDaliTransport, dtr0: u8) {
 
 fn script_fade_time_pair(mock: &MockDaliTransport, dtr0: u8) -> u16 {
     mock.clear();
+    script_fade_time_frames(mock, dtr0)
+}
+
+fn script_fade_time_frames(mock: &MockDaliTransport, dtr0: u8) -> u16 {
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(dtr0)));
     let set_fade = standard_frame(TEST_SHORT_ADDRESS, StandardCommand::SetFadeTime);
     mock.expect_forward_frame(set_fade);
     mock.expect_forward_frame(set_fade);
     standard_frame(TEST_SHORT_ADDRESS, StandardCommand::QueryFadeTimeFadeRate)
+}
+
+pub(super) fn script_fade_time_writes_in_turn(mock: &MockDaliTransport, dtr0s: &[u8]) {
+    mock.clear();
+    for &dtr0 in dtr0s {
+        let read_back = script_fade_time_frames(mock, dtr0);
+        mock.expect_forward_frame_with_backward(read_back, Some(dtr0 << 4));
+    }
 }
 
 pub(super) fn script_fade_time_write_answered(mock: &MockDaliTransport, dtr0: u8, answer: Option<u8>) {
