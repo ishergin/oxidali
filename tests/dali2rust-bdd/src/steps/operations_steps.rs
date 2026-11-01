@@ -72,7 +72,7 @@ async fn then_last_operation_eventually_runs(world: &mut DaliWorld) {
     wait_for_operation_status(world, "running");
 }
 
-// INP-099 COMM-104
+// INP-099 COMM-104 PD-306
 #[then("the last operation eventually becomes active")]
 async fn then_last_operation_becomes_active(world: &mut DaliWorld) {
     wait_for_operation_active(world);

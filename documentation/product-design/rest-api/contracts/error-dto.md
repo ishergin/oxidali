@@ -74,7 +74,7 @@
 | `vl_unbound` | Строка apply/лампа без привязки. |
 | `policy_exception` | Причина пропуска прибора в `result.skipped` применения политики: прибор в исключениях ([`policies.md`](../resources/policies.md) §Исключения). Не отказ. |
 | `unknown_device` | Отказ подтверждения `PATCH /policies`: новый элемент исключений называет устройство, которого реестр не знает; HTTP отвечает `422` ([`policies.md`](../resources/policies.md) §Ошибки). |
-| `superseded` | Причина отмены (`cancelled`): операцию вытеснила новая того же типа ([`operations.md`](../resources/operations.md) §Жизненный цикл). |
+| `superseded` | Причина отмены (`cancelled`): операцию вытеснила новая того же типа над тем же ресурсом; какие типы не вытесняются — [`operations.md`](../resources/operations.md) §Жизненный цикл. |
 | `registry_reset` | Причина отмены (`cancelled`) при сбросе таблицы операций; продового издателя у сброса нет. |
 | `confirmation_timeout` | Этап операции не получил подтверждения. |
 

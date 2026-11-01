@@ -25,6 +25,7 @@ Feature: Physical device write-attributes
     Then the response status should be 202
     When I POST JSON {"fade_time_ms":2000} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
     Then the response status should be 202
+    And the last operation eventually becomes active
     When the DALI transport unblocks
     Then every operation eventually finishes
     And the operations list should contain exactly 3 operations
