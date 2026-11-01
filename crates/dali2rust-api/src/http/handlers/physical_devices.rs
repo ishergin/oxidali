@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
-    ColorMode, DaliAttributeGroup, DeviceType, DeviceTypeSet, DiscoveryMode,
+    ColorMode, DaliAttributeGroup, DeviceType, DeviceTypeSet, DiscoveryMode, Dt7SwitchingWrite,
     MemoryBankReadPreset, OperationType, PhysicalDeviceOverrideCommand as Patch,
 };
 use crate::bus_codec::SOURCE_ID_UNSPECIFIED;
@@ -19,6 +19,7 @@ use crate::http::physical_device_state::{
     write_attribute_section, PhysicalDeviceHttpState, PhysicalDevicePatchWatch,
 };
 use crate::http::types::HttpResponse;
+use dali2rust_domain::dali::devices::dt7_switching::Threshold;
 use dali2rust_domain::registry::AttributeSectionKind;
 
 use super::common::{
@@ -289,6 +290,7 @@ pub struct PdWriteAttrData {
     min_level: Option<u8>,
     max_level: Option<u8>,
     dimming_curve: Option<u8>,
+    switching: Dt7SwitchingWrite,
 }
 
 impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceWriteAttributesHandler {
@@ -320,7 +322,7 @@ impl crate::http::handlers::common::MutatingHandler for PhysicalDeviceWriteAttri
         let op_serial = self.correlation.next_id();
         let op_key = format!("pd-wattr-{aid}-{short}-{op_serial}");
         let workflow = self.correlation.next_id();
-        let cmd = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliWriteAttributesCommand { short_address: short, fade_time_ms: data.fade_time_ms, fade_rate: data.fade_rate, power_on_level: data.power_on_level, system_failure_level: data.system_failure_level, extended_fade_time_ms: data.extended_fade_time_ms, registry_adapter_id: aid, tc_coolest_mirek: data.tc_coolest_mirek, tc_warmest_mirek: data.tc_warmest_mirek, min_level: data.min_level, max_level: data.max_level, dimming_curve: data.dimming_curve, signals_operation: true, known_device_types: self.state.physical_device_known_types(aid, short), refusal_fails: false });
+        let cmd = dali2rust_contracts::bus::command_envelope(SOURCE_ID_UNSPECIFIED, workflow, self.bus_id.0, Some(dali2rust_contracts::msg::Origin::Api), dali2rust_contracts::msg::DaliWriteAttributesCommand { short_address: short, fade_time_ms: data.fade_time_ms, fade_rate: data.fade_rate, power_on_level: data.power_on_level, system_failure_level: data.system_failure_level, extended_fade_time_ms: data.extended_fade_time_ms, registry_adapter_id: aid, tc_coolest_mirek: data.tc_coolest_mirek, tc_warmest_mirek: data.tc_warmest_mirek, min_level: data.min_level, max_level: data.max_level, dimming_curve: data.dimming_curve, switching: data.switching, signals_operation: true, known_device_types: self.state.physical_device_known_types(aid, short), refusal_fails: false });
         publish_begin_then_semantic_command_pair(
             &self.publisher,
             self.bus_id,
@@ -656,6 +658,11 @@ const PD_WRITE_ATTRIBUTE_KEYS: &[&str] = &[
     "min_level",
     "max_level",
     "dimming_curve",
+    "up_switch_on_threshold",
+    "up_switch_off_threshold",
+    "down_switch_on_threshold",
+    "down_switch_off_threshold",
+    "error_hold_off",
 ];
 
 const PD_PATCH_KEYS: &[&str] = &[
@@ -734,6 +741,35 @@ fn parse_pd_write_attr_fields(
         min_level: min_level.map(|x| x as u8),
         max_level: max_level.map(|x| x as u8),
         dimming_curve: dimming_curve.map(|x| x as u8),
+        switching: parse_switching_write_fields(obj)?,
+    })
+}
+
+// IEC 62386-208 Table 2
+fn parse_threshold_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    threshold: Threshold,
+) -> Result<Option<u8>, HttpResponse> {
+    let Some(value) = parse_bounded_attr_field(obj, key, u64::from(u8::MAX))? else {
+        return Ok(None);
+    };
+    let value = value as u8;
+    if threshold.within_range(value) != value {
+        return Err(json_err(422, "invalid_value"));
+    }
+    Ok(Some(value))
+}
+
+fn parse_switching_write_fields(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Dt7SwitchingWrite, HttpResponse> {
+    Ok(Dt7SwitchingWrite {
+        up_switch_on_threshold: parse_threshold_field(obj, "up_switch_on_threshold", Threshold::UpSwitchOn)?,
+        up_switch_off_threshold: parse_threshold_field(obj, "up_switch_off_threshold", Threshold::UpSwitchOff)?,
+        down_switch_on_threshold: parse_threshold_field(obj, "down_switch_on_threshold", Threshold::DownSwitchOn)?,
+        down_switch_off_threshold: parse_threshold_field(obj, "down_switch_off_threshold", Threshold::DownSwitchOff)?,
+        error_hold_off: parse_bounded_attr_field(obj, "error_hold_off", u64::from(u8::MAX))?.map(|x| x as u8),
     })
 }
 

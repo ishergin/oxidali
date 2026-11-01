@@ -145,7 +145,7 @@ fn written_event(
     power_on_level: Option<u8>,
     error: Option<dali2rust_contracts::msg::CompactErrorPayload>,
 ) -> dali2rust_contracts::msg::EventEnvelope {
-    dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: 3, fade_time_ms: None, fade_rate: None, power_on_level, system_failure_level: None, extended_fade_time_ms: None, registry_adapter_id: 0, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, error })
+    dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, corr, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: 3, fade_time_ms: None, fade_rate: None, power_on_level, system_failure_level: None, extended_fade_time_ms: None, registry_adapter_id: 0, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, switching: Default::default(), error })
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn attributes_written_updates_common102_and_emits_physical_device_changed() {
     let before = counters.events.dali_attributes_committed.load(Ordering::Relaxed);
     publish_event(
         &publisher,
-        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 10, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: 3, fade_time_ms: Some(700), fade_rate: Some(7), power_on_level: Some(200), system_failure_level: Some(201), extended_fade_time_ms: Some(900), registry_adapter_id: 0 , tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, error: None }),
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 10, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: 3, fade_time_ms: Some(700), fade_rate: Some(7), power_on_level: Some(200), system_failure_level: Some(201), extended_fade_time_ms: Some(900), registry_adapter_id: 0 , tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, switching: Default::default(), error: None }),
     );
     wait_until(
         || counters.events.dali_attributes_committed.load(Ordering::Relaxed) == before + 1,

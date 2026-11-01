@@ -313,7 +313,7 @@ fn a_rejected_delivery_fails_the_operation_instead_of_waiting_out_the_ttl() {
             tc_warmest_mirek: None,
             min_level: None,
             max_level: None,
-            dimming_curve: None,
+            dimming_curve: None, switching: Default::default(),
             signals_operation: true,
             known_device_types: None,
             refusal_fails: false,

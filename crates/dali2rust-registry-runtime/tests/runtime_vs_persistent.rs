@@ -459,3 +459,40 @@ fn a_switching_read_is_served_from_memory_and_never_rewrites_flash() {
         "after a reload the section waits for the next read"
     );
 }
+
+#[test]
+fn a_confirmed_switching_write_is_served_from_memory_and_never_rewrites_flash() {
+    const SHORT: u8 = 7;
+    const UP_SWITCH_ON: u8 = 0x40;
+    const HOLD_OFF: u8 = 6;
+    let slices = temp_slice_store("dt7-switching-write");
+    let stack = support::spawn_registry_stack(1, 64);
+    support::seed_physical_via_discovery(&stack.publisher, 1, SHORT, DeviceType::Unknown, &stack.store);
+    stack.store.flush_dirty_slices(&slices);
+    let flushes_before = stack.store.persistence_counters().flush_success_total.load(Ordering::Acquire);
+    assert!(flushes_before >= 1, "the discovered device must persist first");
+
+    let written = dali2rust_contracts::msg::Dt7SwitchingWrite {
+        up_switch_on_threshold: Some(UP_SWITCH_ON),
+        error_hold_off: Some(HOLD_OFF),
+        ..Default::default()
+    };
+    support::publish_event(
+        &stack.publisher,
+        dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, 2, BusId::default().0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: SHORT, fade_time_ms: None, fade_rate: None, power_on_level: None, system_failure_level: None, extended_fade_time_ms: None, registry_adapter_id: 0, tc_coolest_mirek: None, tc_warmest_mirek: None, min_level: None, max_level: None, dimming_curve: None, switching: written, error: None }),
+    );
+    wait_for_pd_changed(&stack.ev_rx, 2);
+
+    let switching = support::dt7_switching_section(&stack.store, SHORT);
+    let up_switch_on = switching.up_switch_on_threshold.expect("the confirmed threshold is served");
+    assert_eq!(up_switch_on.value, UP_SWITCH_ON);
+    assert_eq!(up_switch_on.source, dali2rust_domain::registry::AttributeSource::WriteConfirmed);
+    assert_eq!(switching.error_hold_off.map(|v| v.value), Some(HOLD_OFF));
+    assert_eq!(switching.up_switch_off_threshold, None, "a field the write did not carry stays unknown");
+    stack.store.flush_dirty_slices(&slices);
+    assert_eq!(
+        stack.store.persistence_counters().flush_success_total.load(Ordering::Acquire),
+        flushes_before,
+        "the switching section is volatile and a write of it must not rewrite the slice"
+    );
+}

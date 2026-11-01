@@ -195,10 +195,11 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   command that consumes it, and a read-back tells a wrong answer, silence and a contended
   window apart ([ADR-027](decisions/ADR-027-dtr-operand-proof-and-readback-outcomes.md)).
   A 16-bit configuration write that reads back the variable it set (fade, levels, bounds,
-  extended fade, the dimming curve) confirms nothing when that read-back or its operand
-  proof went unanswered or held a violation: the fields that answered still land, and the
-  operation fails `verify_unanswered`, or `verify_contended` when any of them held a
-  violation. A Tc-limit store fails `dt8_tc_limit_unconfirmed` instead. A DT8 colour
+  extended fade, the dimming curve, the switching thresholds and hold-off) confirms
+  nothing when that read-back or its operand proof went unanswered or held a violation:
+  the fields that answered still land, and the operation fails `verify_unanswered`, or
+  `verify_contended` when any of them held a violation. A Tc-limit store fails
+  `dt8_tc_limit_unconfirmed` instead. A DT8 colour
   staging whose `DTR` echo never proves fails `dt8_staging_unconfirmed` when a register
   answered another value, else `dt8_staging_contended` when an echo held a violation,
   else `dt8_staging_unanswered`.
@@ -303,8 +304,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - 102 §9.18 has a gear ignore extended commands of a type it does not support. So an
   override may narrow the declared set, never widen it — a widened one would offer
   controls whose frames the gear ignores (`422`, checked only once the set is known) —
-  and an extended configuration write (DT8 Tc limits, the DT6 dimming curve) needs no
-  device-type gate: a gear without the type ignores it.
+  and an extended configuration write (DT8 Tc limits, the DT6 dimming curve, the DT7
+  thresholds) needs no device-type gate: a gear without the type ignores it.
 - The device-type walk is one non-yieldable unit; a break restarts it once, then it fails
   (`bus_contended`, `device_type_walk_incomplete`) rather than commit a subset.
 - Bank 0 `0x1C` is one byte whose bit x is Part 15x (DiiA(SW)098bp Table 4); a byte with
