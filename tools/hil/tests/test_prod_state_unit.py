@@ -1170,3 +1170,10 @@ def test_a_session_that_never_closes_retires_once_every_older_one_holds_its_snap
     assert prod_state.open_sessions(cfg) == [older]
     assert prod_state.read_session(stuck)["retired"] is True
     assert not prod_state.retire(cfg, client, stuck, log=lines.append)
+
+
+def test_the_attr_guard_reads_each_attribute_under_its_section_key():
+    extended = {"fade_time_ms": {"value": 300_000}}
+    assert hil_test_guards.guarded_value(extended, "extended_fade_time_ms") == 300_000
+    assert hil_test_guards.guarded_value({"min_level": {"value": 40}}, "min_level") == 40
+    assert hil_test_guards.guarded_value({}, "max_level") is None
