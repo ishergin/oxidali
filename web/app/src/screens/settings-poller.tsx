@@ -3,6 +3,7 @@ import type { AttributeGroup, PollerSettings } from '../api/types'
 import { notifyPollerSettingsChanged } from '../observation'
 import { Card, clampInt, EditableText, FieldRow, SelChip, Switch } from '../components/ui'
 import { useSettingsDraft } from '../hooks'
+import { withGroupToggled } from './poller-groups'
 
 const MIN_INTERVAL_MS = 200
 const MAX_INTERVAL_MS = 3_600_000
@@ -25,6 +26,7 @@ const GROUP_LABEL: Record<AttributeGroup, string> = {
   groups: 'Groups',
   scenes: 'Scenes',
   extended: 'Extended',
+  dt7_switching: 'DT7 switching',
 }
 
 const PRESETS: { ms: number; label: string }[] = [
@@ -73,14 +75,8 @@ export function SettingsPoller() {
   const dirty = changedKeys(s, data)
   const groupsEmpty = s.attribute_groups_default.length === 0
 
-  const toggleGroup = (g: AttributeGroup) => {
-    const on = s.attribute_groups_default.includes(g)
-    edit({
-      attribute_groups_default: on
-        ? s.attribute_groups_default.filter((x) => x !== g)
-        : GROUPS.filter((x) => x === g || s.attribute_groups_default.includes(x)),
-    })
-  }
+  const toggleGroup = (g: AttributeGroup) =>
+    edit({ attribute_groups_default: withGroupToggled(s.attribute_groups_default, g, GROUPS) })
 
   const apply = async () => {
     await save('Poller settings', () => api.patchPollerSettings(patchBody(s, dirty)))

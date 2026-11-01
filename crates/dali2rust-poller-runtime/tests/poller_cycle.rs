@@ -51,15 +51,15 @@ impl PollerSettingsReadPort for StubRegistry {
 }
 
 fn device(short_address: u8) -> PollTargetView {
-    PollTargetView { short_address, is_dt8: false, is_dt6: false, declares_energy: false, declares_diagnostics: false, dali_groups: 0 }
+    PollTargetView { short_address, is_dt8: false, is_dt6: false, declares_energy: false, declares_diagnostics: false, declares_switching: false, dali_groups: 0 }
 }
 
 fn bound_device(short_address: u8, is_dt8: bool) -> PollTargetView {
-    PollTargetView { short_address, is_dt8, is_dt6: false, declares_energy: false, declares_diagnostics: false, dali_groups: 0 }
+    PollTargetView { short_address, is_dt8, is_dt6: false, declares_energy: false, declares_diagnostics: false, declares_switching: false, dali_groups: 0 }
 }
 
 fn bound_dt6_device(short_address: u8) -> PollTargetView {
-    PollTargetView { short_address, is_dt8: false, is_dt6: true, declares_energy: false, declares_diagnostics: false, dali_groups: 0 }
+    PollTargetView { short_address, is_dt8: false, is_dt6: true, declares_energy: false, declares_diagnostics: false, declares_switching: false, dali_groups: 0 }
 }
 
 fn outcomes_event(short_address: u8, outcome: AttributeGroupReadOutcome) -> DaliAttributeReadOutcomesEvent {
@@ -71,6 +71,7 @@ fn outcomes_event(short_address: u8, outcome: AttributeGroupReadOutcome) -> Dali
         common_102: outcome,
         dt8_color: outcome,
         dt6_led: outcome,
+        dt7_switching: outcome,
         groups: outcome,
         scenes: outcome,
         extended: outcome,
@@ -435,7 +436,7 @@ fn pol_005_dt8_colour_is_added_only_for_dt8_gear() {
     let h = spawn_harness(registry, true, Some(AttributeGroupReadOutcome::Success));
 
     wait_until(|| h.counters.reads_completed.load(Ordering::Relaxed) >= 2, WAIT);
-    let masks: std::collections::HashMap<u8, u8> = h
+    let masks: std::collections::HashMap<u8, u16> = h
         .seen_all()
         .into_iter()
         .map(|read| (read.command.short_address, read.command.attribute_groups_mask))
@@ -480,7 +481,7 @@ fn dt6_led_is_stripped_for_gear_that_is_not_dt6() {
         || h.counters.reads_completed.load(Ordering::Relaxed) >= 3,
         Duration::from_secs(8),
     );
-    let masks: std::collections::HashMap<u8, u8> = h
+    let masks: std::collections::HashMap<u8, u16> = h
         .seen_all()
         .into_iter()
         .map(|read| (read.command.short_address, read.command.attribute_groups_mask))
@@ -501,6 +502,42 @@ fn dt6_led_is_stripped_for_gear_that_is_not_dt6() {
         Some(&stripped),
         "unknown type counts as not-DT6, exactly like the dt8 gate"
     );
+}
+
+#[test]
+fn dt7_switching_is_asked_only_of_gear_that_declares_device_type_7() {
+    let configured =
+        DaliAttributeGroup::RuntimeStatus.mask_bit() | DaliAttributeGroup::Dt7Switching.mask_bit();
+    let switching = PollTargetView { declares_switching: true, ..bound_device(21, false) };
+    let registry = StubRegistry {
+        excluded_unbound: 0,
+        devices: vec![switching, bound_dt6_device(22), bound_device(23, false)],
+        settings: PollerSettingsView {
+            enabled: true,
+            interval_ms: 100_000,
+            attribute_groups_mask: configured,
+            include_dt8_color: false,
+            include_energy: false,
+            include_diagnostics: false,
+            skip_unbound_virtual_lamps: true,
+            power_cycle_watch: false,
+        },
+    };
+    let h = spawn_harness(registry, true, Some(AttributeGroupReadOutcome::Success));
+
+    wait_until(
+        || h.counters.reads_completed.load(Ordering::Relaxed) >= 3,
+        Duration::from_secs(8),
+    );
+    let masks: std::collections::HashMap<u8, u16> = h
+        .seen_all()
+        .into_iter()
+        .map(|read| (read.command.short_address, read.command.attribute_groups_mask))
+        .collect();
+    assert_eq!(masks.get(&21), Some(&configured), "a declared switching gear keeps dt7_switching");
+    let stripped = DaliAttributeGroup::RuntimeStatus.mask_bit();
+    assert_eq!(masks.get(&22), Some(&stripped), "a DT6 gear is not swept with Part 208 queries");
+    assert_eq!(masks.get(&23), Some(&stripped), "an undeclared type counts as not switching");
 }
 
 #[test]
@@ -1050,7 +1087,7 @@ fn a_sweep_read_is_counted_apart_from_the_cycle_reads() {
     assert_eq!(h.counters.reads_published.load(Ordering::Relaxed), 2, "a sweep read is still a published read");
 }
 
-fn slow_cycle_harness(attribute_groups_mask: u8) -> Harness {
+fn slow_cycle_harness(attribute_groups_mask: u16) -> Harness {
     let mut registry = poller_off_registry(vec![device(1)], true);
     registry.settings.enabled = true;
     registry.settings.interval_ms = 100_000;
@@ -1528,6 +1565,7 @@ fn metered_device(short_address: u8, energy: bool, diagnostics: bool) -> PollTar
         is_dt6: false,
         declares_energy: energy,
         declares_diagnostics: diagnostics,
+        declares_switching: false,
         dali_groups: 0,
     }
 }

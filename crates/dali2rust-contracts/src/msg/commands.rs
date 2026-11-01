@@ -373,13 +373,13 @@ declare_bus_payloads! {
     pub struct DaliReadAttributesCommand {
         pub registry_adapter_id: u8,
         pub short_address: u8,
-        pub attribute_groups_mask: u8,
+        pub attribute_groups_mask: u16,
         pub memory_banks: MemoryBankReadPreset,
     }
     budget = DaliReadAttributesCommand {
         registry_adapter_id: u8::MAX,
         short_address: 63,
-        attribute_groups_mask: u8::MAX,
+        attribute_groups_mask: u16::MAX,
         memory_banks: MemoryBankReadPreset::All,
     };
 
@@ -637,7 +637,7 @@ declare_bus_payloads! {
         pub patch_mask: u8,
         pub enabled: bool,
         pub interval_ms: u32,
-        pub attribute_groups_mask: u8,
+        pub attribute_groups_mask: u16,
         pub include_dt8_color: bool,
         pub skip_unbound_virtual_lamps: bool,
         pub include_energy: bool,
@@ -648,7 +648,7 @@ declare_bus_payloads! {
         patch_mask: u8::MAX,
         enabled: true,
         interval_ms: u32::MAX,
-        attribute_groups_mask: u8::MAX,
+        attribute_groups_mask: u16::MAX,
         include_dt8_color: true,
         skip_unbound_virtual_lamps: true,
         include_energy: true,

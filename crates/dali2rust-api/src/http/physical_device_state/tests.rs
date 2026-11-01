@@ -4,7 +4,7 @@ use super::*;
 use dali2rust_contracts::msg::{ErrorCode, FixedText32, FixedText64};
 use dali2rust_domain::registry::{
     AttributeSectionKind, AttributeSectionView, AttributeSource, BankReading,
-    GearDiagnosticsView, LuminaireMaintenanceView, LuminaireValue, MemoryBusUnitAttributesView,
+    Dt7SwitchingAttributesView, GearDiagnosticsView, LuminaireMaintenanceView, LuminaireValue, MemoryBusUnitAttributesView,
     MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryLuminaireAttributesView,
     ObservedValue, PhysicalDeviceAttributesView, RuntimeErrorView, ScenesAttributesView,
     SourceDiagnosticsView,
@@ -83,6 +83,7 @@ fn every_section(
     diagnostics: &MemoryDiagnosticsAttributesView,
     bus_unit: &MemoryBusUnitAttributesView,
     luminaire: Option<&MemoryLuminaireAttributesView>,
+    switching: &Dt7SwitchingAttributesView,
 ) -> Vec<AttributeSectionView> {
     AttributeSectionKind::ALL
         .iter()
@@ -92,6 +93,9 @@ fn every_section(
             }
             AttributeSectionKind::Dt6Led => {
                 AttributeSectionView::Dt6Led(Box::new(attrs.dt6_led))
+            }
+            AttributeSectionKind::Dt7Switching => {
+                AttributeSectionView::Dt7Switching(Box::new(*switching))
             }
             AttributeSectionKind::Dt8Color => {
                 AttributeSectionView::Dt8Color(Box::new(attrs.dt8_color))
@@ -134,7 +138,7 @@ fn attributes_json(
     bus_unit: &MemoryBusUnitAttributesView,
     luminaire: Option<&MemoryLuminaireAttributesView>,
 ) -> String {
-    let sections = every_section(attrs, energy, diagnostics, bus_unit, luminaire);
+    let sections = every_section(attrs, energy, diagnostics, bus_unit, luminaire, &Default::default());
     let mut out: Vec<u8> = b"{".to_vec();
     let mut first = true;
     for view in &sections {
@@ -491,6 +495,7 @@ fn every_section_is_present_exactly_when_it_has_something_to_write() {
         &Default::default(),
         &Default::default(),
         None,
+        &Default::default(),
     );
     let populated = every_section(
         &full_attributes_view(),
@@ -498,6 +503,7 @@ fn every_section_is_present_exactly_when_it_has_something_to_write() {
         &populated_diagnostics(),
         &populated_bus_unit(),
         Some(&populated_luminaire()),
+        &populated_switching(),
     );
     for view in &empty {
         let kind = view.kind().wire_name();
@@ -506,6 +512,45 @@ fn every_section_is_present_exactly_when_it_has_something_to_write() {
     for view in &populated {
         let kind = view.kind().wire_name();
         assert!(serializes_a_non_empty_object(view), "populated {kind} writes its fields");
+    }
+}
+
+fn populated_switching() -> Dt7SwitchingAttributesView {
+    Dt7SwitchingAttributesView {
+        features: ov(0x19, 81),
+        switch_status: ov(0x80, 83),
+        up_switch_on_threshold: ov(1, 85),
+        up_switch_off_threshold: ov(0xFF, 87),
+        down_switch_on_threshold: ov(0xFF, 89),
+        down_switch_off_threshold: ov(0, 91),
+        error_hold_off: ov(6, 93),
+        gear_type: ov(0x01, 95),
+    }
+}
+
+#[test]
+fn a_dt7_section_writes_each_part_208_register_under_its_own_name() {
+    let mut out: Vec<u8> = b"{".to_vec();
+    let mut first = true;
+    let view = AttributeSectionView::Dt7Switching(Box::new(populated_switching()));
+    write_attribute_section(&mut out, &view, &mut first).expect("write section");
+    out.push(b'}');
+    let json: serde_json::Value = serde_json::from_slice(&out).expect("parse");
+    let section = &json["dt7_switching"];
+    let fields = [
+        ("features", 0x19, 1_081),
+        ("switch_status", 0x80, 1_083),
+        ("up_switch_on_threshold", 1, 1_085),
+        ("up_switch_off_threshold", 0xFF, 1_087),
+        ("down_switch_on_threshold", 0xFF, 1_089),
+        ("down_switch_off_threshold", 0, 1_091),
+        ("error_hold_off", 6, 1_093),
+        ("gear_type", 0x01, 1_095),
+    ];
+    assert_eq!(section.as_object().map(|o| o.len()), Some(fields.len()), "{section}");
+    for (name, value, read_at) in fields {
+        assert_eq!(section[name]["value"], value, "{name}");
+        assert_eq!(section[name]["last_read_ms"], read_at, "{name}");
     }
 }
 

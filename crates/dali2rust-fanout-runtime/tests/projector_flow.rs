@@ -1949,6 +1949,7 @@ fn outcomes(short_address: u8, runtime_status: AttributeGroupReadOutcome) -> Dal
         common_102: n,
         dt8_color: n,
         dt6_led: n,
+        dt7_switching: n,
         groups: n,
         scenes: n,
         extended: n,

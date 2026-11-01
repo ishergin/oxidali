@@ -89,8 +89,8 @@ REST знает три значения: `dt6_led`, `dt8_color`, `unknown`; лю
 
 ## Группы атрибутов — `attribute_groups`, `attribute_groups_default`
 
-План чтения провода: `runtime_status` · `common_102` · `dt6_led` · `dt8_color` ·
-`groups` · `scenes` · `extended` · `scene_colours`. Что читает `scene_colours` и
+План чтения провода: `runtime_status` · `common_102` · `dt6_led` · `dt7_switching` ·
+`dt8_color` · `groups` · `scenes` · `extended` · `scene_colours`. Что читает `scene_colours` и
 почему только по запросу —
 [`../../bus-contracts/dali-attribute-taxonomy.md`](../../bus-contracts/dali-attribute-taxonomy.md)
 §`SceneColours`. Это **не** имена секций ответа `GET …/attributes`: словари

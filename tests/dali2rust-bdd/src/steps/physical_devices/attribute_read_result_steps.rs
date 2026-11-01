@@ -7,7 +7,7 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_test_support::wait_until;
 use serde_json::{json, Value};
 
-use crate::steps::frames::{dt8_raw_query_frame, extended_frame, special_frame, standard_frame};
+use crate::steps::frames::{raw_short_command_frame, extended_frame, special_frame, standard_frame};
 use crate::steps::last_json;
 use crate::steps::wire::assert_frame_before;
 use crate::DaliWorld;
@@ -258,7 +258,7 @@ async fn then_pd_runtime_colour_temperature_survives(world: &mut DaliWorld, kelv
     );
 }
 
-// PD-163 PD-169 PD-164 SYS-231 SYS-232
+// PD-163 PD-169 PD-164 SYS-231 SYS-232 PD-310 PD-311
 #[then(regex = r#"^the operation attribute-read outcomes should show "(\w+)" as "(\w+)"$"#)]
 async fn then_attribute_read_outcome_for_section(
     world: &mut DaliWorld,
@@ -327,7 +327,7 @@ async fn then_attribute_trace_matches(world: &mut DaliWorld) {
     assert_frame_before(
         &frames,
         special_frame(SpecialCommand::Dtr1(0)),
-        dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE),
+        raw_short_command_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE),
     );
     assert_frame_before(
         &frames,

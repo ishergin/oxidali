@@ -77,7 +77,7 @@ enum ReadPurpose {
 struct PollTarget {
     adapter_id: u8,
     short_address: u8,
-    groups_mask: u8,
+    groups_mask: u16,
     memory_banks: MemoryBankReadPreset,
     purpose: ReadPurpose,
 }
@@ -367,13 +367,16 @@ fn already_outstanding(state: &PollerState, adapter_id: u8, short_address: u8) -
     })
 }
 
-fn groups_mask_for(settings: &PollerSettingsView, target: &PollTargetView) -> u8 {
+fn groups_mask_for(settings: &PollerSettingsView, target: &PollTargetView) -> u16 {
     let mut mask = DaliAttributeGroup::polled_mask(settings.attribute_groups_mask);
     if settings.include_dt8_color && target.is_dt8 {
         mask |= DaliAttributeGroup::Dt8Color.mask_bit();
     }
     if !target.is_dt6 {
         mask &= !DaliAttributeGroup::Dt6Led.mask_bit();
+    }
+    if !target.declares_switching {
+        mask &= !DaliAttributeGroup::Dt7Switching.mask_bit();
     }
     mask
 }
@@ -974,6 +977,7 @@ mod tests {
             common_102: unrequested,
             dt8_color: unrequested,
             dt6_led: unrequested,
+            dt7_switching: unrequested,
             groups: unrequested,
             scenes: unrequested,
             extended: unrequested,
@@ -1039,6 +1043,7 @@ mod tests {
             is_dt6: false,
             declares_energy: false,
             declares_diagnostics: false,
+            declares_switching: false,
             dali_groups: 0,
         };
         let mask = groups_mask_for(&settings, &target);
@@ -1292,6 +1297,7 @@ mod tests {
             is_dt6: false,
             declares_energy: false,
             declares_diagnostics: false,
+            declares_switching: false,
             dali_groups: 0,
         }
     }

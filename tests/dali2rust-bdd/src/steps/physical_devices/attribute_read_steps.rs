@@ -288,38 +288,14 @@ pub(crate) fn read_groups_membership_from_gear(world: &mut DaliWorld, short: u8,
     );
 }
 
-// PD-159 PD-169 PD-164
-#[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "groups" only"#)]
-async fn when_start_groups_attribute_read(world: &mut DaliWorld) {
-    let body = br#"{"attribute_groups":["groups"],"memory_banks":"none"}"#;
+// PD-159 PD-169 PD-164 SCN-085 SCN-096 PD-158 PD-270 PD-273 PD-309 PD-166 PD-168 PD-269 PD-256 PD-257 PD-258 PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303 PD-310 PD-311
+#[when(regex = r#"^I start an attribute read for adapter 0 physical device 0 with attribute group "(\w+)" only$"#)]
+async fn when_start_single_group_attribute_read(world: &mut DaliWorld, group: String) {
+    let body = format!(r#"{{"attribute_groups":["{group}"],"memory_banks":"none"}}"#);
     world.send_http_request(
         "POST",
         "/api/v1/adapters/0/physical-devices/0/attribute-reads",
-        Some(body),
-        "application/json",
-    );
-}
-
-// SCN-085 SCN-096
-#[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "scene_colours" only"#)]
-async fn when_start_scene_colours_attribute_read(world: &mut DaliWorld) {
-    let body = br#"{"attribute_groups":["scene_colours"],"memory_banks":"none"}"#;
-    world.send_http_request(
-        "POST",
-        "/api/v1/adapters/0/physical-devices/0/attribute-reads",
-        Some(body),
-        "application/json",
-    );
-}
-
-// PD-158 PD-270 PD-273 PD-309
-#[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "extended" only"#)]
-async fn when_start_extended_attribute_read(world: &mut DaliWorld) {
-    let body = br#"{"attribute_groups":["extended"],"memory_banks":"none"}"#;
-    world.send_http_request(
-        "POST",
-        "/api/v1/adapters/0/physical-devices/0/attribute-reads",
-        Some(body),
+        Some(body.as_bytes()),
         "application/json",
     );
 }
@@ -328,30 +304,6 @@ async fn when_start_extended_attribute_read(world: &mut DaliWorld) {
 #[when("I start an attribute read for adapter 0 physical device 0 with runtime status and dt8 colour")]
 async fn when_start_runtime_and_colour_attribute_read(world: &mut DaliWorld) {
     let body = br#"{"attribute_groups":["runtime_status","dt8_color"],"memory_banks":"none"}"#;
-    world.send_http_request(
-        "POST",
-        "/api/v1/adapters/0/physical-devices/0/attribute-reads",
-        Some(body),
-        "application/json",
-    );
-}
-
-// PD-166 PD-168 PD-269 PD-256 PD-257 PD-258
-#[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only"#)]
-async fn when_start_runtime_status_attribute_read(world: &mut DaliWorld) {
-    let body = br#"{"attribute_groups":["runtime_status"],"memory_banks":"none"}"#;
-    world.send_http_request(
-        "POST",
-        "/api/v1/adapters/0/physical-devices/0/attribute-reads",
-        Some(body),
-        "application/json",
-    );
-}
-
-// PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303
-#[when(r#"I start an attribute read for adapter 0 physical device 0 with attribute group "common_102" only"#)]
-async fn when_start_common102_attribute_read(world: &mut DaliWorld) {
-    let body = br#"{"attribute_groups":["common_102"],"memory_banks":"none"}"#;
     world.send_http_request(
         "POST",
         "/api/v1/adapters/0/physical-devices/0/attribute-reads",

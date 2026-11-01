@@ -6,6 +6,7 @@ pub mod discovery_steps;
 pub mod memory_luminaire_steps;
 pub mod memory_bank_scripts;
 pub mod read_model;
+pub mod switching_steps;
 pub mod target_state_steps;
 pub mod write_attributes_steps;
 pub mod write_scripts;

@@ -1,5 +1,6 @@
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, ColorMode, DaliAttributeGroup, DeviceTypeSet, Dt6ReadSnapshot,
+    Dt7ReadSnapshot,
     ExtendedVersionEntry, LightSetpoint, RuntimeObservation, StatusFlags,
     MAX_EXTENDED_VERSIONS,
 };
@@ -19,7 +20,8 @@ use dali2rust_domain::lighting::service::FadeParams;
 use crate::runtime::config::ContentConfirmPolicy;
 use crate::runtime::executor::discovery::{
     color_mode_from_status, declared_device_types_from_single_answer,
-    probe_device_identity_with_policy, Dt8Capabilities, Dt8ProbePolicy, Dt8Status,
+    probe_device_identity_with_policy, read_declared_device_types, Dt8Capabilities,
+    Dt8ProbePolicy, Dt8Status,
 };
 use crate::runtime::executor::helpers::{
     ArmedCommand,
@@ -42,6 +44,7 @@ use crate::runtime::executor::helpers::{
 
 mod common_102;
 mod dt6;
+mod dt7;
 mod dt8;
 mod extended;
 mod level_colour;
@@ -57,6 +60,7 @@ use common_102::{
 #[cfg(test)]
 use common_102::read_light_source_type;
 use dt6::{read_dt6_failure_byte, read_dt6_led_snapshot, write_dimming_curve};
+use dt7::read_dt7_snapshot;
 pub use dt8::Dt8ColorFields;
 use dt8::{
     dt8_narrow_value_sample, read_dt8_color_value_u16, read_dt8_color_value_u8,
@@ -64,7 +68,7 @@ use dt8::{
 };
 #[cfg(test)]
 use dt8::read_dt8_dim_level_trio;
-use extended::{read_extended_snapshot, write_extended_fade_time, ExtendedReadSnapshot, KnownVersions};
+use extended::{read_extended_snapshot, write_extended_fade_time, ExtendedReadSnapshot};
 #[cfg(test)]
 use extended::{extended_fade_time_byte_from_ms, extended_fade_time_ms_from_byte};
 pub use outcomes::{classify_read_abort, AttributeReadOutcomes, AttributeReadSection};
@@ -96,6 +100,7 @@ pub struct AttributeReadExecution {
     pub dt8_color: Dt8ColorFields,
     pub dt8_rgbwaf_capable: bool,
     pub dt6: Option<Dt6ReadSnapshot>,
+    pub dt7: Option<Dt7ReadSnapshot>,
     pub extended_fade_time_ms: Option<u32>,
     pub extended_version_number: Option<u8>,
     pub extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
@@ -319,6 +324,8 @@ struct MembershipSections {
     scene_levels: Option<Vec<u8>>,
     has_dt6_led: bool,
     dt6: Option<Dt6ReadSnapshot>,
+    has_dt7_switching: bool,
+    dt7: Option<Dt7ReadSnapshot>,
     has_extended: bool,
     extended: Option<ExtendedReadSnapshot>,
     has_scene_colours: bool,
@@ -331,14 +338,42 @@ impl MembershipSections {
             has_groups: wants_attr_group(groups, DaliAttributeGroup::Groups),
             has_scenes: wants_attr_group(groups, DaliAttributeGroup::Scenes),
             has_dt6_led: wants_attr_group(groups, DaliAttributeGroup::Dt6Led),
+            has_dt7_switching: wants_attr_group(groups, DaliAttributeGroup::Dt7Switching),
             has_extended: wants_attr_group(groups, DaliAttributeGroup::Extended),
             has_scene_colours: wants_attr_group(groups, DaliAttributeGroup::SceneColours),
             groups_membership: None,
             scene_levels: None,
             dt6: None,
+            dt7: None,
             extended: None,
             scene_colours: None,
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum DeclaredTypes {
+    Unasked,
+    Answered(Option<DeviceTypeSet>),
+}
+
+impl DeclaredTypes {
+    fn from_known(known: Option<DeviceTypeSet>) -> Self {
+        known.map_or(Self::Unasked, |types| Self::Answered(Some(types)))
+    }
+
+    pub(super) fn resolve(
+        &mut self,
+        controller: &mut impl DaliApplicationController,
+        address: DaliAddress,
+        content_confirm: ContentConfirmPolicy,
+    ) -> Result<Option<DeviceTypeSet>, SemanticDaliError> {
+        if let Self::Answered(types) = *self {
+            return Ok(types);
+        }
+        let types = read_declared_device_types(controller, address, content_confirm)?;
+        *self = Self::Answered(types);
+        Ok(types)
     }
 }
 
@@ -382,13 +417,15 @@ fn read_membership_and_dt_sections(
     if s.dt6.is_none() && escalate_dt6_failure {
         s.dt6 = read_dt6_failure_byte(controller, address, content_confirm)?;
     }
-    let known = KnownVersions {
-        device_types: known_device_types,
-        dt6: s.dt6.as_ref().and_then(|d| d.extended_version_number),
-    };
+    let mut types = DeclaredTypes::from_known(known_device_types);
+    let dt6_version = s.dt6.as_ref().and_then(|d| d.extended_version_number);
     s.extended = track_gated(s.has_extended, outcomes, AttributeReadSection::Extended, || {
-        read_extended_snapshot(controller, address, content_confirm, known)
+        read_extended_snapshot(controller, address, content_confirm, &mut types, dt6_version)
     })?;
+    s.dt7 = track_gated(s.has_dt7_switching, outcomes, AttributeReadSection::Dt7Switching, || {
+        read_dt7_snapshot(controller, address, content_confirm, &mut types)
+    })?
+    .flatten();
     s.scene_colours = track_gated(
         s.has_scene_colours,
         outcomes,
@@ -464,6 +501,7 @@ impl CollectedAttributeScalars {
             dt8_rgbwaf_capable: caps.3,
             dt8_color: self.dt8_color,
             dt6: sections.dt6,
+            dt7: sections.dt7,
             extended_fade_time_ms: sections.extended.as_ref().and_then(|e| e.fade_time_ms),
             extended_version_number: sections.extended.as_ref().and_then(|e| e.version_number),
             extended_versions: sections

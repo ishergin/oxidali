@@ -15,6 +15,7 @@ use dali2rust_registry_runtime::{
 };
 use dali2rust_domain::registry::{
     AttributeSectionKind, AttributeSectionView, Common102AttributesView, Dt6LedAttributesView,
+    Dt7SwitchingAttributesView,
     Dt8ColorAttributesView, ExtendedAttributesView, GroupReadPort, GroupsAttributesView,
     MemoryBankSummaryView, MemoryIdentityAttributesView, MemoryLuminaireAttributesView,
     MemoryProfileAttributesView, PhysicalDeviceAttributesView, PhysicalDeviceCoreView,
@@ -53,6 +54,7 @@ macro_rules! section_readers {
 section_readers! {
     common102_section, Common102, Common102AttributesView;
     dt6_led_section, Dt6Led, Dt6LedAttributesView;
+    dt7_switching_section, Dt7Switching, Dt7SwitchingAttributesView;
     dt8_color_section, Dt8Color, Dt8ColorAttributesView;
     extended_section, Extended, ExtendedAttributesView;
     groups_section, Groups, GroupsAttributesView;

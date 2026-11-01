@@ -10,7 +10,7 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
 
-use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
+use crate::steps::frames::{raw_short_command_frame, special_frame, standard_frame};
 use crate::DaliWorld;
 
 use super::attribute_read_scripts::{script_attribute_read_identity_queries, ScriptedReply};
@@ -79,7 +79,7 @@ fn script_unlock_and_prove(mock: &MockDaliTransport) {
     script_write_unit(mock, BANK_LOCK_BYTE, &[BANK_UNLOCKED], GearReply::Echo);
     script_armed_pointer(mock, BANK_LOCK_BYTE);
     mock.expect_forward_frame_with_backward(
-        dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE),
+        raw_short_command_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE),
         Some(BANK_UNLOCKED),
     );
 }

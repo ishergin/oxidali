@@ -3,7 +3,7 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_gear_model::luminaire::LuminaireBank;
 
-use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
+use crate::steps::frames::{raw_short_command_frame, special_frame, standard_frame};
 
 use super::TEST_SHORT_ADDRESS;
 
@@ -99,7 +99,7 @@ fn script_chunk_start(mock: &MockDaliTransport, bank: u8, starts: &[usize], offs
 }
 
 pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes: &[u8]) {
-    let read = dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
+    let read = raw_short_command_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
     script_memory_pointer_arm(mock, bank, 0);
     let starts = chunk_starts(bank, bytes.len());
     for (offset, byte) in bytes.iter().enumerate() {
@@ -115,7 +115,7 @@ pub(super) fn script_memory_bank_read(mock: &MockDaliTransport, bank: u8, bytes:
 
 pub(super) fn script_memory_bank_short_read(mock: &MockDaliTransport, bank: u8, bytes: &[u8]) {
     const BANK_END_SILENCES: usize = 2;
-    let read = dt8_raw_query_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
+    let read = raw_short_command_frame(TEST_SHORT_ADDRESS, READ_MEMORY_LOCATION_OPCODE);
     script_memory_pointer_arm(mock, bank, 0);
     let starts = chunk_starts(bank, usize::from(BANK0_BYTES[0]) + 1);
     for (offset, byte) in bytes.iter().enumerate() {

@@ -20,6 +20,7 @@
     "src/screens/device-product.ts",
     "src/screens/groups-view.ts",
     "src/screens/policies-patch.ts",
+    "src/screens/poller-groups.ts",
     "src/screens/hcl-curve.ts",
     "src/screens/stats-view.ts",
     "src/format.ts",

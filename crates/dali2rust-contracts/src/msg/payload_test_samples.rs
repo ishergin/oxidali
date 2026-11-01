@@ -208,7 +208,7 @@ pub(crate) fn worst_attributes_read_event() -> crate::msg::DaliAttributesReadEve
     }
 }
 
-pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChunk; 10] {
+pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChunk; 11] {
     [
         Chunk::Identity {
             random_address: u32::MAX,
@@ -271,6 +271,18 @@ pub(crate) fn worst_attribute_read_chunks() -> [crate::msg::DaliAttributeReadChu
                 device_type: u8::MAX,
                 version_number: Some(u8::MAX),
             }); crate::msg::MAX_EXTENDED_VERSIONS],
+        },
+        Chunk::Dt7Switching {
+            snapshot: crate::msg::Dt7ReadSnapshot {
+                features: Some(u8::MAX),
+                switch_status: Some(u8::MAX),
+                up_switch_on_threshold: Some(u8::MAX),
+                up_switch_off_threshold: Some(u8::MAX),
+                down_switch_on_threshold: Some(u8::MAX),
+                down_switch_off_threshold: Some(u8::MAX),
+                error_hold_off: Some(u8::MAX),
+                gear_type: Some(u8::MAX),
+            },
         },
     ]
 }

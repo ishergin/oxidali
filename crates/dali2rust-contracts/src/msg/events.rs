@@ -13,7 +13,7 @@ use super::kinds::{
 };
 use super::payload_macros::declare_bus_payloads;
 use super::state::{
-    Dt6ReadSnapshot, ExtendedVersionEntry, LightSetpoint, RuntimeObservation, SetpointDimensions,
+    Dt6ReadSnapshot, Dt7ReadSnapshot, ExtendedVersionEntry, LightSetpoint, RuntimeObservation, SetpointDimensions,
     MAX_EXTENDED_VERSIONS,
 };
 use super::wire::DaliEventPayload;
@@ -376,6 +376,7 @@ declare_bus_payloads! {
         pub extended: AttributeGroupReadOutcome,
         pub memory_banks: AttributeGroupReadOutcome,
         pub scene_colours: AttributeGroupReadOutcome,
+        pub dt7_switching: AttributeGroupReadOutcome,
     }
     budget = DaliAttributeReadOutcomesEvent {
         registry_adapter_id: u8::MAX,
@@ -390,6 +391,7 @@ declare_bus_payloads! {
         extended: AttributeGroupReadOutcome::ContendedAbort,
         memory_banks: AttributeGroupReadOutcome::ContendedAbort,
         scene_colours: AttributeGroupReadOutcome::ContendedAbort,
+        dt7_switching: AttributeGroupReadOutcome::ContendedAbort,
     };
 
     pub struct SceneChangedEvent {
@@ -550,7 +552,7 @@ declare_bus_payloads! {
     pub struct PollerSettingsChangedEvent {
         pub enabled: bool,
         pub interval_ms: u32,
-        pub attribute_groups_mask: u8,
+        pub attribute_groups_mask: u16,
         pub include_dt8_color: bool,
         pub include_energy: bool,
         pub include_diagnostics: bool,
@@ -559,7 +561,7 @@ declare_bus_payloads! {
     budget = PollerSettingsChangedEvent {
         enabled: true,
         interval_ms: u32::MAX,
-        attribute_groups_mask: u8::MAX,
+        attribute_groups_mask: u16::MAX,
         include_dt8_color: true,
         include_energy: true,
         include_diagnostics: true,
@@ -987,11 +989,14 @@ pub enum DaliAttributeReadChunk {
     ExtendedVersions {
         versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
     },
+    Dt7Switching {
+        snapshot: Dt7ReadSnapshot,
+    },
 }
 
 impl DaliAttributeReadOutcomesEvent {
     #[must_use]
-    pub fn section_outcomes(&self) -> [AttributeGroupReadOutcome; 10] {
+    pub fn section_outcomes(&self) -> [AttributeGroupReadOutcome; 11] {
         let Self {
             registry_adapter_id: _,
             short_address: _,
@@ -1005,6 +1010,7 @@ impl DaliAttributeReadOutcomesEvent {
             extended,
             memory_banks,
             scene_colours,
+            dt7_switching,
         } = *self;
         [
             identity,
@@ -1017,6 +1023,7 @@ impl DaliAttributeReadOutcomesEvent {
             extended,
             memory_banks,
             scene_colours,
+            dt7_switching,
         ]
     }
 

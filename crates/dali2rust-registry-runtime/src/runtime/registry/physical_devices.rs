@@ -24,7 +24,8 @@ use dali2rust_domain::registry::{
     colour_mode_fits_declared, device_type_fits_declared, known_device_types,
     AttributeSectionKind, AttributeSectionSource, AttributeSectionView, AttributeSource,
     BoxedInPlace, CapabilityFlagsView, ColorTemperatureRangeView, Common102AttributesView,
-    Dt6LedAttributesView, Dt8ColorAttributesView, ExtendedAttributesView, GroupsAttributesView,
+    Dt6LedAttributesView, Dt7SwitchingAttributesView, Dt8ColorAttributesView, ExtendedAttributesView,
+    GroupsAttributesView,
     MemoryBankRangeView, MemoryBankSummaryView, MemoryBusUnitAttributesView,
     MemoryDiagnosticsAttributesView, MemoryEnergyAttributesView, MemoryIdentityAttributesView,
     MemoryLuminaireAttributesView, MemoryProfileAttributesView, ObservedValue,
@@ -217,6 +218,7 @@ pub(crate) struct PhysicalDeviceRecord {
     pub energy: MemoryEnergyAttributesView,
     pub diagnostics: MemoryDiagnosticsAttributesView,
     pub bus_unit: MemoryBusUnitAttributesView,
+    pub switching: Dt7SwitchingAttributesView,
     pub luminaire_info: Option<PsramBox<MemoryLuminaireAttributesView>>,
     pub scene_colour_observed: [SceneColourEvidence; 16],
     pub extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
@@ -290,6 +292,7 @@ physical_device_record_fields! {
         memory_banks: Vec<MemoryBankRecord> = Vec::new(),
         energy: MemoryEnergyAttributesView = MemoryEnergyAttributesView::default(),
         bus_unit: MemoryBusUnitAttributesView = MemoryBusUnitAttributesView::default(),
+        switching: Dt7SwitchingAttributesView = Dt7SwitchingAttributesView::default(),
         luminaire_info: Option<PsramBox<MemoryLuminaireAttributesView>> = None,
         scene_colour_observed: [SceneColourEvidence; 16] = [SceneColourEvidence::Unread; 16],
         extended_versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS] =
@@ -538,6 +541,31 @@ fn merge_dt6_failure_reads(
     changed
 }
 
+fn merge_extended_read(
+    attrs: &mut PhysicalDeviceAttributesView,
+    fade_time_ms: Option<u32>,
+    version_number: Option<u8>,
+    now_ms: u64,
+) -> bool {
+    merge_read_attr_opt(&mut attrs.extended.fade_time_ms, fade_time_ms, now_ms)
+        | merge_read_attr_opt(&mut attrs.extended.version_number, version_number, now_ms)
+}
+
+fn merge_dt7_read_snapshot(
+    switching: &mut Dt7SwitchingAttributesView,
+    dt7: &dali2rust_contracts::msg::Dt7ReadSnapshot,
+    now_ms: u64,
+) {
+    merge_read_attr_opt(&mut switching.features, dt7.features, now_ms);
+    merge_read_attr_opt(&mut switching.switch_status, dt7.switch_status, now_ms);
+    merge_read_attr_opt(&mut switching.up_switch_on_threshold, dt7.up_switch_on_threshold, now_ms);
+    merge_read_attr_opt(&mut switching.up_switch_off_threshold, dt7.up_switch_off_threshold, now_ms);
+    merge_read_attr_opt(&mut switching.down_switch_on_threshold, dt7.down_switch_on_threshold, now_ms);
+    merge_read_attr_opt(&mut switching.down_switch_off_threshold, dt7.down_switch_off_threshold, now_ms);
+    merge_read_attr_opt(&mut switching.error_hold_off, dt7.error_hold_off, now_ms);
+    merge_read_attr_opt(&mut switching.gear_type, dt7.gear_type, now_ms);
+}
+
 #[inline(never)]
 fn boxed_copy<T: Copy>(section: &T) -> Box<T> {
     Box::new(*section)
@@ -563,6 +591,7 @@ macro_rules! copied_sections {
 copied_sections! {
     Common102AttributesView => attributes.common102;
     Dt6LedAttributesView => attributes.dt6_led;
+    Dt7SwitchingAttributesView => switching;
     Dt8ColorAttributesView => attributes.dt8_color;
     ExtendedAttributesView => attributes.extended;
     GroupsAttributesView => attributes.groups;
@@ -927,17 +956,14 @@ impl RegistryStore {
                 .as_ref()
                 .is_some_and(|levels| merge_scene_levels_read(&mut r.attributes, levels, now)),
             Chunk::Dt6Led { snapshot } => merge_dt6_read_snapshot(&mut r.attributes, snapshot, now),
+            Chunk::Dt7Switching { snapshot } => {
+                merge_dt7_read_snapshot(&mut r.switching, snapshot, now);
+                false
+            }
             Chunk::Extended {
                 fade_time_ms,
                 version_number,
-            } => {
-                merge_read_attr_opt(&mut r.attributes.extended.fade_time_ms, *fade_time_ms, now)
-                    | merge_read_attr_opt(
-                        &mut r.attributes.extended.version_number,
-                        *version_number,
-                        now,
-                    )
-            }
+            } => merge_extended_read(&mut r.attributes, *fade_time_ms, *version_number, now),
             Chunk::RuntimeStatus { .. } => false,
             Chunk::SceneColour {
                 scene,
@@ -2055,7 +2081,7 @@ mod stack_footprint_tests {
         const PLACED: usize = 2;
         assert_eq!(
             PhysicalDeviceRecord::INLINE_INIT_TEMPORARIES.len() + PLACED,
-            29,
+            30,
             "the field list and the record have diverged; both come from \
              physical_device_record_fields!, so this means a field was added \
              to the struct alone"

@@ -277,6 +277,18 @@ pub struct Dt6ReadSnapshot {
     pub extended_version_number: Option<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dt7ReadSnapshot {
+    pub features: Option<u8>,
+    pub switch_status: Option<u8>,
+    pub up_switch_on_threshold: Option<u8>,
+    pub up_switch_off_threshold: Option<u8>,
+    pub down_switch_on_threshold: Option<u8>,
+    pub down_switch_off_threshold: Option<u8>,
+    pub error_hold_off: Option<u8>,
+    pub gear_type: Option<u8>,
+}
+
 #[cfg(test)]
 mod setpoint_wire_tests {
     use super::{LightSetpoint, PowerState};

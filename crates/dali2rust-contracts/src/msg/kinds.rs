@@ -120,10 +120,11 @@ pub enum DaliAttributeGroup {
     Scenes = 5,
     Extended = 6,
     SceneColours = 7,
+    Dt7Switching = 8,
 }
 
 impl DaliAttributeGroup {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::RuntimeStatus,
         Self::Common102,
         Self::Dt8Color,
@@ -132,9 +133,10 @@ impl DaliAttributeGroup {
         Self::Scenes,
         Self::Extended,
         Self::SceneColours,
+        Self::Dt7Switching,
     ];
 
-    pub const fn mask_bit(self) -> u8 {
+    pub const fn mask_bit(self) -> u16 {
         1 << (self as u8)
     }
 
@@ -148,6 +150,7 @@ impl DaliAttributeGroup {
             Self::Scenes => "scenes",
             Self::Extended => "extended",
             Self::SceneColours => "scene_colours",
+            Self::Dt7Switching => "dt7_switching",
         }
     }
 
@@ -155,7 +158,7 @@ impl DaliAttributeGroup {
         !matches!(self, Self::SceneColours)
     }
 
-    pub const fn polled_mask(mask: u8) -> u8 {
+    pub const fn polled_mask(mask: u16) -> u16 {
         mask & !Self::SceneColours.mask_bit()
     }
 

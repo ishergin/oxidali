@@ -31,7 +31,7 @@ pub struct HclOverrideView {
 pub struct PollerSettingsView {
     pub enabled: bool,
     pub interval_ms: u32,
-    pub attribute_groups_mask: u8,
+    pub attribute_groups_mask: u16,
     pub include_dt8_color: bool,
     pub include_energy: bool,
     pub include_diagnostics: bool,
@@ -156,6 +156,7 @@ pub struct PollTargetView {
     pub is_dt6: bool,
     pub declares_energy: bool,
     pub declares_diagnostics: bool,
+    pub declares_switching: bool,
     pub dali_groups: u16,
 }
 

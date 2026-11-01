@@ -39,6 +39,7 @@ pub struct OperationAttributeReadOutcomesView {
     pub common_102: String,
     pub dt8_color: String,
     pub dt6_led: String,
+    pub dt7_switching: String,
     pub groups: String,
     pub scenes: String,
     pub extended: String,

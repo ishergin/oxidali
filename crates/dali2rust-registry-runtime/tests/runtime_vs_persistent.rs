@@ -401,3 +401,61 @@ fn unchanged_attribute_read_event_does_not_rewrite_flash() {
         "identical evidence re-applied must not rewrite the slice"
     );
 }
+
+#[test]
+fn a_switching_read_is_served_from_memory_and_never_rewrites_flash() {
+    const SHORT: u8 = 7;
+    const UP_SWITCH_ON: u8 = 0x40;
+    let slices = temp_slice_store("dt7-switching-read");
+    let stack = support::spawn_registry_stack(1, 64);
+    support::seed_physical_via_discovery(&stack.publisher, 1, SHORT, DeviceType::Unknown, &stack.store);
+    stack.store.flush_dirty_slices(&slices);
+    let flushes_before = stack.store.persistence_counters().flush_success_total.load(Ordering::Acquire);
+    assert!(flushes_before >= 1, "the discovered device must persist first");
+
+    support::publish_event(
+        &stack.publisher,
+        dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            2,
+            BusId::default().0,
+            Some(dali2rust_contracts::msg::Origin::Internal),
+            DaliAttributesReadEvent {
+                registry_adapter_id: 0,
+                short_address: SHORT,
+                last_chunk: true,
+                chunk: DaliAttributeReadChunk::Dt7Switching {
+                    snapshot: dali2rust_contracts::msg::Dt7ReadSnapshot {
+                        features: Some(0x19),
+                        up_switch_on_threshold: Some(UP_SWITCH_ON),
+                        up_switch_off_threshold: Some(0xFF),
+                        down_switch_off_threshold: Some(0),
+                        ..Default::default()
+                    },
+                },
+            },
+        ),
+    );
+    wait_for_pd_changed(&stack.ev_rx, 2);
+
+    let switching = support::dt7_switching_section(&stack.store, SHORT);
+    assert_eq!(switching.features.map(|v| v.value), Some(0x19));
+    assert_eq!(switching.up_switch_on_threshold.map(|v| v.value), Some(UP_SWITCH_ON));
+    assert_eq!(switching.up_switch_off_threshold.map(|v| v.value), Some(0xFF));
+    assert_eq!(switching.down_switch_on_threshold, None, "an unanswered threshold stays unknown");
+    assert_eq!(switching.down_switch_off_threshold.map(|v| v.value), Some(0));
+    stack.store.flush_dirty_slices(&slices);
+    assert_eq!(
+        stack.store.persistence_counters().flush_success_total.load(Ordering::Acquire),
+        flushes_before,
+        "the switching section is volatile and must not rewrite the slice"
+    );
+
+    let reloaded = RegistryStore::with_adapter_count(1);
+    let _ = reloaded.hydrate_from_store(&slices, 1);
+    assert_eq!(
+        support::dt7_switching_section(&reloaded, SHORT),
+        dali2rust_domain::registry::Dt7SwitchingAttributesView::default(),
+        "after a reload the section waits for the next read"
+    );
+}

@@ -121,7 +121,7 @@ pub struct PersistableHclPoint {
 pub struct PersistablePollerSettingsSlice {
     pub enabled: bool,
     pub interval_ms: u32,
-    pub attribute_groups_mask: u8,
+    pub attribute_groups_mask: u16,
     pub include_dt8_color: bool,
     pub skip_unbound_virtual_lamps: bool,
     pub include_energy: bool,

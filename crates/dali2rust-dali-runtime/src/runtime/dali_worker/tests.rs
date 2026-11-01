@@ -105,6 +105,7 @@ fn test_publish_read_attributes_evidence_publishes_runtime_update_and_event() {
         dt8_rgbwaf_capable: false,
         dt8_color: Default::default(),
         dt6: None,
+        dt7: None,
         extended_fade_time_ms: None,
         extended_version_number: None,
         extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
@@ -160,6 +161,7 @@ mod measured_colour {
                 ..Default::default()
             },
             dt6: None,
+            dt7: None,
             extended_fade_time_ms: None,
             extended_version_number: None,
             extended_versions: [None; dali2rust_contracts::msg::MAX_EXTENDED_VERSIONS],
@@ -293,7 +295,7 @@ fn every_contract_attribute_group_survives_the_mask_round_trip() {
     }
     let all_mask = DaliAttributeGroup::ALL
         .iter()
-        .fold(0u8, |mask, group| mask | group.mask_bit());
+        .fold(0u16, |mask, group| mask | group.mask_bit());
     assert_eq!(
         super::attribute_read::decode_attribute_groups_mask(all_mask).len(),
         DaliAttributeGroup::ALL.len()
