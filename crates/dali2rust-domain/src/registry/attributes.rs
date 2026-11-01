@@ -68,6 +68,18 @@ pub struct Dt6LedAttributesView {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dt7SwitchingAttributesView {
+    pub features: Option<ObservedValue<u8>>,
+    pub switch_status: Option<ObservedValue<u8>>,
+    pub up_switch_on_threshold: Option<ObservedValue<u8>>,
+    pub up_switch_off_threshold: Option<ObservedValue<u8>>,
+    pub down_switch_on_threshold: Option<ObservedValue<u8>>,
+    pub down_switch_off_threshold: Option<ObservedValue<u8>>,
+    pub error_hold_off: Option<ObservedValue<u8>>,
+    pub gear_type: Option<ObservedValue<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dt8ColorAttributesView {
     pub color_type: Option<ObservedValue<u8>>,
     pub color_value_0: Option<ObservedValue<u16>>,
@@ -401,6 +413,7 @@ macro_rules! declare_attribute_sections {
 declare_attribute_sections! {
     Common102, "common_102", Common102AttributesView;
     Dt6Led, "dt6_led", Dt6LedAttributesView;
+    Dt7Switching, "dt7_switching", Dt7SwitchingAttributesView;
     Dt8Color, "dt8_color", Dt8ColorAttributesView;
     Extended, "extended", ExtendedAttributesView;
     Groups, "groups", GroupsAttributesView;

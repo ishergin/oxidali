@@ -1,4 +1,3 @@
-use dali2rust_domain::dali::frame::ForwardFrame;
 use dali2rust_domain::dali::net::address::DaliAddress;
 use dali2rust_domain::dali::pres::command::DaliCommand;
 use dali2rust_domain::dali::pres::extended::ExtendedCommand;
@@ -31,12 +30,12 @@ pub(crate) fn special_frame(command: SpecialCommand) -> u16 {
     DaliCommand::Special(command).to_forward_frame().raw()
 }
 
-pub(crate) fn dt8_raw_query_frame(short: u8, opcode: u8) -> u16 {
-    ForwardFrame::new(short_address(short).encode_address_byte() | 0x01, opcode).raw()
+pub(crate) fn raw_short_command_frame(short: u8, opcode: u8) -> u16 {
+    (u16::from((short << 1) | 1) << 8) | u16::from(opcode)
 }
 
 // IEC 62386-102 §11.6.2
 pub(crate) fn extended_version_query_frame(short: u8) -> u16 {
-    const QUERY_EXTENDED_VERSION_NUMBER: u16 = 0xFF;
-    (u16::from((short << 1) | 1) << 8) | QUERY_EXTENDED_VERSION_NUMBER
+    const QUERY_EXTENDED_VERSION_NUMBER: u8 = 0xFF;
+    raw_short_command_frame(short, QUERY_EXTENDED_VERSION_NUMBER)
 }

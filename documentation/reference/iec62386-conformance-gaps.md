@@ -165,7 +165,7 @@ DiiA 351's bank 201 is omitted by decision, since 103:2014 §9.10.9 reserves ban
 | 204 | 3 | Low-voltage halogen: protector and reference block. |
 | 205 | 4 | Incandescent dimmer: the only 2xx part with live electrical metering by command. |
 | 206 | 5 | 1–10 V converter: output range, pull-up, physical minimum, dimming curve. |
-| 208 | 7 | Switching: four programmable thresholds, error hold-off, switch status — the likely next need after DT8. |
+| 208 | 7 | Switching: the thresholds and the error hold-off are read (`dt7_switching`) but not written, and `REFERENCE SYSTEM POWER` is never sent. |
 | 210 | 9 | Sequencer: up to 250 points run by the gear itself. Out of scope: no DT9 gear, and the product drives slow dynamics from the controller. |
 
 ### 9.2 Control-gear features

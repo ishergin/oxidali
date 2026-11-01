@@ -472,6 +472,7 @@ fn attribute_read_outcomes_view(
         common_102: body.common_102.as_str().to_string(),
         dt8_color: body.dt8_color.as_str().to_string(),
         dt6_led: body.dt6_led.as_str().to_string(),
+        dt7_switching: body.dt7_switching.as_str().to_string(),
         groups: body.groups.as_str().to_string(),
         scenes: body.scenes.as_str().to_string(),
         extended: body.extended.as_str().to_string(),

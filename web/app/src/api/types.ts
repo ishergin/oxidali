@@ -473,6 +473,7 @@ export type AttributeGroup =
   | 'groups'
   | 'scenes'
   | 'extended'
+  | 'dt7_switching'
 
 export interface AttributeReadsRequest {
   attribute_groups: AttributeGroup[]

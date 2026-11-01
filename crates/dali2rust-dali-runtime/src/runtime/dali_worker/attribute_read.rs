@@ -163,7 +163,7 @@ fn publish_attribute_read_outcomes(
     outcomes: &crate::runtime::executor::AttributeReadOutcomes,
     counters: &DaliWorkerCounters,
 ) {
-    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, w, adapter_id.0, Some(origin), dali2rust_contracts::msg::DaliAttributeReadOutcomesEvent { registry_adapter_id: ar.registry_adapter_id, short_address: ar.short_address, identity: outcomes.identity, runtime_status: outcomes.runtime_status, common_102: outcomes.common_102, dt8_color: outcomes.dt8_color, dt6_led: outcomes.dt6_led, groups: outcomes.groups, scenes: outcomes.scenes, extended: outcomes.extended, memory_banks: outcomes.memory_banks, scene_colours: outcomes.scene_colours });
+    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, w, adapter_id.0, Some(origin), dali2rust_contracts::msg::DaliAttributeReadOutcomesEvent { registry_adapter_id: ar.registry_adapter_id, short_address: ar.short_address, identity: outcomes.identity, runtime_status: outcomes.runtime_status, common_102: outcomes.common_102, dt8_color: outcomes.dt8_color, dt6_led: outcomes.dt6_led, dt7_switching: outcomes.dt7_switching, groups: outcomes.groups, scenes: outcomes.scenes, extended: outcomes.extended, memory_banks: outcomes.memory_banks, scene_colours: outcomes.scene_colours });
     publish_event_required(publisher, ev, counters, PublishKind::Series, "attribute-read-outcomes");
 }
 
@@ -213,6 +213,9 @@ fn attribute_read_chunks(
     }
     if let Some(dt6) = result.dt6.as_ref() {
         chunks.push(Chunk::Dt6Led { snapshot: dt6.clone() });
+    }
+    if let Some(snapshot) = result.dt7 {
+        chunks.push(Chunk::Dt7Switching { snapshot });
     }
     if result.has_extended {
         chunks.push(Chunk::Extended {
@@ -363,7 +366,7 @@ fn dt8_color_chunk(
     }
 }
 
-pub(super) fn decode_attribute_groups_mask(mask: u8) -> Vec<dali2rust_contracts::msg::DaliAttributeGroup> {
+pub(super) fn decode_attribute_groups_mask(mask: u16) -> Vec<dali2rust_contracts::msg::DaliAttributeGroup> {
     dali2rust_contracts::msg::DaliAttributeGroup::ALL
         .into_iter()
         .filter(|group| mask & group.mask_bit() != 0)

@@ -59,24 +59,16 @@ pub(super) struct ExtendedReadSnapshot {
     pub(super) versions: [Option<ExtendedVersionEntry>; MAX_EXTENDED_VERSIONS],
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct KnownVersions {
-    pub(super) device_types: Option<DeviceTypeSet>,
-    pub(super) dt6: Option<u8>,
-}
-
 pub(super) fn read_extended_snapshot(
     controller: &mut impl DaliApplicationController,
     address: DaliAddress,
     content_confirm: ContentConfirmPolicy,
-    known: KnownVersions,
+    device_types: &mut DeclaredTypes,
+    dt6_version: Option<u8>,
 ) -> Result<ExtendedReadSnapshot, SemanticDaliError> {
     let fade_time_ms = read_extended_fade_time(controller, address, content_confirm)?;
-    let device_types = match known.device_types {
-        Some(types) => Some(types),
-        None => super::super::discovery::read_declared_device_types(controller, address, content_confirm)?,
-    };
-    let versions = read_extended_versions(controller, address, content_confirm, device_types, known.dt6)?;
+    let device_types = device_types.resolve(controller, address, content_confirm)?;
+    let versions = read_extended_versions(controller, address, content_confirm, device_types, dt6_version)?;
     let version_number = versions
         .iter()
         .flatten()

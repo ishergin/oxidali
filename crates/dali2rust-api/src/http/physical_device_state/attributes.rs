@@ -2,7 +2,8 @@ use dali2rust_contracts::msg::{FixedText32, FixedText64};
 use dali2rust_domain::dali::banks::{BusUnitConfiguration, ImplementedParts};
 use dali2rust_domain::registry::{
     AttributeSectionView, AttributeSectionVisitor, AttributeSource, BankReading, Common102AttributesView, ConditionView,
-    Dt6LedAttributesView, Dt8ColorAttributesView, EnergyBankView, ExtendedAttributesView,
+    Dt6LedAttributesView, Dt7SwitchingAttributesView, Dt8ColorAttributesView, EnergyBankView,
+    ExtendedAttributesView,
     GearDiagnosticsView, GroupsAttributesView, LuminaireMaintenanceView,
     LuminaireValue, MemoryBusUnitAttributesView, MemoryDiagnosticsAttributesView,
     MemoryEnergyAttributesView, MemoryIdentityAttributesView, MemoryLuminaireAttributesView,
@@ -102,6 +103,17 @@ attribute_section_dto!(Dt6LedAttributesDto from Dt6LedAttributesView {
     short_circuit: u8,
     thermal_overload: u8,
     thermal_shutdown: u8,
+});
+
+attribute_section_dto!(Dt7SwitchingAttributesDto from Dt7SwitchingAttributesView {
+    down_switch_off_threshold: u8,
+    down_switch_on_threshold: u8,
+    error_hold_off: u8,
+    features: u8,
+    gear_type: u8,
+    switch_status: u8,
+    up_switch_off_threshold: u8,
+    up_switch_on_threshold: u8,
 });
 
 attribute_section_dto!(Dt8ColorAttributesDto from Dt8ColorAttributesView {
@@ -477,6 +489,7 @@ macro_rules! section_wire {
 section_wire! {
     Common102AttributesView => Common102AttributesDto;
     Dt6LedAttributesView => Dt6LedAttributesDto;
+    Dt7SwitchingAttributesView => Dt7SwitchingAttributesDto;
     Dt8ColorAttributesView => Dt8ColorAttributesDto;
     ExtendedAttributesView => ExtendedAttributesDto;
     GroupsAttributesView => GroupsAttributesDto;

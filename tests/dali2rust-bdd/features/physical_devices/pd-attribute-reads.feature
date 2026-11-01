@@ -201,6 +201,33 @@ Feature: Physical-device attribute reads
     And all scripted DALI exchanges should be consumed without errors
     And the stats dali read-back counters should eventually have grown by groups 0, colour features 0, extended fade 0 and program repairs 0
 
+  @id:PD-310
+  Scenario: A switching gear's Part 208 registers reach the API under their own section
+    Given a discovery script where short address 0 declares only DT7
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a switching attribute-read script for a gear declaring only device type 7
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "dt7_switching" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the operation attribute-read outcomes should show "dt7_switching" as "success"
+    And physical device 0 eventually exposes the scripted Part 208 registers
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-311
+  Scenario: A gear that does not declare device type 7 is sent no Part 208 frame
+    Given a discovery script where short address 0 declares only DT6
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a switching attribute-read script for a gear declaring only device type 6
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "dt7_switching" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the operation attribute-read outcomes should show "dt7_switching" as "success"
+    And all scripted DALI exchanges should be consumed without errors
+    And no Part 208 frame reached the wire
+    And physical device 0 exposes no dt7_switching section
+
   @id:PD-251
   Scenario: A colour the operator asked for reads back as the number they asked for
     Given a six-channel DT8 discovery script for short address 0

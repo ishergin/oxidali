@@ -5,7 +5,7 @@ use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_test_support::wait_until;
 use serde_json::Value;
 
-use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
+use crate::steps::frames::{raw_short_command_frame, special_frame, standard_frame};
 use crate::DaliWorld;
 
 use super::read_model::{wait_pd_state_field, READ_MODEL_TIMEOUT};
@@ -73,7 +73,7 @@ async fn given_cct_target_state_script(world: &mut DaliWorld) {
         ],
     );
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame(dt8_raw_query_frame(
+    mock.expect_forward_frame(raw_short_command_frame(
         TEST_SHORT_ADDRESS,
         DT8_SET_TEMPERATURE_TC_OPCODE,
     ));
@@ -81,7 +81,7 @@ async fn given_cct_target_state_script(world: &mut DaliWorld) {
     const DT8_STATUS_TC_ACTIVE: u8 = 0x20;
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
     mock.expect_forward_frame_with_backward(
-        dt8_raw_query_frame(TEST_SHORT_ADDRESS, DT8_QUERY_COLOUR_STATUS_OPCODE),
+        raw_short_command_frame(TEST_SHORT_ADDRESS, DT8_QUERY_COLOUR_STATUS_OPCODE),
         Some(DT8_STATUS_TC_ACTIVE),
     );
 }
@@ -113,7 +113,7 @@ fn script_rgb_target_state(mock: &MockDaliTransport, rgb: [u8; 3]) {
 
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
     mock.expect_forward_frame_with_backward(
-        dt8_raw_query_frame(TEST_SHORT_ADDRESS, DT8_QUERY_RGBWAF_CONTROL_OPCODE),
+        raw_short_command_frame(TEST_SHORT_ADDRESS, DT8_QUERY_RGBWAF_CONTROL_OPCODE),
         Some(RGBWAF_CONTROL_POWER_UP),
     );
     mock.expect_forward_frame(special_frame(SpecialCommand::Dtr0(
@@ -124,27 +124,27 @@ fn script_rgb_target_state(mock: &MockDaliTransport, rgb: [u8; 3]) {
         Some(RGBWAF_CONTROL_NORMALISED),
     );
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame(dt8_raw_query_frame(
+    mock.expect_forward_frame(raw_short_command_frame(
         TEST_SHORT_ADDRESS,
         DT8_SET_TEMPORARY_RGBWAF_CONTROL_OPCODE,
     ));
 
     script_staged_dtrs(mock, TEST_SHORT_ADDRESS, &rgb);
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame(dt8_raw_query_frame(
+    mock.expect_forward_frame(raw_short_command_frame(
         TEST_SHORT_ADDRESS,
         DT8_SET_TEMPORARY_RGB_DIMLEVEL_OPCODE,
     ));
     script_staged_dtrs(mock, TEST_SHORT_ADDRESS, &[0, 0, 0]);
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
-    mock.expect_forward_frame(dt8_raw_query_frame(
+    mock.expect_forward_frame(raw_short_command_frame(
         TEST_SHORT_ADDRESS,
         DT8_SET_TEMPORARY_WAF_DIMLEVEL_OPCODE,
     ));
 
     mock.expect_forward_frame(special_frame(SpecialCommand::EnableDeviceType(8)));
     mock.expect_forward_frame_with_backward(
-        dt8_raw_query_frame(TEST_SHORT_ADDRESS, DT8_QUERY_COLOUR_STATUS_OPCODE),
+        raw_short_command_frame(TEST_SHORT_ADDRESS, DT8_QUERY_COLOUR_STATUS_OPCODE),
         Some(DT8_STATUS_RGB_ACTIVE),
     );
 }

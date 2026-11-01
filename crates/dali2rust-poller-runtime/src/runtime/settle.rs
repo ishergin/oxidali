@@ -50,6 +50,7 @@ mod tests {
             is_dt6: false,
             declares_energy: false,
             declares_diagnostics: false,
+            declares_switching: false,
             dali_groups,
         }
     }

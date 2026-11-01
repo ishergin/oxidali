@@ -187,13 +187,10 @@ fn an_extended_fade_the_re_read_corrects_is_counted_and_a_confirmed_or_silent_on
 
     let (transport, mut controller) = setup_controller(mock);
     let counters = wire_counters(&mut controller);
-    let known = KnownVersions {
-        device_types: Some(DeviceTypeSet::default()),
-        dt6: None,
-    };
     let policy = ContentConfirmPolicy::default();
     let mut read = || {
-        read_extended_snapshot(&mut controller, short_address(9), policy, known)
+        let mut known = DeclaredTypes::from_known(Some(DeviceTypeSet::default()));
+        read_extended_snapshot(&mut controller, short_address(9), policy, &mut known, None)
             .expect("extended read")
             .fade_time_ms
     };
@@ -2257,4 +2254,187 @@ fn a_physical_minimum_re_read_held_after_the_curve_is_proved_names_the_hold() {
     assert_eq!(execution.confirmed.dimming_curve, Some(curve), "the proved curve stays confirmed");
     assert_eq!(execution.error, Some(SemanticDaliError::Conflict("controller_quiescent")));
     assert_script_consumed(&transport);
+}
+
+mod dt7_switching {
+    use super::*;
+
+    const ENABLE_DEVICE_TYPE_7: u16 = 0xC107;
+    const SWITCHING_ONLY: DeviceTypeSet = DeviceTypeSet::from_bits(1 << 7);
+    const SHORT: u8 = 17;
+    const ADDRESS_BYTE: u8 = 0x23;
+    // IEC 62386-208 §11.3.4.2, Table 2
+    const REGISTERS: [(u8, u8); 8] = [
+        (0xF0, 0x19),
+        (0xF1, 0x80),
+        (0xF2, 0x40),
+        (0xF3, 0xFF),
+        (0xF4, 0x30),
+        (0xF5, 0x10),
+        (0xF6, 0x06),
+        (0xF7, 0x02),
+    ];
+    const SNAPSHOT: Dt7ReadSnapshot = Dt7ReadSnapshot {
+        features: Some(0x19),
+        switch_status: Some(0x80),
+        up_switch_on_threshold: Some(0x40),
+        up_switch_off_threshold: Some(0xFF),
+        down_switch_on_threshold: Some(0x30),
+        down_switch_off_threshold: Some(0x10),
+        error_hold_off: Some(0x06),
+        gear_type: Some(0x02),
+    };
+
+    fn part_208_query(opcode: u8) -> u16 {
+        (u16::from(ADDRESS_BYTE) << 8) | u16::from(opcode)
+    }
+
+    fn expect_registers(mock: &MockDaliTransport) {
+        for (opcode, answer) in REGISTERS {
+            mock.expect_forward_frame(ENABLE_DEVICE_TYPE_7);
+            mock.expect_forward_frame_with_backward(part_208_query(opcode), Some(answer));
+        }
+    }
+
+    fn expect_presence(mock: &MockDaliTransport) {
+        mock.expect_forward_frame_with_backward(
+            std_query_frame(SHORT, StandardCommand::QueryControlGearPresent),
+            Some(0xFF),
+        );
+    }
+
+    fn expect_device_type(mock: &MockDaliTransport, answer: Option<u8>) {
+        mock.expect_forward_frame_with_backward(
+            std_query_frame(SHORT, StandardCommand::QueryDeviceType),
+            answer,
+        );
+    }
+
+    fn read_groups(
+        mock: MockDaliTransport,
+        requested: &[DaliAttributeGroup],
+    ) -> (AttributeReadExecution, AttributeReadOutcomes) {
+        let (transport, mut controller) = setup_controller(mock);
+        let mut outcomes = AttributeReadOutcomes::for_request(requested, false);
+        let execution = read_attributes(
+            &mut controller,
+            SHORT,
+            requested,
+            ContentConfirmPolicy::default(),
+            &mut outcomes,
+        )
+        .expect("the read completes");
+        assert_script_consumed(&transport);
+        (execution, outcomes)
+    }
+
+    #[test]
+    fn a_gear_declaring_device_type_7_has_each_part_208_register_read_behind_its_prelude() {
+        let mock = MockDaliTransport::new();
+        expect_presence(&mock);
+        expect_identity_triple(&mock, SHORT);
+        expect_device_type(&mock, Some(7));
+        expect_registers(&mock);
+
+        let (execution, outcomes) = read_groups(mock, &[DaliAttributeGroup::Dt7Switching]);
+
+        assert_eq!(execution.dt7, Some(SNAPSHOT));
+        assert_eq!(outcomes.dt7_switching, AttributeGroupReadOutcome::Success);
+    }
+
+    #[test]
+    fn a_gear_that_declares_other_device_types_is_sent_no_part_208_frame() {
+        let mock = MockDaliTransport::new();
+        expect_presence(&mock);
+        expect_identity_triple(&mock, SHORT);
+        expect_device_type(&mock, Some(6));
+
+        let (execution, outcomes) = read_groups(mock, &[DaliAttributeGroup::Dt7Switching]);
+
+        assert_eq!(execution.dt7, None);
+        assert_eq!(outcomes.dt7_switching, AttributeGroupReadOutcome::Success);
+    }
+
+    #[test]
+    fn an_unanswered_device_type_query_proves_nothing_and_the_registers_are_still_asked() {
+        let mock = MockDaliTransport::new();
+        expect_presence(&mock);
+        expect_identity_triple(&mock, SHORT);
+        expect_device_type(&mock, None);
+        expect_registers(&mock);
+
+        let (execution, _) = read_groups(mock, &[DaliAttributeGroup::Dt7Switching]);
+
+        assert_eq!(execution.dt7, Some(SNAPSHOT), "silence is no declaration");
+    }
+
+    #[test]
+    fn the_device_types_the_common_102_read_learned_are_not_asked_again() {
+        let mock = MockDaliTransport::new();
+        expect_presence(&mock);
+        for (command, answer) in [
+            (StandardCommand::QueryVersionNumber, 2u8),
+            (StandardCommand::QueryDeviceType, 7),
+            (StandardCommand::QueryPhysicalMinimum, 254),
+            (StandardCommand::QueryMinLevel, 254),
+            (StandardCommand::QueryMaxLevel, 254),
+            (StandardCommand::QueryPowerOnLevel, 254),
+            (StandardCommand::QuerySystemFailureLevel, 254),
+            (StandardCommand::QueryFadeTimeFadeRate, 0),
+            (StandardCommand::QueryLightSourceType, 6),
+        ] {
+            mock.expect_forward_frame_with_backward(std_query_frame(SHORT, command), Some(answer));
+        }
+        expect_identity_triple(&mock, SHORT);
+        expect_registers(&mock);
+
+        let requested = [DaliAttributeGroup::Common102, DaliAttributeGroup::Dt7Switching];
+        let (execution, _) = read_groups(mock, &requested);
+
+        assert_eq!(execution.dt7, Some(SNAPSHOT));
+    }
+
+    #[test]
+    fn the_extended_section_and_the_switching_section_share_one_device_type_enumeration() {
+        let mock = MockDaliTransport::new();
+        expect_presence(&mock);
+        expect_identity_triple(&mock, SHORT);
+        mock.expect_forward_frame_with_backward(
+            std_query_frame(SHORT, StandardCommand::QueryExtendedFadeTime),
+            Some(0x00),
+        );
+        expect_device_type(&mock, Some(7));
+        mock.expect_forward_frame(ENABLE_DEVICE_TYPE_7);
+        mock.expect_forward_frame_with_backward(part_208_query(0xFF), Some(1));
+        expect_registers(&mock);
+
+        let requested = [DaliAttributeGroup::Extended, DaliAttributeGroup::Dt7Switching];
+        let (execution, _) = read_groups(mock, &requested);
+
+        assert_eq!(execution.dt7, Some(SNAPSHOT));
+        assert_eq!(
+            execution.extended_versions[0],
+            Some(ExtendedVersionEntry { device_type: 7, version_number: Some(1) })
+        );
+    }
+
+    #[test]
+    fn a_silent_register_stays_unknown_and_the_rest_are_still_read() {
+        let mock = MockDaliTransport::new();
+        for (opcode, answer) in REGISTERS {
+            mock.expect_forward_frame(ENABLE_DEVICE_TYPE_7);
+            let reply = (opcode != 0xF6).then_some(answer);
+            mock.expect_forward_frame_with_backward(part_208_query(opcode), reply);
+        }
+        let (transport, mut controller) = setup_controller(mock);
+        let mut known = DeclaredTypes::from_known(Some(SWITCHING_ONLY));
+
+        let read = read_dt7_snapshot(&mut controller, short_address(SHORT), ContentConfirmPolicy::default(), &mut known)
+            .expect("the read completes")
+            .expect("a switching gear");
+
+        assert_eq!(read.error_hold_off, None, "silence is not a hold-off of 0");
+        assert_eq!(read.gear_type, Some(0x02));
+        assert_script_consumed(&transport);
+    }
 }

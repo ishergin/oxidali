@@ -233,6 +233,10 @@ filtered: they address one device.
   stored bytes still decode. After a rollback the older image rejects only a bank that
   holds a value past the old width, which loses that bank's device records and orphans
   their virtual-lamp bindings; a bump would do that to every bank at every rollback.
+  A `u8` is a raw byte, which a varint reads unchanged only below `0x80`. The widening
+  keeps the version when two tests hold: no value the older image could store reaches
+  `0x80`, and the field after it refuses the second byte of a larger value, so after a
+  rollback the older image resets the slice instead of shifting its fields.
 - A bump whose only purpose is to discard stored data is legitimate once per reason,
   named in the commit that bumps it; a second one needs a real mechanism.
 

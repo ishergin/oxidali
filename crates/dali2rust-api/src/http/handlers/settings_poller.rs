@@ -67,7 +67,7 @@ pub struct PollerSettingsPatchData {
     patch_mask: u8,
     enabled: bool,
     interval_ms: u32,
-    attribute_groups_mask: u8,
+    attribute_groups_mask: u16,
     include_dt8_color: bool,
     include_energy: bool,
     include_diagnostics: bool,
@@ -175,7 +175,7 @@ fn parse_u32_range_field(
 
 fn parse_attribute_groups_field(
     obj: &serde_json::Map<String, serde_json::Value>,
-) -> Result<Option<u8>, HttpResponse> {
+) -> Result<Option<u16>, HttpResponse> {
     let Some(v) = obj.get("attribute_groups_default") else {
         return Ok(None);
     };
@@ -183,7 +183,7 @@ fn parse_attribute_groups_field(
     if arr.is_empty() {
         return Err(json_err(422, "invalid_value"));
     }
-    let mut mask: u8 = 0;
+    let mut mask: u16 = 0;
     for el in arr {
         let s = el.as_str().ok_or_else(|| json_err(422, "invalid_enum"))?;
         let g = DaliAttributeGroup::parse(s)

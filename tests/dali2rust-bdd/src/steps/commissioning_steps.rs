@@ -8,7 +8,7 @@ use dali2rust_domain::dali::pres::special::SpecialCommand;
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use serde_json::Value;
 
-use crate::steps::frames::{dt8_raw_query_frame, special_frame, standard_frame};
+use crate::steps::frames::{raw_short_command_frame, special_frame, standard_frame};
 use crate::steps::physical_devices::discovery_scripts::script_detect_dt8_cct;
 use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
@@ -217,9 +217,9 @@ async fn then_identity_probe_only(world: &mut DaliWorld, short: u8) {
     let expected = vec![
         standard_frame(short, StandardCommand::QueryDeviceType),
         enable_dt8,
-        dt8_raw_query_frame(short, DT8_QUERY_COLOUR_TYPE_FEATURES),
+        raw_short_command_frame(short, DT8_QUERY_COLOUR_TYPE_FEATURES),
         enable_dt8,
-        dt8_raw_query_frame(short, DT8_QUERY_COLOUR_STATUS),
+        raw_short_command_frame(short, DT8_QUERY_COLOUR_STATUS),
     ];
     let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
     assert_eq!(

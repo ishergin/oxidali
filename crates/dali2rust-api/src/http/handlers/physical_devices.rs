@@ -737,7 +737,7 @@ fn parse_pd_write_attr_fields(
     })
 }
 
-fn parse_attribute_groups_body(body: &[u8]) -> Result<(u8, MemoryBankReadPreset), HttpResponse> {
+fn parse_attribute_groups_body(body: &[u8]) -> Result<(u16, MemoryBankReadPreset), HttpResponse> {
     let v = parse_body_object(body, &["attribute_groups", "memory_banks"], &[])?;
     let Some(arr) = v.get("attribute_groups").and_then(|x| x.as_array()) else {
         return Err(json_err(400, "invalid_json"));
@@ -745,7 +745,7 @@ fn parse_attribute_groups_body(body: &[u8]) -> Result<(u8, MemoryBankReadPreset)
     if arr.is_empty() || arr.len() > 16 {
         return Err(json_err(422, "invalid_value"));
     }
-    let mut groups_mask: u8 = 0;
+    let mut groups_mask: u16 = 0;
     for el in arr {
         let s = el.as_str().ok_or_else(|| json_err(422, "invalid_enum"))?;
         let g = DaliAttributeGroup::parse(s).ok_or_else(|| json_err(422, "invalid_enum"))?;

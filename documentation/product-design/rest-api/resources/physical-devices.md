@@ -48,8 +48,8 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   override'ами, `supported_device_types` и `extended_versions`, разрешения DT8,
   capabilities, `state`, `color_temperature_range` и `policy_mismatch`. Его же эхом
   отдают `PATCH` и `PUT …/target-state`.
-- **Секции** — `?sections=a,b` выбирает из `common_102`, `dt6_led`, `dt8_color`,
-  `extended`, `groups`, `scenes`, `memory_identity`, `memory_profile`,
+- **Секции** — `?sections=a,b` выбирает из `common_102`, `dt6_led`, `dt7_switching`,
+  `dt8_color`, `extended`, `groups`, `scenes`, `memory_identity`, `memory_profile`,
   `memory_bus_unit`, `memory_luminaire`, `memory_energy`, `memory_diagnostics`; без
   параметра — все. Порядок ответа канонический (отфильтрованный ответ — срез
   полного). Неизвестное имя — `422 invalid_value`, а не молчаливый `{}`, который не
@@ -123,6 +123,8 @@ BDD — [`physical_devices`](../../../../tests/dali2rust-bdd/features/physical_d
   стандартное «неизвестно». Отсутствие листа — «не читалось» или «нет на приборе»: чтение,
   покрывшее `content_format_id`, убирает листы, которых его формат не объявляет, а чтение
   с `0x00` — листы, что кончаются за последней локацией банка из его байта `0x00`.
+- `dt7_switching` — сырые байты регистров Part 208. Порог `255` — MASK из Part 208
+  Table 2: порог не действует, это не уровень.
 - Какие секции переживают перезагрузку —
   [`dali-attribute-taxonomy.md`](../../bus-contracts/dali-attribute-taxonomy.md).
 
