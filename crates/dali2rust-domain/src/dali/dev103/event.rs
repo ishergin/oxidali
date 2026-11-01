@@ -78,6 +78,7 @@ const MANUAL_CONFIG_SHORT_VALID: u8 = 0x40;
 const MANUAL_CONFIG_SHORT_BITS: u8 = 0x3F;
 const MANUAL_CONFIG_PREVIOUS_RESERVED: u8 = 0x40;
 const MANUAL_CONFIG_PREVIOUS_VALID: u8 = 0x20;
+const MANUAL_CONFIG_DEVICE_SHORT_ADDRESS_BIT: u8 = 0;
 
 // IEC 62386-103 §9.6.2, Table 7
 #[must_use]
@@ -159,7 +160,9 @@ fn decode_manual_config(b0: u8, b1: u8, b2: u8) -> Option<InputEvent> {
         (false, true) if select => ManualConfigSource::ShortAddress {
             previous: manual_config_previous_short(b1, b2)?,
         },
-        (false, true) if field == 0 => ManualConfigSource::Device { variable_bit },
+        (false, true) if field == 0 && variable_bit != MANUAL_CONFIG_DEVICE_SHORT_ADDRESS_BIT => {
+            ManualConfigSource::Device { variable_bit }
+        }
         (false, true) => return None,
         (true, device_level) => manual_config_feature(device_level, select, b1, b2),
     };
@@ -708,7 +711,7 @@ mod tests {
         }
     }
 
-    // IEC 62386-333 §9.3.4 EXAMPLE
+    // IEC 62386-333 §9.3.4
     #[test]
     fn the_standards_example_is_instance_active_of_a_push_button_at_short_5() {
         assert_eq!(
@@ -733,13 +736,14 @@ mod tests {
     }
 
     #[test]
-    fn a_device_variable_carries_no_instance_type_and_one_that_does_is_reserved() {
+    fn a_device_variable_carries_no_instance_type_and_the_short_address_is_not_one_of_them() {
         assert_eq!(
             manual_config([0xE4, 0xC0, 0x45]),
             (Some(5), ManualConfigSource::Device { variable_bit: 4 })
         );
         assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x81, 0xC5])), None);
         assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x80, 0xC5])), None);
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x80, 0x45])), None);
     }
 
     #[test]

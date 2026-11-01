@@ -1716,16 +1716,25 @@ fn a_manual_configuration_event_dates_every_address_it_names_and_announces_each(
         || store.input_device_detail(0, 5).is_some() && store.input_device_detail(0, 7).is_some(),
         Duration::from_millis(500),
     );
+    publish_event(&publisher, dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED, 2, BUS_TID, Some(dali2rust_contracts::msg::Origin::Internal),
+        dali2rust_contracts::msg::Dali103ScanStartedEvent { registry_adapter_id: 0 }));
+    let present = |short| store.input_device_detail(0, short).map(|d| d.summary.present);
+    wait_until(
+        || present(5) == Some(false) && present(7) == Some(false),
+        Duration::from_millis(500),
+    );
     drain_events(&ev_obs);
     let stamp =
         |short| store.input_device_detail(0, short).and_then(|d| d.manual_config_changed_at_ms);
     assert_eq!((stamp(5), stamp(7)), (None, None));
 
+    const OBSERVED_AT_MS: u64 = 1_700_000_000_123;
     let moved = dali2rust_contracts::msg::DaliInputManualConfigEvent {
         registry_adapter_id: 0,
         short_address: Some(7),
         source: dali2rust_contracts::msg::ManualConfigSource::ShortAddress { previous: Some(5) },
-        observed_at_ms: 1,
+        observed_at_ms: OBSERVED_AT_MS,
         observed_at_mono_ms: 1,
     };
     let origin = Some(dali2rust_contracts::msg::Origin::Sniffer);
@@ -1741,7 +1750,15 @@ fn a_manual_configuration_event_dates_every_address_it_names_and_announces_each(
     };
     assert!(announced(7), "the address the device holds now is announced");
     assert!(announced(5), "the address the device left is announced");
-    assert!(stamp(7).is_some() && stamp(5).is_some(), "both records are dated");
+    assert_eq!(
+        (stamp(7), stamp(5)),
+        (Some(OBSERVED_AT_MS), Some(OBSERVED_AT_MS)),
+        "both records are dated with the observation"
+    );
+    let seen = store.input_device_detail(0, 7).expect("record").summary;
+    assert!(seen.present, "the address that sent the frame is present");
+    assert_eq!(seen.last_seen_ms, Some(OBSERVED_AT_MS));
+    assert_eq!(present(5), Some(false), "the address the device left is not seen through it");
 
     let knob = dali2rust_contracts::msg::ManualConfigSource::Device { variable_bit: 1 };
     for (corr, short) in [(78, 9), (79, 5)] {

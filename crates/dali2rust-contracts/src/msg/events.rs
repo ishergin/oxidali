@@ -1134,3 +1134,33 @@ impl IpAddressAssignedEvent {
         }
     }
 }
+
+#[cfg(test)]
+mod manual_config_tests {
+    use super::*;
+
+    fn event(short_address: Option<u8>, source: ManualConfigSource) -> DaliInputManualConfigEvent {
+        DaliInputManualConfigEvent {
+            registry_adapter_id: 0,
+            short_address,
+            source,
+            observed_at_ms: 0,
+            observed_at_mono_ms: 0,
+        }
+    }
+
+    #[test]
+    fn an_address_changed_by_hand_names_each_address_once() {
+        let moved = |short, previous| {
+            event(short, ManualConfigSource::ShortAddress { previous }).named_short_addresses()
+        };
+        assert_eq!(moved(Some(7), Some(5)), [Some(7), Some(5)]);
+        assert_eq!(moved(Some(5), Some(5)), [Some(5), None]);
+        assert_eq!(moved(None, Some(5)), [None, Some(5)]);
+        assert_eq!(moved(Some(7), None), [Some(7), None]);
+        assert_eq!(
+            event(Some(5), ManualConfigSource::Device { variable_bit: 1 }).named_short_addresses(),
+            [Some(5), None]
+        );
+    }
+}

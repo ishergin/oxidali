@@ -12,19 +12,20 @@ Feature: IEC 62386-333 manual configuration events reach the rules and the regis
     And the last operation eventually succeeds
     Given the DALI mock transport trace is cleared
     When a 24-bit input event frame E0 B0 C5 is observed on the bus
-    Then within 3 seconds the stats pointer "/rules/activations_total" reaches 1
-    And the mock transport should have sent a broadcast off frame
+    Then the rule "knob" eventually has fired 1 time
+    And the DALI mock transport should eventually have sent forward frame 0xFE00
 
   @id:INP-101
   Scenario: Another device's manual configuration does not fire the rule
-    When I PUT JSON {"base_revision":0,"source":"rule \"knob\" {\n  when input device(dev=5) manual config changed\n  do log(\"knob\")\n}\n"} to "/api/v1/rules"
+    When I PUT JSON {"base_revision":0,"source":"rule \"knob\" {\n  when input device(dev=5) manual config changed\n  do log(\"knob\")\n}\nrule \"sentinel\" {\n  when input device(dev=7) manual config changed\n  do log(\"sentinel\")\n}\n"} to "/api/v1/rules"
     Then the response status should be 202
     And the last operation eventually succeeds
+    When a 24-bit input event frame E0 B0 C5 is observed on the bus
+    Then the rule "knob" eventually has fired 1 time
     When a 24-bit input event frame E0 B0 C6 is observed on the bus
-    And a 24-bit input event frame E0 B0 C5 is observed on the bus
-    Then within 3 seconds the stats pointer "/rules/activations_total" reaches 1
-    When I send a GET request to "/api/v1/rules?format=json"
-    Then the JSON pointer "/rules/rules/0/runtime/fire_count" should be 1
+    And a 24-bit input event frame E0 B0 C7 is observed on the bus
+    Then the rule "sentinel" eventually has fired 1 time
+    And the rule "knob" should have fired 1 time
 
   @id:INP-102
   Scenario: A short address changed by hand fires the rules of the previous and the current address
@@ -32,14 +33,11 @@ Feature: IEC 62386-333 manual configuration events reach the rules and the regis
     Then the response status should be 202
     And the last operation eventually succeeds
     When a 24-bit input event frame E6 A2 C7 is observed on the bus
-    Then within 3 seconds the stats pointer "/rules/activations_total" reaches 2
-    When I send a GET request to "/api/v1/rules?format=json"
-    Then the JSON pointer "/rules/rules/0/runtime/fire_count" should be 1
-    And the JSON pointer "/rules/rules/1/runtime/fire_count" should be 1
+    Then the rule "a-was" eventually has fired 1 time
+    And the rule "b-now" eventually has fired 1 time
 
   @id:INP-103
   Scenario: A frame in the manual configuration space that Part 333 reserves stays unknown
-    Given the DALI mock transport trace is cleared
     When a 24-bit input event frame E4 81 C5 is observed on the bus
     Then diagnostics sniffer_translator unknown_seen should be at least 1
     And diagnostics sniffer_translator input_events_generic should be 0

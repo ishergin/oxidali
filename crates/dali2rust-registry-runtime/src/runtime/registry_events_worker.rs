@@ -251,10 +251,12 @@ dali2rust_contracts::dispatch_bus_events! {
             .fetch_add(1, Ordering::Relaxed);
     },
     DaliInputManualConfigEvent(body) => {
-        let now_ms = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
         let adapter_id = body.registry_adapter_id;
-        for short_address in body.named_short_addresses().into_iter().flatten() {
-            if store.note_input_device_manual_config(adapter_id, short_address, now_ms) {
+        let [current, previous] = body.named_short_addresses();
+        for (short_address, holds) in [(current, true), (previous, false)] {
+            let Some(short_address) = short_address else { continue };
+            let at_ms = body.observed_at_ms;
+            if store.note_input_device_manual_config(adapter_id, short_address, at_ms, holds) {
                 publish_input_device_changed(publisher, corr, adapter_id, short_address);
             }
         }

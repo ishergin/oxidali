@@ -367,12 +367,21 @@ pub fn describe_forward24(bytes: [u8; 3]) -> FrameDescription {
             detail: Some(describe_event_source(&source, info)),
             is_query: false,
         },
-        None => FrameDescription {
-            target: None,
-            name: "24-BIT COMMAND".to_string(),
-            detail: Some(format!("{raw} (IEC 62386-103 command)")),
-            is_query: false,
-        },
+        None => describe_undecoded24(frame, &raw),
+    }
+}
+
+fn describe_undecoded24(frame: ForwardFrame24, raw: &str) -> FrameDescription {
+    let (name, detail) = if frame.is_command() {
+        ("24-BIT COMMAND", format!("{raw} (IEC 62386-103 command)"))
+    } else {
+        ("24-BIT EVENT", format!("{raw} (reserved IEC 62386-103 event)"))
+    };
+    FrameDescription {
+        target: None,
+        name: name.to_string(),
+        detail: Some(detail),
+        is_query: false,
     }
 }
 
@@ -666,6 +675,13 @@ mod tests {
         );
         let moved = describe_forward24([0xE6, 0xA2, 0xC7]);
         assert_eq!(moved.detail.as_deref(), Some("device 7, short address, previously 5"));
+    }
+
+    #[test]
+    fn a_reserved_event_encoding_is_named_an_event_not_a_command() {
+        let d = describe_forward24([0xE4, 0x81, 0xC5]);
+        assert_eq!(d.name, "24-BIT EVENT");
+        assert_eq!(d.detail.as_deref(), Some("0xE4 0x81 0xC5 (reserved IEC 62386-103 event)"));
     }
 
     #[test]

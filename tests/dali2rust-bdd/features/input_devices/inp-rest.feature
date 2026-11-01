@@ -299,10 +299,11 @@ Feature: IEC 62386-103 input devices as a REST resource
     And the mock transport should have sent no 24-bit frames
 
     Examples:
-      | path                                                    | body                          |
-      | /api/v1/adapters/0/input-devices/0                      | {"present":false}             |
-      | /api/v1/adapters/0/input-devices/0/instances/0          | {"instance_type":3}           |
-      | /api/v1/adapters/0/input-devices/0/instances/0/feedback | {"probed":false}              |
+      | path                                                    | body                                 |
+      | /api/v1/adapters/0/input-devices/0                      | {"present":false}                    |
+      | /api/v1/adapters/0/input-devices/0                      | {"manual_config_changed_at_ms":null} |
+      | /api/v1/adapters/0/input-devices/0/instances/0          | {"instance_type":3}                  |
+      | /api/v1/adapters/0/input-devices/0/instances/0/feedback | {"probed":false}                     |
 
   @id:INP-098
   Scenario Outline: Part 103 commissioning is refused while lamp commissioning runs on the adapter

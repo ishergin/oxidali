@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use dali2rust_contracts::msg::{
-    BusEventPayload, DaliInputEventObservedEvent, InputEventKind as WireKind,
-    RuntimeStateChangedEvent,
+    BusEventPayload, DaliInputEventObservedEvent, DaliInputManualConfigEvent,
+    InputEventKind as WireKind, RuntimeStateChangedEvent,
 };
 
 use crate::runtime::engine::{EngineInput, InputEventKind};
@@ -21,6 +21,17 @@ fn button_kind(code: u16) -> Option<InputEventKind> {
         0x00F => InputEventKind::ButtonStuck,
         _ => return None,
     })
+}
+
+fn manual_config_inputs(ev: &DaliInputManualConfigEvent) -> Vec<EngineInput<'static>> {
+    ev.named_short_addresses()
+        .into_iter()
+        .flatten()
+        .map(|short_address| EngineInput::ManualConfigChanged {
+            adapter_id: ev.registry_adapter_id,
+            short_address,
+        })
+        .collect()
 }
 
 const OCCUPANCY_OCCUPIED_BIT: u16 = 1 << 1;
@@ -56,15 +67,7 @@ impl FunnelState {
                     scene_id: ev.scene_id,
                 }]
             }
-            BusEventPayload::DaliInputManualConfigEvent(ev) => ev
-                .named_short_addresses()
-                .into_iter()
-                .flatten()
-                .map(|short_address| EngineInput::ManualConfigChanged {
-                    adapter_id: ev.registry_adapter_id,
-                    short_address,
-                })
-                .collect(),
+            BusEventPayload::DaliInputManualConfigEvent(ev) => manual_config_inputs(ev),
             BusEventPayload::DaliInputDeviceLifecycleEvent(ev) => {
                 vec![EngineInput::PowerCycled {
                     adapter_id: ev.registry_adapter_id,

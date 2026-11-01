@@ -400,6 +400,7 @@ const DEVICE_READ_ONLY_KEYS: &[&str] = &[
     "version_number",
     "now_ms",
     "nvm_settling_until_ms",
+    "manual_config_changed_at_ms",
     "instances",
 ];
 

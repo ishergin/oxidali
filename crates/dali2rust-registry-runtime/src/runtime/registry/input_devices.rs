@@ -466,12 +466,17 @@ impl RegistryStore {
         adapter_id: u8,
         short_address: u8,
         at_ms: u64,
+        holds_the_address: bool,
     ) -> bool {
         let mut g = self.write_inner();
         let Some(record) = g.input_devices.get_mut(&(adapter_id, short_address)) else {
             return false;
         };
         record.manual_config_changed_at_ms = Some(at_ms);
+        if holds_the_address {
+            record.present = true;
+            record.last_seen_ms = Some(at_ms);
+        }
         true
     }
 
