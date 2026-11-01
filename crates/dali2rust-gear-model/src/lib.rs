@@ -3,6 +3,7 @@ pub mod gear;
 pub mod luminaire;
 pub mod metering;
 pub mod rng;
+pub mod switching;
 pub mod input_device;
 
 #[cfg(test)]

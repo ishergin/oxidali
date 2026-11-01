@@ -1,7 +1,8 @@
 use crate::dali::dev103::{
     decode_event, instance_type, ButtonEvent, EventSource, ForwardFrame24, InputEvent,
 };
-use crate::dali::devices::DeviceType;
+use crate::dali::devices::dt7_switching::Dt7Command;
+use crate::dali::devices::{DeviceCommandMetadata, DeviceType};
 use crate::dali::net::address::{decode_wire_address, DaliAddress};
 use crate::dali::pres::opcode::{
     CONFIG_ADD_TO_GROUP_BASE, CONFIG_REMOVE_FROM_GROUP_BASE, CONFIG_REMOVE_SCENE_BASE,
@@ -33,6 +34,7 @@ pub struct DescribeContext {
 pub const ENABLE_DEVICE_TYPE_ADDRESS: u8 = SpecialCommand::EnableDeviceType(0).wire_bytes().0;
 
 const DEVICE_TYPE_DT6_LED: u8 = DeviceType::Led.code();
+const DEVICE_TYPE_DT7_SWITCHING: u8 = DeviceType::Switching.code();
 const DEVICE_TYPE_DT8_COLOUR: u8 = DeviceType::Color.code();
 const DAPC_SELECTOR_BIT: u8 = 0x01;
 
@@ -181,6 +183,26 @@ const DT6_NAMES: &[(u8, &str)] = &[
     (0xFF, "DT6 QUERY EXTENDED VERSION NUMBER"),
 ];
 
+const DT7_NAMES: &[(u8, &str)] = &[
+    (0xE0, "DT7 REFERENCE SYSTEM POWER"),
+    (0xE1, "DT7 STORE DTR AS UP SWITCH-ON THRESHOLD"),
+    (0xE2, "DT7 STORE DTR AS UP SWITCH-OFF THRESHOLD"),
+    (0xE3, "DT7 STORE DTR AS DOWN SWITCH-ON THRESHOLD"),
+    (0xE4, "DT7 STORE DTR AS DOWN SWITCH-OFF THRESHOLD"),
+    (0xE5, "DT7 STORE DTR AS ERROR HOLD-OFF TIME"),
+    (0xF0, "DT7 QUERY FEATURES"),
+    (0xF1, "DT7 QUERY SWITCH STATUS"),
+    (0xF2, "DT7 QUERY UP SWITCH-ON THRESHOLD"),
+    (0xF3, "DT7 QUERY UP SWITCH-OFF THRESHOLD"),
+    (0xF4, "DT7 QUERY DOWN SWITCH-ON THRESHOLD"),
+    (0xF5, "DT7 QUERY DOWN SWITCH-OFF THRESHOLD"),
+    (0xF6, "DT7 QUERY ERROR HOLD-OFF TIME"),
+    (0xF7, "DT7 QUERY GEAR TYPE"),
+    (0xF9, "DT7 QUERY REFERENCE RUNNING"),
+    (0xFA, "DT7 QUERY REFERENCE MEASUREMENT FAILED"),
+    (0xFF, "DT7 QUERY EXTENDED VERSION NUMBER"),
+];
+
 // IEC 62386-207 §11.3.4.2
 const DT6_EXTENDED_QUERY_START: u8 = 0xED;
 const DT8_EXTENDED_QUERY_START: u8 = 0xF7;
@@ -223,6 +245,7 @@ fn extended_opcode_name(opcode: u8, ctx: DescribeContext) -> (String, Option<Str
     match ctx.enabled_device_type {
         Some(DEVICE_TYPE_DT8_COLOUR) => named_or_hex(DT8_NAMES, opcode, "DT8"),
         Some(DEVICE_TYPE_DT6_LED) => named_or_hex(DT6_NAMES, opcode, "DT6"),
+        Some(DEVICE_TYPE_DT7_SWITCHING) => named_or_hex(DT7_NAMES, opcode, "DT7"),
         Some(other) => (
             format!("EXTENDED 0x{opcode:02X}"),
             Some(format!("device type {other}")),
@@ -247,6 +270,9 @@ fn named_or_hex(
 
 fn is_query_command_byte(opcode: u8, ctx: DescribeContext) -> bool {
     if opcode >= EXTENDED_START {
+        if ctx.enabled_device_type == Some(DEVICE_TYPE_DT7_SWITCHING) {
+            return Dt7Command::from_opcode(opcode).is_some_and(|c| c.is_query());
+        }
         let start = match ctx.enabled_device_type {
             Some(DEVICE_TYPE_DT8_COLOUR) => DT8_EXTENDED_QUERY_START,
             Some(DEVICE_TYPE_DT6_LED) => DT6_EXTENDED_QUERY_START,
@@ -514,6 +540,32 @@ mod tests {
         assert!(query.is_query, "247 is the first DT8 query");
 
         assert!(describe_forward16(0x01, 0xF3, ctx_none()).is_query);
+    }
+
+    #[test]
+    fn a_dt7_prelude_names_part_208_frames_and_opens_its_window_at_240() {
+        let dt7 = DescribeContext {
+            enabled_device_type: Some(DEVICE_TYPE_DT7_SWITCHING),
+        };
+        let features = describe_forward16(0x01, 0xF0, dt7);
+        assert_eq!(features.name, "DT7 QUERY FEATURES");
+        assert!(features.is_query);
+        let hold_off = describe_forward16(0x01, 0xE5, dt7);
+        assert_eq!(hold_off.name, "DT7 STORE DTR AS ERROR HOLD-OFF TIME");
+        assert!(!hold_off.is_query);
+        let reserved = describe_forward16(0x01, 0xEE, dt7);
+        assert_eq!(reserved.name, "DT7 0xEE");
+        assert!(
+            !reserved.is_query,
+            "IEC 62386-208 §11.3.4.1 — 238 is reserved and the gear must not react"
+        );
+        assert_eq!(describe_forward16(0x01, 0xF6, dt7).name, "DT7 QUERY ERROR HOLD-OFF TIME");
+        for reserved_query in [0xF8, 0xFB, 0xFE] {
+            assert!(
+                !describe_forward16(0x01, reserved_query, dt7).is_query,
+                "IEC 62386-208 Table 3: {reserved_query:#04X} is reserved and opens no window"
+            );
+        }
     }
 
     #[test]
