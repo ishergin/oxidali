@@ -512,26 +512,29 @@ fn a_contended_read_costs_the_field_and_the_device_is_still_published() {
     );
 }
 
-fn manual_config_frame(command: Manual333Command) -> [u8; 3] {
+fn manual_config_frame(command: Manual333Command, instance_number: u8) -> [u8; 3] {
     command
-        .frame(Device103Address::Short(0), InstanceAddress::FeatureNumber(0))
+        .frame(Device103Address::Short(0), InstanceAddress::FeatureNumber(instance_number))
         .as_bytes()
 }
 
-fn scan_one_push_button(
-    answers: &[(Manual333Command, u8)],
+fn scan_push_buttons(
+    instances: u8,
+    answers: &[([u8; 3], u8)],
     outcomes: &[TransferOutcome],
 ) -> (ScannedDevice, Scan103Summary, Vec<[u8; 3]>) {
     let (mut controller, transport) = controller();
     {
         let guard = transport.lock().expect("mock lock");
         let presence = Device103Command::QueryNumberOfInstances.frame(Device103Address::Short(0));
-        guard.script_frame24_answer(presence.as_bytes(), 1);
-        let ty = Instance103Command::QueryInstanceType
-            .frame(Device103Address::Short(0), InstanceAddress::Number(0));
-        guard.script_frame24_answer(ty.as_bytes(), instance_type::PUSH_BUTTON);
-        for (command, answer) in answers {
-            guard.script_frame24_answer(manual_config_frame(*command), *answer);
+        guard.script_frame24_answer(presence.as_bytes(), instances);
+        for number in 0..instances {
+            let ty = Instance103Command::QueryInstanceType
+                .frame(Device103Address::Short(0), InstanceAddress::Number(number));
+            guard.script_frame24_answer(ty.as_bytes(), instance_type::PUSH_BUTTON);
+        }
+        for (frame, answer) in answers {
+            guard.script_frame24_answer(*frame, *answer);
         }
         for outcome in outcomes {
             guard.script_frame24_outcome(*outcome);
@@ -544,32 +547,80 @@ fn scan_one_push_button(
     (device, summary, frames24(&transport))
 }
 
-// IEC 62386-333 §9.4.3.2, §11.12.5, §11.12.6
+// IEC 62386-333 §9.4.3.2, §11.12.5, §11.12.6, Table 6
 #[test]
 fn an_instance_is_under_local_control_when_either_part_holds_a_variable() {
-    const PART_103: Manual333Command = Manual333Command::QueryManualConfig103;
-    const PART_3XX: Manual333Command = Manual333Command::QueryManualConfig3xx;
-    let state = |answers: &[(Manual333Command, u8)]| {
-        scan_one_push_button(answers, &[]).0.instance_facts[0].manual_config_active
+    let part_103 = manual_config_frame(Manual333Command::QueryManualConfig103, 0);
+    let part_3xx = manual_config_frame(Manual333Command::QueryManualConfig3xx, 0);
+    let scan = |answers: &[([u8; 3], u8)]| {
+        let (device, _, frames) = scan_push_buttons(1, answers, &[]);
+        (device.instance_facts[0].manual_config_active, frames.contains(&part_3xx))
     };
-    assert_eq!(state(&[(PART_103, 0x08)]), Some(true), "a 103 variable alone, 3xx silent");
-    assert_eq!(state(&[(PART_103, 0x00), (PART_3XX, 0x04)]), Some(true), "a 3xx variable alone");
-    assert_eq!(state(&[(PART_103, 0x00), (PART_3XX, 0x00)]), Some(false));
-    assert_eq!(state(&[(PART_103, 0x00)]), Some(false), "no 3xx part holds no 3xx variable");
-    assert_eq!(state(&[(PART_103, 0xFF)]), None, "MASK is never a value");
-    assert_eq!(state(&[(PART_103, 0x00), (PART_3XX, 0xFF)]), None, "MASK is never a value");
+    let cases: &[(&[([u8; 3], u8)], Option<bool>, bool, &str)] = &[
+        (&[(part_103, 0x08)], Some(true), false, "a 103 variable settles it, 3xx is not asked"),
+        (&[(part_103, 0x7F)], Some(true), false, "the top of Table 6's range"),
+        (&[(part_103, 0x00), (part_3xx, 0x04)], Some(true), true, "a 3xx variable alone"),
+        (&[(part_103, 0x00), (part_3xx, 0x00)], Some(false), true, "neither part"),
+        (&[(part_103, 0x00)], None, true, "silence on 3xx is no answer, not an answer of 0"),
+        (&[(part_103, 0x81)], None, false, "bit 7 of manualConfigInstance103 is reserved"),
+        (&[(part_103, 0xFF)], None, false, "MASK is never a value"),
+        (&[(part_103, 0x00), (part_3xx, 0xFF)], None, true, "MASK is never a value"),
+    ];
+    for (answers, state, asks_3xx, why) in cases {
+        assert_eq!(scan(answers), (*state, *asks_3xx), "{why}");
+    }
+}
+
+#[test]
+fn each_instance_is_asked_about_its_own_variables() {
+    let frame = manual_config_frame;
+    let answers = [
+        (frame(Manual333Command::QueryManualConfig103, 0), 0x08),
+        (frame(Manual333Command::QueryManualConfig103, 1), 0x00),
+        (frame(Manual333Command::QueryManualConfig3xx, 1), 0x00),
+    ];
+    let (device, _, _) = scan_push_buttons(2, &answers, &[]);
+    let states: Vec<Option<bool>> =
+        device.instance_facts.iter().map(|facts| facts.manual_config_active).collect();
+    assert_eq!(
+        states,
+        [Some(true), Some(false)],
+        "instance feature addressing names the instance the answer belongs to"
+    );
 }
 
 #[test]
 fn a_device_silent_to_part_333_is_unknown_and_never_asked_about_3xx() {
-    let (device, summary, frames) = scan_one_push_button(&[], &[]);
+    let (device, summary, frames) = scan_push_buttons(1, &[], &[]);
     assert_eq!(device.instance_facts[0].manual_config_active, None);
-    assert!(frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig103)));
+    assert!(frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig103, 0)));
     assert!(
-        !frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig3xx)),
-        "3xx is asked only of an instance that answered 103"
+        !frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig3xx, 0)),
+        "3xx is asked only of an instance that answered 103 with 0"
     );
     assert_eq!(summary.addresses_contended, 0);
+}
+
+#[test]
+fn a_contended_103_answer_leaves_the_state_unknown_and_is_counted() {
+    let outcomes = [
+        TransferOutcome::Answer(1),
+        TransferOutcome::Answer(instance_type::PUSH_BUTTON),
+        TransferOutcome::NoAnswer,
+        TransferOutcome::CorruptedInWindow,
+    ];
+    let (device, summary, frames) = scan_push_buttons(1, &[], &outcomes);
+    assert_eq!(
+        frames[3],
+        manual_config_frame(Manual333Command::QueryManualConfig103, 0),
+        "the fourth frame is the 103 query the violation lands on"
+    );
+    assert_eq!(device.instance_facts[0].manual_config_active, None);
+    assert!(
+        !frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig3xx, 0)),
+        "a window nobody can be attributed in is not an answer of 0"
+    );
+    assert_eq!(summary.addresses_contended, 1);
 }
 
 #[test]
@@ -581,10 +632,10 @@ fn a_contended_3xx_answer_leaves_the_state_unknown_and_is_counted() {
         TransferOutcome::Answer(0),
         TransferOutcome::CorruptedInWindow,
     ];
-    let (device, summary, frames) = scan_one_push_button(&[], &outcomes);
+    let (device, summary, frames) = scan_push_buttons(1, &[], &outcomes);
     assert_eq!(
         frames[4],
-        manual_config_frame(Manual333Command::QueryManualConfig3xx),
+        manual_config_frame(Manual333Command::QueryManualConfig3xx, 0),
         "the fifth frame is the 3xx query the violation lands on"
     );
     assert_eq!(

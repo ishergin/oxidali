@@ -217,11 +217,12 @@ reads `QUERY DEVICE CAPABILITIES` (bit 0 `applicationControllerPresent`) and
 
 The manual configuration event (333 §9.3) is decoded, fires the rules trigger
 `manual config changed` and dates the record of every address it names. The scan reads
-each instance's `manualConfigInstance103` and `manualConfigInstance3xx`
+each instance's `manualConfigInstance103` and, when that is 0, `manualConfigInstance3xx`
 (`manual_config_active`). Not read or sent:
 - `manualConfigDevice` (device feature addressing), so a device-level variable under
   local control — the short address, the device groups — is not shown;
-- `QUERY MANUAL CONFIGURATION FEATURE 3xx`, the feature variables of an instance;
+- `QUERY MANUAL CONFIGURATION FEATURE 3xx`, the feature variables of an instance, among
+  them the Part 332 indication the product writes;
 - `SET MANUAL CONFIGURATION`, so the product cannot hand a variable back to the bus;
 - the capability queries and `QUERY ANY MANUAL CONFIGURATION ENABLED`.
 
