@@ -1,5 +1,4 @@
 use super::*;
-use dali2rust_contracts::msg::Dt7ReadSnapshot;
 use dali2rust_domain::dali::devices::dt7_switching::{Dt7Command, Threshold};
 
 pub(super) fn read_dt7_snapshot(
@@ -25,4 +24,46 @@ pub(super) fn read_dt7_snapshot(
         error_hold_off: query(Dt7Command::QueryErrorHoldOffTime)?,
         gear_type: query(Dt7Command::QueryGearType)?,
     }))
+}
+
+const SWITCHING_ARM_UNCONFIRMED: &str = "dt7_switching_arm_unconfirmed";
+
+fn threshold_slot(write: &mut Dt7SwitchingWrite, threshold: Threshold) -> &mut Option<u8> {
+    match threshold {
+        Threshold::UpSwitchOn => &mut write.up_switch_on_threshold,
+        Threshold::UpSwitchOff => &mut write.up_switch_off_threshold,
+        Threshold::DownSwitchOn => &mut write.down_switch_on_threshold,
+        Threshold::DownSwitchOff => &mut write.down_switch_off_threshold,
+    }
+}
+
+fn switching_step(store: Dt7Command, query: Dt7Command) -> ExtendedStore {
+    ExtendedStore {
+        store: ExtendedCommand::Dt7(store),
+        query: ExtendedCommand::Dt7(query),
+        arm_unconfirmed: SWITCHING_ARM_UNCONFIRMED,
+    }
+}
+
+// IEC 62386-208 §11.3.4.1
+pub(super) fn write_switching(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    tally: &mut WriteTally,
+    mut switching: Dt7SwitchingWrite,
+) -> Result<(), SemanticDaliError> {
+    for threshold in Threshold::ALL {
+        let Some(value) = *threshold_slot(&mut switching, threshold) else {
+            continue;
+        };
+        let step = switching_step(Dt7Command::StoreDtrAsThreshold(threshold), Dt7Command::QueryThreshold(threshold));
+        let confirmed = store_extended_verified(controller, address, tally, value, &step)?;
+        *threshold_slot(&mut tally.confirmed.switching, threshold) = confirmed;
+    }
+    let Some(hold_off) = switching.error_hold_off else {
+        return Ok(());
+    };
+    let step = switching_step(Dt7Command::StoreDtrAsErrorHoldOffTime, Dt7Command::QueryErrorHoldOffTime);
+    tally.confirmed.switching.error_hold_off = store_extended_verified(controller, address, tally, hold_off, &step)?;
+    Ok(())
 }

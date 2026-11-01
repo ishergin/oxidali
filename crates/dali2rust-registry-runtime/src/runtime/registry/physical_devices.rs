@@ -13,7 +13,7 @@ use crate::runtime::registry::views::{
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{
     observation_supersedes, ColorMode, ColorValue, DaliAttributeReadChunk as Chunk, DeviceType,
-    DeviceTypeSet, ExtendedVersionEntry, FailureStatus, FixedText64, LastDapcSource,
+    DeviceTypeSet, Dt7SwitchingWrite, ExtendedVersionEntry, FailureStatus, FixedText64, LastDapcSource,
     LevelTransition, LightSetpoint, MAX_EXTENDED_VERSIONS, PhysicalDeviceOverrideCommand as Patch,
     PowerState, RuntimeObservation, RuntimeSource, StatusFlags,
 };
@@ -564,6 +564,14 @@ fn merge_dt7_read_snapshot(
     merge_read_attr_opt(&mut switching.down_switch_off_threshold, dt7.down_switch_off_threshold, now_ms);
     merge_read_attr_opt(&mut switching.error_hold_off, dt7.error_hold_off, now_ms);
     merge_read_attr_opt(&mut switching.gear_type, dt7.gear_type, now_ms);
+}
+
+fn merge_dt7_write(switching: &mut Dt7SwitchingAttributesView, written: Dt7SwitchingWrite, now_ms: u64) {
+    merge_write_attr_opt(&mut switching.up_switch_on_threshold, written.up_switch_on_threshold, now_ms);
+    merge_write_attr_opt(&mut switching.up_switch_off_threshold, written.up_switch_off_threshold, now_ms);
+    merge_write_attr_opt(&mut switching.down_switch_on_threshold, written.down_switch_on_threshold, now_ms);
+    merge_write_attr_opt(&mut switching.down_switch_off_threshold, written.down_switch_off_threshold, now_ms);
+    merge_write_attr_opt(&mut switching.error_hold_off, written.error_hold_off, now_ms);
 }
 
 #[inline(never)]
@@ -1329,7 +1337,7 @@ impl RegistryStore {
         extended_fade_time_ms: Option<u32>,
         tc_limits_mirek: (Option<u16>, Option<u16>),
         min_max_levels: (Option<u8>, Option<u8>),
-        dimming_curve: Option<u8>,
+        (dimming_curve, switching): (Option<u8>, Dt7SwitchingWrite),
     ) -> bool {
         let mut g = self.write_inner();
         let Some(rec) = g.physical_devices.get_mut(&(adapter_id, short_address)) else {
@@ -1353,6 +1361,7 @@ impl RegistryStore {
             changed |= replace_changed(&mut rec.tc_warmest_mirek, Some(warmest));
         }
         changed |= merge_write_attr_opt(&mut rec.attributes.dt6_led.dimming_curve, dimming_curve, now);
+        merge_dt7_write(&mut rec.switching, switching, now);
         g.physical_devices_revision = g.physical_devices_revision.saturating_add(1);
         drop(g);
         if changed {
@@ -1994,7 +2003,7 @@ mod dirty_gating_tests {
         assert!(store.apply_physical_device_attribute_chunk(0, SHORT, &c102_fade(700)));
         assert!(store.dirty.take_physical_devices_dirty_for(0));
 
-        assert!(store.apply_attributes_written(0, SHORT, Some(700), None, None, None, None, (None, None), (None, None), None));
+        assert!(store.apply_attributes_written(0, SHORT, Some(700), None, None, None, None, (None, None), (None, None), (None, Default::default())));
         assert!(
             store.dirty.take_physical_devices_dirty_for(0),
             "Readback -> WriteConfirmed at the same value is a change"
@@ -2010,7 +2019,7 @@ mod dirty_gating_tests {
             assert!(slot.last_write_confirmed_ms.is_some());
         }
 
-        assert!(store.apply_attributes_written(0, SHORT, Some(700), None, None, None, None, (None, None), (None, None), None));
+        assert!(store.apply_attributes_written(0, SHORT, Some(700), None, None, None, None, (None, None), (None, None), (None, Default::default())));
         assert!(
             !store.dirty.take_physical_devices_dirty_for(0),
             "a byte-identical re-confirmation changes nothing, so it dirties nothing"

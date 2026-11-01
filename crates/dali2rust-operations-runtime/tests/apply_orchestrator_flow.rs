@@ -261,7 +261,7 @@ fn answer_write_attributes(
             tc_warmest_mirek: None,
             min_level: None,
             max_level: None,
-            dimming_curve: None,
+            dimming_curve: None, switching: Default::default(),
             error: None,
         },
     );

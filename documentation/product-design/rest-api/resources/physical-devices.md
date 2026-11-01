@@ -193,6 +193,9 @@ effective-значений распространяется на привяза�
 | `min_level`, `max_level` | `0..254` | 102 |
 | `tc_coolest_mirek`, `tc_warmest_mirek` | `1..65534` | DT8, rendered Tc-лимиты |
 | `dimming_curve` | `0` логарифмическая, `1` линейная | DT6, `SELECT DIMMING CURVE` |
+| `up_switch_on_threshold`, `up_switch_off_threshold` | `1..254`, `255` (MASK) | DT7, Part 208 Table 2 |
+| `down_switch_on_threshold`, `down_switch_off_threshold` | `0..254`, `255` (MASK) | DT7, Part 208 Table 2 |
+| `error_hold_off` | `0..254` по 10 с, `0` — отказ сообщается сразу; `255` (MASK) — не сообщается | DT7, Part 208 §11.3.4.1 |
 
 - `min_level > max_level` или `tc_coolest_mirek > tc_warmest_mirek` в одном теле —
   `422 invalid_value`: исполнитель пишет их по порядку, и пересечение границы на
@@ -210,13 +213,14 @@ effective-значений распространяется на привяза�
   [09 §Reading answers](../../../architecture/09-dali-protocol-rules.md#reading-answers),
   смысл — [`error-dto.md`](../contracts/error-dto.md)) — запись могла и не дойти, и
   прочитать это можно только новым чтением атрибутов.
-- Гейта по типу прибора у Tc-лимитов и кривой нет
+- Гейта по типу прибора у Tc-лимитов, кривой и полей DT7 нет
   ([09 §Device types](../../../architecture/09-dali-protocol-rules.md#device-types-and-memory-banks)):
   Tc-лимиты прибора без DT8 остаются без подтверждения (`dt8_tc_limit_unconfirmed`),
-  кривая прибора без DT6 — тоже, с `verify_unanswered`. Кривая, чей операнд DTR0 так и
-  не подтвердился, не пишется: тишина или нарушающий кадр на доказательстве называются
-  как на read-back, а только чужие значения — `dimming_curve_arm_unconfirmed`. Контролы
-  прячет UI.
+  кривая прибора без DT6 и поля DT7 прибора без DT7 — тоже, с `verify_unanswered`.
+  Кривая или поле DT7, чей операнд DTR0 так и не подтвердился, не пишется: тишина или
+  нарушающий кадр на доказательстве называются как на read-back, а только чужие
+  значения — `dimming_curve_arm_unconfirmed` и `dt7_switching_arm_unconfirmed`; после
+  него следующие поля DT7 не пишутся. Контролы прячет UI.
 - Запись `power_on_level` или `system_failure_level` гиру, чей объявленный набор типов
   (override типа заменяет его, только пока набор неизвестен) содержит DT8 или ещё
   неизвестен, сначала спрашивает временный цвет и заменяет заряженный цвет сохранённым,

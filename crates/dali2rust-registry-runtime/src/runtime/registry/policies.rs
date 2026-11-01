@@ -321,7 +321,7 @@ mod exception_tests {
     fn holds_power_on(store: &RegistryStore, short: u8, level: u8) {
         let (mirek, levels) = ((None, None), (None, None));
         let po = Some(level);
-        assert!(store.apply_attributes_written(0, short, None, None, po, None, None, mirek, levels, None));
+        assert!(store.apply_attributes_written(0, short, None, None, po, None, None, mirek, levels, (None, Default::default())));
     }
 
     fn mismatch(store: &RegistryStore, short: u8) -> Option<bool> {

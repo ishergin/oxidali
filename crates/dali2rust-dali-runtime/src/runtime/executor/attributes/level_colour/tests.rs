@@ -104,7 +104,7 @@ fn write_level_on(mock: MockDaliTransport, stored: StoredLevel, supported: Optio
     let (power_on, failure) = if stored.store == POWER_ON.store { (Some(LEVEL), None) } else { (None, Some(LEVEL)) };
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, SHORT, None, None, power_on, failure, None, (None, None), (None, None), None, supported,
+        &mut controller, SHORT, None, None, power_on, failure, None, (None, None), (None, None), None, supported, Default::default(),
     );
     (execution, transport)
 }

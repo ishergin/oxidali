@@ -232,7 +232,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
                 tc_warmest_mirek: None,
                 min_level: None,
                 max_level: None,
-                dimming_curve: None,
+                dimming_curve: None, switching: Default::default(),
                 signals_operation: false,
                 known_device_types: self.known_device_types,
                 refusal_fails: true,
@@ -263,7 +263,7 @@ impl PacedCell for dali2rust_domain::registry::PolicyApplyCell {
                 tc_warmest_mirek: None,
                 min_level: None,
                 max_level: None,
-                dimming_curve: None,
+                dimming_curve: None, switching: Default::default(),
                 error: Some(CompactErrorPayload::new(code, message)),
             },
         )
@@ -406,7 +406,7 @@ mod tests {
                 tc_warmest_mirek: None,
                 min_level: None,
                 max_level: None,
-                dimming_curve: None,
+                dimming_curve: None, switching: Default::default(),
                 error,
             },
         )

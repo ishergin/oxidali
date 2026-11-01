@@ -289,6 +289,33 @@ pub struct Dt7ReadSnapshot {
     pub gear_type: Option<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dt7SwitchingWrite {
+    pub up_switch_on_threshold: Option<u8>,
+    pub up_switch_off_threshold: Option<u8>,
+    pub down_switch_on_threshold: Option<u8>,
+    pub down_switch_off_threshold: Option<u8>,
+    pub error_hold_off: Option<u8>,
+}
+
+impl Dt7SwitchingWrite {
+    pub const WORST: Self = Self {
+        up_switch_on_threshold: Some(u8::MAX),
+        up_switch_off_threshold: Some(u8::MAX),
+        down_switch_on_threshold: Some(u8::MAX),
+        down_switch_off_threshold: Some(u8::MAX),
+        error_hold_off: Some(u8::MAX),
+    };
+
+    pub const fn is_empty(&self) -> bool {
+        self.up_switch_on_threshold.is_none()
+            && self.up_switch_off_threshold.is_none()
+            && self.down_switch_on_threshold.is_none()
+            && self.down_switch_off_threshold.is_none()
+            && self.error_hold_off.is_none()
+    }
+}
+
 #[cfg(test)]
 mod setpoint_wire_tests {
     use super::{LightSetpoint, PowerState};

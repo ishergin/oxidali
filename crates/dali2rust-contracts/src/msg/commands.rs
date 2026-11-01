@@ -9,7 +9,7 @@ use super::kinds::{
     RuntimeSource,
 };
 use super::payload_macros::declare_bus_payloads;
-use super::state::{ColorValue, LightSetpoint, RuntimeObservation};
+use super::state::{ColorValue, Dt7SwitchingWrite, LightSetpoint, RuntimeObservation};
 use super::wire::DaliCommandPayload;
 
 pub const MAX_GROUP_MATRIX_ROWS_PER_COMMAND: usize = 16;
@@ -339,6 +339,7 @@ declare_bus_payloads! {
         pub min_level: Option<u8>,
         pub max_level: Option<u8>,
         pub dimming_curve: Option<u8>,
+        pub switching: Dt7SwitchingWrite,
         pub signals_operation: bool,
         pub known_device_types: Option<DeviceTypeSet>,
         pub refusal_fails: bool,
@@ -356,6 +357,7 @@ declare_bus_payloads! {
         min_level: Some(u8::MAX),
         max_level: Some(u8::MAX),
         dimming_curve: Some(u8::MAX),
+        switching: Dt7SwitchingWrite::WORST,
         signals_operation: true,
         known_device_types: Some(DeviceTypeSet::from_bits(u64::MAX)),
         refusal_fails: true,
