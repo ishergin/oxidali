@@ -45,7 +45,7 @@ pub(crate) struct InstanceRecord {
     pub(crate) event_priority: ReadValue<u8>,
     pub(crate) instance_groups: [ReadValue<Option<u8>>; 3],
     pub(crate) timers: [ReadValue<u8>; 4],
-    pub(crate) manual_config_active: bool,
+    pub(crate) manual_config_active: Option<bool>,
     pub(crate) instance_status: Option<u8>,
     pub(crate) resolution: Option<u8>,
     pub(crate) last_event_info: Option<u16>,
@@ -75,7 +75,7 @@ impl InstanceRecord {
             event_priority: ReadValue::unread(),
             instance_groups: [ReadValue::unread(); 3],
             timers: [ReadValue::unread(); 4],
-            manual_config_active: false,
+            manual_config_active: None,
             last_event_info: None,
             last_event_at_ms: None,
             last_event_mono_ms: None,
@@ -611,9 +611,6 @@ fn apply_config_readback(instance: &mut InstanceRecord, readback: &InstanceReadb
             instance.timers[slot] = ReadValue::observed(*timer, now_ms);
         }
     }
-    if let Some(active) = readback.manual_config_active {
-        instance.manual_config_active = active;
-    }
 }
 
 fn merge_if_answered<T: Copy + PartialEq>(slot: &mut Option<T>, answered: Option<T>) -> bool {
@@ -628,6 +625,7 @@ fn apply_feedback_readback(instance: &mut InstanceRecord, readback: &InstanceRea
     merge_if_answered(&mut instance.instance_type, readback.instance_type);
     merge_if_answered(&mut instance.instance_status, readback.instance_status);
     merge_if_answered(&mut instance.resolution, readback.resolution);
+    merge_if_answered(&mut instance.manual_config_active, readback.manual_config_active);
     if let Some(map) = readback.feedback_opcode_map {
         instance.feedback_probe = Some(map);
     }
@@ -834,7 +832,7 @@ pub struct InstanceView {
     pub event_priority: ReadValue<u8>,
     pub instance_groups: [ReadValue<Option<u8>>; 3],
     pub timers: [ReadValue<u8>; 4],
-    pub manual_config_active: bool,
+    pub manual_config_active: Option<bool>,
     pub last_event_info: Option<u16>,
     pub last_event_at_ms: Option<u64>,
     pub event_count: u32,

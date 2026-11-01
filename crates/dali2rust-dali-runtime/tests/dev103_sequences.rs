@@ -7,14 +7,14 @@ use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::arbitration::probe_application_controller;
 use dali2rust_dali_runtime::runtime::executor::dev103::{
     commission_control_devices, identify_device, scan_control_devices, set_event_filter_verified,
-    set_event_scheme_verified, ScannedDevice, FRAME24_CONTENDED,
+    set_event_scheme_verified, Scan103Summary, ScannedDevice, FRAME24_CONTENDED,
 };
 use dali2rust_dali_runtime::runtime::executor::helpers::{
     VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE, VERIFY_UNANSWERED_MESSAGE,
 };
 use dali2rust_domain::dali::dev103::{
     instance_type, Device103Address, Device103Command, EventScheme, Instance103Command,
-    InstanceAddress, Special103Command,
+    InstanceAddress, Manual333Command, Special103Command,
 };
 use dali2rust_domain::dali::ses::RetryPolicy;
 use dali2rust_platform::dali::{DaliWireCounters, TransferOutcome};
@@ -510,6 +510,88 @@ fn a_contended_read_costs_the_field_and_the_device_is_still_published() {
          contended one (saw {} frames)",
         frames.len()
     );
+}
+
+fn manual_config_frame(command: Manual333Command) -> [u8; 3] {
+    command
+        .frame(Device103Address::Short(0), InstanceAddress::FeatureNumber(0))
+        .as_bytes()
+}
+
+fn scan_one_push_button(
+    answers: &[(Manual333Command, u8)],
+    outcomes: &[TransferOutcome],
+) -> (ScannedDevice, Scan103Summary, Vec<[u8; 3]>) {
+    let (mut controller, transport) = controller();
+    {
+        let guard = transport.lock().expect("mock lock");
+        let presence = Device103Command::QueryNumberOfInstances.frame(Device103Address::Short(0));
+        guard.script_frame24_answer(presence.as_bytes(), 1);
+        let ty = Instance103Command::QueryInstanceType
+            .frame(Device103Address::Short(0), InstanceAddress::Number(0));
+        guard.script_frame24_answer(ty.as_bytes(), instance_type::PUSH_BUTTON);
+        for (command, answer) in answers {
+            guard.script_frame24_answer(manual_config_frame(*command), *answer);
+        }
+        for outcome in outcomes {
+            guard.script_frame24_outcome(*outcome);
+        }
+    }
+    let mut seen: Vec<ScannedDevice> = Vec::new();
+    let summary = scan_control_devices(&mut controller, &mut |d| seen.push(d.clone()))
+        .expect("scan");
+    let device = seen.into_iter().next().expect("device 0 is published");
+    (device, summary, frames24(&transport))
+}
+
+// IEC 62386-333 §9.4.3.2, §11.12.5, §11.12.6
+#[test]
+fn an_instance_is_under_local_control_when_either_part_holds_a_variable() {
+    const PART_103: Manual333Command = Manual333Command::QueryManualConfig103;
+    const PART_3XX: Manual333Command = Manual333Command::QueryManualConfig3xx;
+    let state = |answers: &[(Manual333Command, u8)]| {
+        scan_one_push_button(answers, &[]).0.instance_facts[0].manual_config_active
+    };
+    assert_eq!(state(&[(PART_103, 0x08)]), Some(true), "a 103 variable alone, 3xx silent");
+    assert_eq!(state(&[(PART_103, 0x00), (PART_3XX, 0x04)]), Some(true), "a 3xx variable alone");
+    assert_eq!(state(&[(PART_103, 0x00), (PART_3XX, 0x00)]), Some(false));
+    assert_eq!(state(&[(PART_103, 0x00)]), Some(false), "no 3xx part holds no 3xx variable");
+    assert_eq!(state(&[(PART_103, 0xFF)]), None, "MASK is never a value");
+    assert_eq!(state(&[(PART_103, 0x00), (PART_3XX, 0xFF)]), None, "MASK is never a value");
+}
+
+#[test]
+fn a_device_silent_to_part_333_is_unknown_and_never_asked_about_3xx() {
+    let (device, summary, frames) = scan_one_push_button(&[], &[]);
+    assert_eq!(device.instance_facts[0].manual_config_active, None);
+    assert!(frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig103)));
+    assert!(
+        !frames.contains(&manual_config_frame(Manual333Command::QueryManualConfig3xx)),
+        "3xx is asked only of an instance that answered 103"
+    );
+    assert_eq!(summary.addresses_contended, 0);
+}
+
+#[test]
+fn a_contended_3xx_answer_leaves_the_state_unknown_and_is_counted() {
+    let outcomes = [
+        TransferOutcome::Answer(1),
+        TransferOutcome::Answer(instance_type::PUSH_BUTTON),
+        TransferOutcome::NoAnswer,
+        TransferOutcome::Answer(0),
+        TransferOutcome::CorruptedInWindow,
+    ];
+    let (device, summary, frames) = scan_one_push_button(&[], &outcomes);
+    assert_eq!(
+        frames[4],
+        manual_config_frame(Manual333Command::QueryManualConfig3xx),
+        "the fifth frame is the 3xx query the violation lands on"
+    );
+    assert_eq!(
+        device.instance_facts[0].manual_config_active, None,
+        "a 103 answer of 0 says nothing about a 3xx variable nobody could read"
+    );
+    assert_eq!(summary.addresses_contended, 1);
 }
 
 #[test]

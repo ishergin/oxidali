@@ -169,11 +169,9 @@
   оставшееся, более старый номер отвергается.
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
-реестр проецирует в записи устройств ввода. Флаг Part 333 в
-`Dali103InstanceConfiguredEvent` пока инертен: единственный производитель шлёт
-`manual_config_active: None`, и поле REST всегда `false`
-([`../../reference/iec62386-conformance-gaps.md`](../../reference/iec62386-conformance-gaps.md)
-§9.4, строка 333).
+реестр проецирует в записи устройств ввода. `manual_config_active` в
+`Dali103InstanceConfiguredEvent` несёт скан; `None` — устройство не ответило, и реестр
+оставляет прежнее значение.
 
 `DaliInputManualConfigEvent` — устройство сообщило, что его настроили вручную (Part 333
 §9.3): короткий адрес (`null` — MASK) и источник из Table 2 — переменная Part 103 или

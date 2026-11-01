@@ -449,6 +449,7 @@ fn publish_scan_feedback(
         body.feedback_colour_capability = probe.colour_capability;
         body.instance_status = facts.status;
         body.resolution = facts.resolution;
+        body.manual_config_active = facts.manual_config_active;
         let ev = dali2rust_contracts::bus::event_envelope(
             SOURCE_ID_UNSPECIFIED,
             correlation_id,

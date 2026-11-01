@@ -2,8 +2,9 @@ use dali2rust_domain::dali::controller::{DaliApplicationController, Frame24Fault
 use dali2rust_contracts::msg::Dali103InstanceAction;
 use dali2rust_domain::dali::dev103::{
     instance_type, Button301Command, Device103Address, Device103Command, EventScheme,
-    InitialiseScope103, ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command,
-    ShortAddressOperand, Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
+    InitialiseScope103, ForwardFrame24, Instance103Command, InstanceAddress, Manual333Command,
+    Occupancy303Command, ShortAddressOperand, Special103Command, MAX_INSTANCE_INDEX,
+    MAX_SHORT_ADDRESS,
 };
 use dali2rust_domain::dali::pres::DaliResponse;
 
@@ -20,6 +21,8 @@ const RANDOM_ADDRESS_MAX: u32 = 0x00FF_FFFE;
 const RANDOMISE_SETTLE_MS: u64 = 100;
 
 const INSTANCE_STATUS_ACTIVE: u8 = 1 << 1;
+
+const ANSWER_MASK: u8 = 0xFF;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedDevice {
@@ -198,6 +201,7 @@ pub struct DeviceDeclarations {
 pub struct InstanceFacts {
     pub status: Option<u8>,
     pub resolution: Option<u8>,
+    pub manual_config_active: Option<bool>,
 }
 
 fn read_device_facts(
@@ -264,7 +268,52 @@ fn read_instance_facts(
     } else {
         None
     };
-    Ok(InstanceFacts { status, resolution })
+    let manual_config_active = read_manual_config(controller, address, instance_number, contended)?;
+    Ok(InstanceFacts {
+        status,
+        resolution,
+        manual_config_active,
+    })
+}
+
+// IEC 62386-333 §11.12.5, §11.12.6
+fn read_manual_config(
+    controller: &mut impl DaliApplicationController,
+    address: Device103Address,
+    instance_number: u8,
+    contended: &mut bool,
+) -> Result<Option<bool>, SemanticDaliError> {
+    let feature = InstanceAddress::FeatureNumber(instance_number);
+    let query = |cmd: Manual333Command| cmd.frame(address, feature);
+    let Some(part_103) = manual_config_answer(
+        send(controller, query(Manual333Command::QueryManualConfig103), true)?,
+        None,
+        contended,
+    ) else {
+        return Ok(None);
+    };
+    let part_3xx = manual_config_answer(
+        send(controller, query(Manual333Command::QueryManualConfig3xx), true)?,
+        Some(0),
+        contended,
+    );
+    Ok(part_3xx.map(|part_3xx| part_103 != 0 || part_3xx != 0))
+}
+
+fn manual_config_answer(
+    seen: DaliResponse,
+    silent: Option<u8>,
+    contended: &mut bool,
+) -> Option<u8> {
+    match seen {
+        DaliResponse::Answer(ANSWER_MASK) => None,
+        DaliResponse::Answer(value) => Some(value),
+        DaliResponse::NoAnswer => silent,
+        DaliResponse::Violation => {
+            *contended = true;
+            None
+        }
+    }
 }
 
 const fn instance_type_reports_a_value(instance_type: u8) -> bool {

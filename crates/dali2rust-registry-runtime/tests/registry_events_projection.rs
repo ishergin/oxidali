@@ -1681,6 +1681,44 @@ fn instance_facts_reach_the_read_model_and_only_a_write_stamps_settling() {
     );
 }
 
+#[test]
+fn the_manual_configuration_state_lands_only_when_the_device_answered() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, _ev, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+    publish_scan(&publisher, scan_progress(4, false));
+    let state = || {
+        store
+            .input_device_detail(0, 4)
+            .and_then(|d| d.instances.first().map(|i| i.manual_config_active))
+    };
+    let probe = |corr, manual_config_active, instance_status| {
+        let event = dali2rust_contracts::msg::Dali103InstanceConfiguredEvent {
+            manual_config_active,
+            instance_status: Some(instance_status),
+            ..configured_base(4, 0)
+        };
+        let origin = Some(dali2rust_contracts::msg::Origin::Api);
+        publish_event(&publisher, dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED, corr, BUS_TID, origin, event));
+        wait_until(
+            || store.input_device_detail(0, 4).is_some_and(|d| {
+                d.instances.first().is_some_and(|i| i.instance_status == Some(instance_status))
+            }),
+            Duration::from_millis(500),
+        );
+    };
+
+    probe(2, None, 1);
+    assert_eq!(state(), Some(None), "never answered reads unknown, never false");
+    probe(3, Some(true), 2);
+    assert_eq!(state(), Some(Some(true)));
+    probe(4, None, 3);
+    assert_eq!(state(), Some(Some(true)), "a scan the device stayed silent to keeps what it said");
+    probe(5, Some(false), 4);
+    assert_eq!(state(), Some(Some(false)));
+}
+
 fn scan_progress(short_address: u8, presence_unproven: bool)
     -> dali2rust_contracts::msg::Dali103ScanProgressEvent
 {

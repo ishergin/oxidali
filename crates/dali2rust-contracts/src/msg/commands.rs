@@ -1637,8 +1637,14 @@ mod operation_ttl_tests {
         let instance_types = MAX_INSTANCES;
         let feedback_probe = 2 * MAX_INSTANCES;
         let instance_facts = 2 * MAX_INSTANCES;
+        let manual_config = 2 * MAX_INSTANCES;
         let declarations = 3;
-        let per_device = presence + instance_types + feedback_probe + instance_facts + declarations;
+        let per_device = presence
+            + instance_types
+            + feedback_probe
+            + instance_facts
+            + manual_config
+            + declarations;
         let worst = DISCOVERY_SCAN_ADDRESSES * per_device;
 
         const MEASURED_MAX_FRAME_MS: u32 = 100;
