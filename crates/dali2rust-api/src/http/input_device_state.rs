@@ -39,7 +39,7 @@ pub struct InstanceDto {
     pub event_priority: ReadValueDto<u8>,
     pub instance_groups: Vec<ReadValueDto<Option<u8>>>,
     pub timers: Vec<ReadValueDto<u8>>,
-    pub manual_config_active: bool,
+    pub manual_config_active: Option<bool>,
     pub feedback: FeedbackDto,
     pub runtime: InstanceRuntimeDto,
 }

@@ -1,9 +1,11 @@
 use dali2rust_domain::dali::controller::{DaliApplicationController, Frame24Fault};
 use dali2rust_contracts::msg::Dali103InstanceAction;
+use dali2rust_domain::dali::dev103::bus_unit::ANSWER_MASK;
 use dali2rust_domain::dali::dev103::{
     instance_type, Button301Command, Device103Address, Device103Command, EventScheme,
-    InitialiseScope103, ForwardFrame24, Instance103Command, InstanceAddress, Occupancy303Command,
-    ShortAddressOperand, Special103Command, MAX_INSTANCE_INDEX, MAX_SHORT_ADDRESS,
+    InitialiseScope103, ForwardFrame24, Instance103Command, InstanceAddress, Manual333Command,
+    Occupancy303Command, ShortAddressOperand, Special103Command, MAX_INSTANCE_INDEX,
+    MAX_SHORT_ADDRESS,
 };
 use dali2rust_domain::dali::pres::DaliResponse;
 
@@ -20,6 +22,9 @@ const RANDOM_ADDRESS_MAX: u32 = 0x00FF_FFFE;
 const RANDOMISE_SETTLE_MS: u64 = 100;
 
 const INSTANCE_STATUS_ACTIVE: u8 = 1 << 1;
+
+// IEC 62386-333 Table 6
+const MANUAL_CONFIG_103_MAX: u8 = 0x7F;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedDevice {
@@ -198,6 +203,7 @@ pub struct DeviceDeclarations {
 pub struct InstanceFacts {
     pub status: Option<u8>,
     pub resolution: Option<u8>,
+    pub manual_config_active: Option<bool>,
 }
 
 fn read_device_facts(
@@ -264,7 +270,32 @@ fn read_instance_facts(
     } else {
         None
     };
-    Ok(InstanceFacts { status, resolution })
+    let manual_config_active = read_manual_config(controller, address, instance_number, contended)?;
+    Ok(InstanceFacts {
+        status,
+        resolution,
+        manual_config_active,
+    })
+}
+
+// IEC 62386-333 §11.12.5, §11.12.6
+fn read_manual_config(
+    controller: &mut impl DaliApplicationController,
+    address: Device103Address,
+    instance_number: u8,
+    contended: &mut bool,
+) -> Result<Option<bool>, SemanticDaliError> {
+    let feature = InstanceAddress::FeatureNumber(instance_number);
+    let query_103 = Manual333Command::QueryManualConfig103.frame(address, feature);
+    let part_103 = read_declared(controller, query_103, contended)?
+        .filter(|variables| *variables <= MANUAL_CONFIG_103_MAX);
+    if part_103 != Some(0) {
+        return Ok(part_103.map(|_| true));
+    }
+    let query_3xx = Manual333Command::QueryManualConfig3xx.frame(address, feature);
+    let part_3xx = read_declared(controller, query_3xx, contended)?
+        .filter(|variables| *variables != ANSWER_MASK);
+    Ok(part_3xx.map(|variables| variables != 0))
 }
 
 const fn instance_type_reports_a_value(instance_type: u8) -> bool {

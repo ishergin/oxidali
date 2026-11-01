@@ -1195,7 +1195,7 @@ export type InputInstance = {
   event_priority: ReadValue<number>
   instance_groups: ReadValue<number | null>[]
   timers: ReadValue<number>[]
-  manual_config_active: boolean
+  manual_config_active: boolean | null
   feedback: {
     probed: boolean
     present: boolean

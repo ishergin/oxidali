@@ -524,6 +524,38 @@ pub mod feedback_colour_capability {
 pub const FEEDBACK_COLOUR_MIN: u8 = 1;
 pub const FEEDBACK_COLOUR_MAX: u8 = 63;
 
+// IEC 62386-333 Table 9
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Manual333Command {
+    QueryManualConfig103,
+    QueryManualConfig3xx,
+}
+
+impl Manual333Command {
+    #[must_use]
+    pub const fn metadata(self) -> Command103Metadata {
+        let (opcode, expects_backward, send_twice, uses_dtr0) = match self {
+            Self::QueryManualConfig103 => (0x0E, true, false, false),
+            Self::QueryManualConfig3xx => (0x0F, true, false, false),
+        };
+        Command103Metadata {
+            opcode,
+            expects_backward,
+            send_twice,
+            uses_dtr0,
+        }
+    }
+
+    #[must_use]
+    pub const fn frame(
+        self,
+        address: Device103Address,
+        feature: InstanceAddress,
+    ) -> ForwardFrame24 {
+        ForwardFrame24::command(address, feature, self.metadata().opcode)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,5 +811,18 @@ mod tests {
             FeedbackOpcodeMap::DiiaCorrected,
         );
         assert_eq!(frame.as_bytes(), [0xFF, 0xA7, 0x24]);
+    }
+
+    #[test]
+    fn manual_configuration_queries_are_feature_commands_with_an_answer() {
+        let instance = InstanceAddress::FeatureNumber(0);
+        let part_103 = Manual333Command::QueryManualConfig103;
+        let part_3xx = Manual333Command::QueryManualConfig3xx;
+        for (cmd, opcode) in [(part_103, 0x0E), (part_3xx, 0x0F)] {
+            let frame = cmd.frame(Device103Address::Short(0), instance);
+            assert_eq!(frame.as_bytes(), [0x01, 0x20, opcode], "{cmd:?}");
+            let m = cmd.metadata();
+            assert!(m.expects_backward && !m.send_twice && !m.uses_dtr0, "{cmd:?}");
+        }
     }
 }

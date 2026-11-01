@@ -213,14 +213,21 @@ reads `QUERY DEVICE CAPABILITIES` (bit 0 `applicationControllerPresent`) and
 `QUERY DEVICE STATUS`, so such a unit is visible, but no product path sends it
 `DISABLE APPLICATION CONTROLLER`: it keeps driving gear beside this controller.
 
-### 15.4 Part 333 manual configuration is heard, not managed — `GAP`
+### 15.4 Part 333 manual configuration is heard and read, not managed — `GAP`
 
 The manual configuration event (333 §9.3) is decoded, fires the rules trigger
-`manual config changed` and dates the record of every address it names. What the device
-holds is not read: no scan sends `QUERY MANUAL CONFIGURATION 103` / `3xx`, so
-`manual_config_active` stays `false`, and a write to a variable under local control is
-discarded by the device without the product knowing. `SET MANUAL CONFIGURATION`, the
-capability queries and `QUERY ANY MANUAL CONFIGURATION ENABLED` are never sent.
+`manual config changed` and dates the record of every address it names. The scan reads
+each instance's `manualConfigInstance103` and, when that is 0, `manualConfigInstance3xx`
+(`manual_config_active`). Not read or sent:
+- `manualConfigDevice` (device feature addressing), so a device-level variable under
+  local control — the short address, the device groups — is not shown;
+- `QUERY MANUAL CONFIGURATION FEATURE 3xx`, the feature variables of an instance, among
+  them the Part 332 indication the product writes;
+- `SET MANUAL CONFIGURATION`, so the product cannot hand a variable back to the bus;
+- the capability queries and `QUERY ANY MANUAL CONFIGURATION ENABLED`.
+
+A write to a variable under local control is still sent; the device discards it
+(§9.4.5.1), and the product's read-back reports the value did not land.
 
 ## 16. Control gear never speaks unbidden
 

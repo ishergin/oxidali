@@ -16,7 +16,8 @@ pub use event::{
 pub use command::{
     feedback_capability, feedback_colour_capability, AbsoluteInput302Command, Button301Command,
     Command103Metadata, Device103Command, Feedback332Command, FeedbackOpcodeMap,
-    Instance103Command, LightSensor304Command, Occupancy303Command, Special103Command,
+    Instance103Command, LightSensor304Command, Manual333Command, Occupancy303Command,
+    Special103Command,
     FEEDBACK_COLOUR_MAX, FEEDBACK_COLOUR_MIN,
 };
 pub use frame::ForwardFrame24;
