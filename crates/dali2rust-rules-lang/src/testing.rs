@@ -6,7 +6,7 @@ rule "коридор: вкл/выкл" {
 
 rule "коридор: диммирование" {
   when input(dev=3, inst=0) is long_press_repeat
-  do   lamp("коридор").dim_hold(+60)      # 60 шагов в секунду удержания
+  do   lamp("коридор").dim_up()           # UP на каждом повторе
 }
 
 rule "коридор: полный свет" {

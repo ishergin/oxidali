@@ -9,7 +9,7 @@ use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusEventPayload, DaliAttributeGroup,
     BusHealthVerdict, ConfirmationEnvelope, DaliAttributeReadOutcomesEvent, DaliBusHealthProbeCommand,
-    DaliBusHealthProbedEvent, DaliReadAttributesCommand, DeliveryStatus, ErrorCode,
+    DaliBusHealthProbedEvent, DaliLevelTransitionAppliedEvent, DaliReadAttributesCommand, DeliveryStatus, ErrorCode,
     MemoryBankReadPreset, Origin,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -17,6 +17,7 @@ use dali2rust_domain::dali::frame::HoldCause;
 use dali2rust_domain::registry::{PollTargetView, PollerReadPort, PollerSettingsView};
 
 use super::power_cycle::{short_bit, PollerConfig, PowerCycleWatch};
+use super::settle::settle_shorts;
 
 const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
 const OUTSTANDING_ABANDON_TTL: Duration = Duration::from_secs(16 * 60);
@@ -69,6 +70,7 @@ struct DeviceCooldown {
 enum ReadPurpose {
     Cycle,
     PowerCycleSweep,
+    Settle { contended: u8 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -430,6 +432,8 @@ fn bank_series_for(
 
 const INTERACTIVE_QUIET: Duration = Duration::from_millis(400);
 
+const SETTLE_READ_ATTEMPTS: u8 = 3;
+
 const BACKGROUND_WIRE_REST_MULTIPLE: u32 = 3;
 
 fn pump_queue(state: &mut PollerState, deps: &PollerWiring) {
@@ -437,7 +441,6 @@ fn pump_queue(state: &mut PollerState, deps: &PollerWiring) {
         state.queue.clear();
         if !state.settings.power_cycle_watch {
             state.probe_due.clear();
-            return;
         }
     }
     if deps.hold.engaged() || deps.role.quiescent_remaining_ms().is_some() {
@@ -528,6 +531,7 @@ fn hold_published_read(state: &mut PollerState, deps: &PollerWiring, correlation
         ReadPurpose::PowerCycleSweep => {
             deps.counters.sweep_reads.fetch_add(1, Ordering::Relaxed);
         }
+        ReadPurpose::Settle { .. } => {}
     }
     deps.counters.reads_published.fetch_add(1, Ordering::Relaxed);
 }
@@ -661,6 +665,45 @@ dali2rust_contracts::dispatch_bus_events! {
     RegistrySliceReloadedEvent(_reloaded) => adopt_settings(state, deps.read_port.poller_settings_view()),
     DaliAttributeReadOutcomesEvent(body) => complete_read(state, deps, corr, body),
     DaliBusHealthProbedEvent(body) => record_health_probe(state, deps, corr, body),
+    DaliLevelTransitionAppliedEvent(body) => queue_settle_reads(state, deps, body),
+}
+
+fn queue_settle_reads(state: &mut PollerState, deps: &PollerWiring, body: &DaliLevelTransitionAppliedEvent) {
+    let adapter_id = body.registry_adapter_id;
+    let targets = || deps.read_port.list_poll_targets(adapter_id).targets;
+    for short_address in settle_shorts(body, targets) {
+        queue_settle_read(
+            state,
+            PollTarget {
+                adapter_id,
+                short_address,
+                groups_mask: DaliAttributeGroup::RuntimeStatus.mask_bit(),
+                memory_banks: MemoryBankReadPreset::None,
+                purpose: ReadPurpose::Settle { contended: 0 },
+            },
+        );
+    }
+}
+
+fn queue_settle_read(state: &mut PollerState, target: PollTarget) {
+    let owed = |queued: &PollTarget| {
+        matches!(queued.purpose, ReadPurpose::Settle { .. })
+            && queued.adapter_id == target.adapter_id
+            && queued.short_address == target.short_address
+    };
+    if !state.sweep_queue.iter().any(owed) {
+        state.sweep_queue.push_back(target);
+    }
+}
+
+fn retry_contended_settle_read(state: &mut PollerState, target: PollTarget) {
+    let ReadPurpose::Settle { contended } = target.purpose else {
+        return;
+    };
+    let contended = contended.saturating_add(1);
+    if contended < SETTLE_READ_ATTEMPTS {
+        queue_settle_read(state, PollTarget { purpose: ReadPurpose::Settle { contended }, ..target });
+    }
 }
 
 fn record_health_probe(
@@ -755,16 +798,20 @@ fn queue_power_cycle_sweep(state: &mut PollerState, adapter_id: u8, owed: impl I
 }
 
 fn sweep_holds(state: &PollerState, adapter_id: u8, short_address: u8) -> bool {
-    let is_it = |target: &PollTarget| target.adapter_id == adapter_id && target.short_address == short_address;
+    let is_it = |target: &PollTarget| {
+        target.purpose == ReadPurpose::PowerCycleSweep
+            && target.adapter_id == adapter_id
+            && target.short_address == short_address
+    };
     state.sweep_queue.iter().any(is_it)
         || state
             .outstanding
-            .is_some_and(|o| o.target.purpose == ReadPurpose::PowerCycleSweep && is_it(&o.target))
+            .is_some_and(|o| is_it(&o.target))
 }
 
 fn adopt_settings(state: &mut PollerState, settings: PollerSettingsView) {
     if !(sweeps_power_cycles(&state.settings) && sweeps_power_cycles(&settings)) {
-        state.sweep_queue.clear();
+        state.sweep_queue.retain(|target| matches!(target.purpose, ReadPurpose::Settle { .. }));
         state.power_cycles = PowerCycleWatch::default();
     }
     state.settings = settings;
@@ -787,7 +834,11 @@ fn complete_read(state: &mut PollerState, deps: &PollerWiring, corr: u64, body: 
             requeue_target(state, target);
         }
         ReadVerdict::Absent => cool_absent_device(state, &deps.counters, target.adapter_id, target.short_address),
-        ReadVerdict::Contended | ReadVerdict::Failed => fail_device(state, &deps.counters, target.adapter_id, target.short_address),
+        ReadVerdict::Contended => {
+            fail_device(state, &deps.counters, target.adapter_id, target.short_address);
+            retry_contended_settle_read(state, target);
+        }
+        ReadVerdict::Failed => fail_device(state, &deps.counters, target.adapter_id, target.short_address),
     }
     close_sweep_read(state, target, &verdict);
 }
@@ -861,6 +912,7 @@ fn requeue_target(state: &mut PollerState, target: PollTarget) {
             state.sweep_queue.push_back(target);
         }
         ReadPurpose::PowerCycleSweep => {}
+        ReadPurpose::Settle { .. } => queue_settle_read(state, target),
     }
 }
 
@@ -987,6 +1039,7 @@ mod tests {
             is_dt6: false,
             declares_energy: false,
             declares_diagnostics: false,
+            dali_groups: 0,
         };
         let mask = groups_mask_for(&settings, &target);
         assert_eq!(mask & DaliAttributeGroup::SceneColours.mask_bit(), 0);
@@ -1239,6 +1292,7 @@ mod tests {
             is_dt6: false,
             declares_energy: false,
             declares_diagnostics: false,
+            dali_groups: 0,
         }
     }
 

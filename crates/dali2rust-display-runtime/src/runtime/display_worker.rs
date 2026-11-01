@@ -323,6 +323,8 @@ fn transition_label(verb: LevelTransition) -> &'static str {
         LevelTransition::StepDownAndOff => "ST0",
         LevelTransition::OnAndStepUp => "ON+",
         LevelTransition::GoToLastActiveLevel => "LAST",
+        LevelTransition::Up => "UP",
+        LevelTransition::Down => "DN",
     }
 }
 

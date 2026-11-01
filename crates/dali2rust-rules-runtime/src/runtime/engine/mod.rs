@@ -148,7 +148,6 @@ fn run_rule(env: &mut ExecEnv<'_>, name: &str, dry: bool, out: &mut Vec<Activati
 }
 
 fn on_external(env: &mut ExecEnv<'_>, input: &In<'_>, out: &mut Vec<ActivationOutcome>) {
-    maintain_hold_ledger(env, input);
     let depth = input_chain_depth(env, input);
     let ctx = event_ctx(input);
     for idx in wheel::name_order(env.rules) {
@@ -161,31 +160,6 @@ fn on_external(env: &mut ExecEnv<'_>, input: &In<'_>, out: &mut Vec<ActivationOu
         activate(env, idx, kind, ctx, depth, Mode::Auto, out);
     }
     maintain_edge_cache(env, input);
-}
-
-fn maintain_hold_ledger(env: &mut ExecEnv<'_>, input: &In<'_>) {
-    let In::InputEvent {
-        adapter_id,
-        short_address: Some(sa),
-        instance_number: Some(inst),
-        kind,
-        ..
-    } = input
-    else {
-        return;
-    };
-    let key = (*adapter_id, *sa, *inst);
-    match kind {
-        InputEventKind::LongPressStart => {
-            env.vol.hold_marks.insert(key, env.world.now_ms);
-        }
-        InputEventKind::LongPressStop
-        | InputEventKind::Release
-        | InputEventKind::ButtonFree => {
-            env.vol.hold_marks.remove(&key);
-        }
-        _ => {}
-    }
 }
 
 fn maintain_edge_cache(env: &mut ExecEnv<'_>, input: &In<'_>) {
@@ -249,7 +223,6 @@ fn input_chain_depth(env: &ExecEnv<'_>, input: &In<'_>) -> u32 {
 fn event_ctx(input: &In<'_>) -> EventCtx {
     match input {
         In::InputEvent {
-            adapter_id,
             short_address,
             instance_number,
             instance_groups,
@@ -260,10 +233,6 @@ fn event_ctx(input: &In<'_>) -> EventCtx {
             device: short_address.map(i64::from),
             instance: instance_number.map(i64::from),
             option: instance_groups[0].map(i64::from),
-            source: match (short_address, instance_number) {
-                (Some(sa), Some(inst)) => Some((*adapter_id, *sa, *inst)),
-                _ => None,
-            },
         },
         In::LampChanged { level, .. } => EventCtx {
             value: level.map(i64::from),

@@ -3,9 +3,9 @@ use std::sync::atomic::Ordering;
 use dali2rust_bus::{BusChannel, BusFrame, BusId, BusPublisher, CorrelationIdAllocator, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand,
+    ColorMode, ColorValue, Dali103InstanceAction, Dali103InstanceActionCommand, DaliDimCommand,
     DaliRecallLevelPresetCommand, DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStopFadeCommand, DaliTargetScope,
-    ErrorCode, FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
+    DimDirection, ErrorCode, FixedText32, HclOverrideHoldCommand, HclOverrideResumeCommand, HclOverrideTarget,
     HclScheduleEnableCommand, LevelPreset, LightSetpoint, MqttPublishCommand, OperationBeginCommand,
     OperationType, OperationWorkerSignalEvent, Origin, PowerState, SceneApplyExecuteCommand,
 };
@@ -285,28 +285,23 @@ impl EffectExecutor<'_> {
             LightVerb::RecallMax => self.recall_preset(target, LevelPreset::MaxLevel, hold_hcl, snapshot, corr),
             LightVerb::RecallMin => self.recall_preset(target, LevelPreset::MinLevel, hold_hcl, snapshot, corr),
             LightVerb::StopFade => self.stop_fade(target, snapshot, corr),
+            LightVerb::DimUp => self.dim(target, DimDirection::Up, hold_hcl, snapshot, corr),
+            LightVerb::DimDown => self.dim(target, DimDirection::Down, hold_hcl, snapshot, corr),
             _ => self.misrouted(),
         }
     }
 
     // IEC 62386-102 §9.5.9
     fn stop_fade(&self, target: &LightTarget, snapshot: &WorldSnapshot, corr: u64) -> bool {
-        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
-            return false;
-        };
-        if !lamp_bound(target, snapshot) {
-            return self.unbound_lamp();
-        }
-        self.publish(
-            corr,
+        self.publish_scoped(target, snapshot, corr, |(scope, virtual_lamp_id, group_id, adapter)| {
             DaliStopFadeCommand {
                 registry_adapter_id: adapter,
                 scope,
                 virtual_lamp_id,
                 short_address: 0,
                 group_id,
-            },
-        )
+            }
+        })
     }
 
     // IEC 62386-102 §11.3.7, §11.3.8
@@ -318,14 +313,7 @@ impl EffectExecutor<'_> {
         snapshot: &WorldSnapshot,
         corr: u64,
     ) -> bool {
-        let Some((scope, virtual_lamp_id, group_id, adapter)) = scope_of(target) else {
-            return false;
-        };
-        if !lamp_bound(target, snapshot) {
-            return self.unbound_lamp();
-        }
-        self.publish(
-            corr,
+        self.publish_scoped(target, snapshot, corr, |(scope, virtual_lamp_id, group_id, adapter)| {
             DaliRecallLevelPresetCommand {
                 registry_adapter_id: adapter,
                 scope,
@@ -334,8 +322,49 @@ impl EffectExecutor<'_> {
                 group_id,
                 preset,
                 hold_hcl,
-            },
-        )
+            }
+        })
+    }
+
+    // IEC 62386-102 §11.3.3, §11.3.4
+    fn dim(
+        &self,
+        target: &LightTarget,
+        direction: DimDirection,
+        hold_hcl: bool,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+    ) -> bool {
+        self.publish_scoped(target, snapshot, corr, |(scope, virtual_lamp_id, group_id, adapter)| {
+            DaliDimCommand {
+                registry_adapter_id: adapter,
+                scope,
+                virtual_lamp_id,
+                short_address: 0,
+                group_id,
+                direction,
+                hold_hcl,
+            }
+        })
+    }
+
+    fn publish_scoped<P>(
+        &self,
+        target: &LightTarget,
+        snapshot: &WorldSnapshot,
+        corr: u64,
+        build: impl FnOnce((DaliTargetScope, u8, u8, u8)) -> P,
+    ) -> bool
+    where
+        dali2rust_contracts::msg::BusCommandPayload: From<P>,
+    {
+        let Some(scoped) = scope_of(target) else {
+            return false;
+        };
+        if !lamp_bound(target, snapshot) {
+            return self.unbound_lamp();
+        }
+        self.publish(corr, build(scoped))
     }
 
     fn scene_recall(
@@ -535,7 +564,11 @@ fn setpoint_of(
             ..LightSetpoint::default()
         },
         LightVerb::LastActive => powered(PowerState::On),
-        LightVerb::StopFade | LightVerb::RecallMax | LightVerb::RecallMin => return None,
+        LightVerb::StopFade
+        | LightVerb::RecallMax
+        | LightVerb::RecallMin
+        | LightVerb::DimUp
+        | LightVerb::DimDown => return None,
     })
 }
 

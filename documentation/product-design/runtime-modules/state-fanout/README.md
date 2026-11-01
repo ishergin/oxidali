@@ -34,7 +34,7 @@ broadcast и сцены по участникам.
 | Recall сцены на короткий адрес (наш — на лампу — или чужой) | applied-строка лампы, привязанной к адресу |
 | Чужой кадр по короткому адресу | лампа, привязанная к адресу, и само устройство |
 | Арк-команда без уровня (`LevelTransitionObserved`) | `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
-| Наш recall границы (`DaliLevelTransitionAppliedEvent`) | то же, с источником и `hold_hcl` команды |
+| Наш recall границы, `UP` или `DOWN` (`DaliLevelTransitionAppliedEvent`) | то же, с источником и `hold_hcl` команды |
 | Секция `RuntimeStatus` чтения | один коммит устройства |
 | Исход чтения «устройство не ответило» | наблюдение отсутствия (`device_absent`) без уровня и без `last_seen_ms` |
 

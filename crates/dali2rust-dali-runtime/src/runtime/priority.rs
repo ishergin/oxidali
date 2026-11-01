@@ -11,6 +11,7 @@ const RECALL_LAST_ACTIVE_LEVEL: &str = "DaliRecallLastActiveLevelCommand";
 const RECALL_SCENE: &str = "DaliRecallSceneCommand";
 const STOP_FADE: &str = "DaliStopFadeCommand";
 const RECALL_LEVEL_PRESET: &str = "DaliRecallLevelPresetCommand";
+const DIM: &str = "DaliDimCommand";
 
 struct WireClass {
     variant: &'static str,
@@ -72,6 +73,14 @@ const WIRE_CLASSES: &[WireClass] = &[
     // IEC 62386-103 §9.13.1
     class(
         RECALL_LEVEL_PRESET,
+        WirePriority::Interactive,
+        YieldGranularity::Never,
+        true,
+        TransactionPriority::UserAction,
+    ),
+    // IEC 62386-101 §9.4
+    class(
+        DIM,
         WirePriority::Interactive,
         YieldGranularity::Never,
         true,
@@ -435,6 +444,7 @@ mod tests {
             RECALL_LAST_ACTIVE_LEVEL,
             STOP_FADE,
             RECALL_LEVEL_PRESET,
+            DIM,
         ];
         expected.sort_unstable();
         assert_eq!(flagged, expected, "the set of lamp-driving commands moved");
@@ -454,6 +464,13 @@ mod tests {
                 "{variant} from the web UI holds the httpd task and must outrank it"
             );
         }
+    }
+
+    #[test]
+    fn a_held_button_s_dim_outranks_the_poller_s_read_back_and_never_yields() {
+        assert_eq!(wire_priority(DIM, Origin::Rules), Some(WirePriority::Interactive));
+        assert_eq!(transaction_priority(DIM, Origin::Rules), Some(TransactionPriority::UserAction));
+        assert_eq!(yield_granularity(DIM), Some(YieldGranularity::Never));
     }
 
     #[test]

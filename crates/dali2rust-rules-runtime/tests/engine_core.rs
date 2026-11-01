@@ -156,34 +156,26 @@ fn short_press_toggles_off_the_read_model_with_fade() {
 }
 
 #[test]
-fn dim_hold_steps_by_elapsed_time_not_by_event_count() {
+fn a_held_button_dims_up_once_per_repeat_whatever_the_time_between_repeats() {
     let lamp = resolver().resolve_lamp("коридор")[0];
     let mut eng = engine(SECTION7_ONE_BUTTON, 0);
-    let dim = |eng: &mut Engine, at: u64| {
-        let out = eng.handle(button(3, 0, InputEventKind::LongPressRepeat), &world(at));
-        assert_eq!(out.len(), 1, "the dim rule fires per repeat");
-        out[0].effects.clone()
-    };
-    let step = |delta: i16| {
-        vec![Effect::Light {
-            target: LightTarget::Lamp(lamp),
-            verb: LightVerb::Dim { delta },
-            hold_hcl: true,
-        }]
-    };
+    let up = vec![Effect::Light {
+        target: LightTarget::Lamp(lamp),
+        verb: LightVerb::DimUp,
+        hold_hcl: true,
+    }];
 
     assert!(eng
         .handle(button(3, 0, InputEventKind::LongPressStart), &world(10_000))
         .is_empty());
-    assert_eq!(dim(&mut eng, 10_500), step(30));
-    assert_eq!(dim(&mut eng, 11_000), step(30));
-    assert_eq!(dim(&mut eng, 12_000), step(60));
+    for at in [10_160, 10_320, 12_000, 20_000] {
+        let out = eng.handle(button(3, 0, InputEventKind::LongPressRepeat), &world(at));
+        assert_eq!(out.len(), 1, "the dim rule fires per repeat");
+        assert_eq!(out[0].effects, up, "one UP per repeat at {at} ms");
+    }
     assert!(eng
-        .handle(button(3, 0, InputEventKind::LongPressStop), &world(12_100))
+        .handle(button(3, 0, InputEventKind::LongPressStop), &world(20_100))
         .is_empty());
-
-    assert_eq!(dim(&mut eng, 20_000), Vec::new());
-    assert_eq!(dim(&mut eng, 20_400), step(24));
 }
 
 #[test]

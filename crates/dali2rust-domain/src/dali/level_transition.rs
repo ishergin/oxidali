@@ -26,6 +26,7 @@ pub fn resolve(transition: LevelTransition, ctx: &LevelContext) -> TransitionOut
         | LevelTransition::StepDown
         | LevelTransition::StepDownAndOff
         | LevelTransition::OnAndStepUp => step(transition, ctx),
+        LevelTransition::Up | LevelTransition::Down => dim(transition, ctx),
     }
 }
 
@@ -73,7 +74,25 @@ fn step(transition: LevelTransition, ctx: &LevelContext) -> TransitionOutcome {
         },
         LevelTransition::RecallMaxLevel
         | LevelTransition::RecallMinLevel
-        | LevelTransition::GoToLastActiveLevel => TransitionOutcome::Unknown,
+        | LevelTransition::GoToLastActiveLevel
+        | LevelTransition::Up
+        | LevelTransition::Down => TransitionOutcome::Unknown,
+    }
+}
+
+// IEC 62386-102 §11.3.3, §11.3.4
+fn dim(transition: LevelTransition, ctx: &LevelContext) -> TransitionOutcome {
+    let Some(target) = ctx.target_level else {
+        return TransitionOutcome::Unknown;
+    };
+    let at_bound = match transition {
+        LevelTransition::Up => ctx.max_level.is_some_and(|max| target >= max),
+        _ => ctx.min_level.is_some_and(|min| target <= min),
+    };
+    if target == 0 || at_bound {
+        TransitionOutcome::Unchanged
+    } else {
+        TransitionOutcome::OnAtUnknownLevel
     }
 }
 
@@ -96,6 +115,28 @@ mod tests {
             max_level: Some(max),
             last_active_level: Some(200),
         }
+    }
+
+    #[test]
+    fn an_up_or_down_leaves_a_lit_gear_on_at_a_level_nobody_computed() {
+        for transition in [LevelTransition::Up, LevelTransition::Down] {
+            assert_eq!(resolve(transition, &ctx(100, 10, 254)), TransitionOutcome::OnAtUnknownLevel);
+        }
+        let unbounded = LevelContext { target_level: Some(100), ..LevelContext::default() };
+        assert_eq!(resolve(LevelTransition::Up, &unbounded), TransitionOutcome::OnAtUnknownLevel);
+    }
+
+    #[test]
+    fn an_up_or_down_moves_nothing_on_dark_gear_at_its_bound_or_at_an_unknown_level() {
+        for transition in [LevelTransition::Up, LevelTransition::Down] {
+            assert_eq!(resolve(transition, &ctx(0, 10, 254)), TransitionOutcome::Unchanged);
+            let unknown = LevelContext { target_level: None, ..ctx(0, 10, 254) };
+            assert_eq!(resolve(transition, &unknown), TransitionOutcome::Unknown);
+        }
+        assert_eq!(resolve(LevelTransition::Up, &ctx(254, 10, 254)), TransitionOutcome::Unchanged);
+        assert_eq!(resolve(LevelTransition::Down, &ctx(10, 10, 254)), TransitionOutcome::Unchanged);
+        assert_eq!(resolve(LevelTransition::Down, &ctx(254, 10, 254)), TransitionOutcome::OnAtUnknownLevel);
+        assert_eq!(resolve(LevelTransition::Up, &ctx(10, 10, 254)), TransitionOutcome::OnAtUnknownLevel);
     }
 
     #[test]

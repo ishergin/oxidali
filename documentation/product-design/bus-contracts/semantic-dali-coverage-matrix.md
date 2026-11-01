@@ -30,7 +30,7 @@
 | Home Assistant | выбор сцены | `DaliRecallSceneCommand`, `scope = Broadcast` |
 | HCL | точка `level_mode = absolute` или `none` | `DaliSetTargetStateCommand`, `scope ∈ {Group, Broadcast}` (при `none` — только цвет) |
 | HCL | точка `level_mode = last_active` | `DaliRecallLastActiveLevelCommand` на ту же цель + отдельная команда цвета |
-| Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand`, `DaliRecallLevelPresetCommand` |
+| Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand`, `DaliRecallLevelPresetCommand`, `DaliDimCommand` |
 | Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast` / `VirtualLamp`), `SceneApplyExecuteCommand` |
 | Правила | индикация панелей | `Dali103FeedbackDriveCommand` |
 | Правила | датчик присутствия (303) | `Dali103InstanceActionCommand` |

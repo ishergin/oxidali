@@ -5,16 +5,16 @@ use dali2rust_rules_model::limits::{
     MAX_SCENE, MAX_VAR_TEXT_BYTES,
 };
 use dali2rust_rules_model::{
-    Action, CctSpec, Condition, DefBlock, FlowAction, HclAction, InputAction, LevelSpec,
-    LightAction, LightOp, LightTarget, RuleSet, SceneAction, StateAction, ValueExpr, VarValue,
+    Action, CctSpec, Condition, DefBlock, DimDirection, FlowAction, HclAction, InputAction,
+    LevelSpec, LightAction, LightOp, LightTarget, RuleSet, SceneAction, StateAction, ValueExpr,
+    VarValue,
 };
 
 use super::counters::{bump, EngineCounters};
 use super::eval::{eval_condition, eval_value, EvalEnv, Unevaluable};
 use super::outcome::{Effect, LightVerb, PartialReason};
 use super::state::{
-    ChainKey, Continuation, EventCtx, Volatile, DIM_HOLD_RESET_MS, MAX_PENDING_CONTINUATIONS,
-    MAX_TIMERS, MAX_VARS,
+    ChainKey, Continuation, EventCtx, Volatile, MAX_PENDING_CONTINUATIONS, MAX_TIMERS, MAX_VARS,
 };
 use super::world::WorldSnapshot;
 
@@ -362,10 +362,6 @@ fn clamp_kelvin(value: i64) -> u16 {
     value.clamp(0, i64::from(u16::MAX)) as u16
 }
 
-fn clamp_step(value: i64) -> i16 {
-    value.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16
-}
-
 fn prim_light(
     env: &mut ExecEnv<'_>,
     job: &mut Job,
@@ -397,7 +393,8 @@ fn light_verb(
         LightOp::Toggle { level } => toggle_verb(env, job, level, target).map(Some),
         LightOp::Level { level } => level_verb(env, job, level, target).map(Some),
         LightOp::Dim { delta } => Ok(Some(LightVerb::Dim { delta: *delta })),
-        LightOp::DimHold { rate_per_s } => dim_hold_verb(env, job, *rate_per_s),
+        LightOp::DimHold { direction: DimDirection::Up } => Ok(Some(LightVerb::DimUp)),
+        LightOp::DimHold { direction: DimDirection::Down } => Ok(Some(LightVerb::DimDown)),
         LightOp::Cct { cct } => cct_verb(env, job, cct, target).map(Some),
         LightOp::Xy { x_1e4, y_1e4 } => Ok(Some(LightVerb::Xy {
             x_1e4: *x_1e4,
@@ -488,25 +485,6 @@ fn cct_verb(
             _ => Err(Unevaluable),
         },
     }
-}
-
-fn dim_hold_verb(
-    env: &mut ExecEnv<'_>,
-    job: &Job,
-    rate_per_s: i16,
-) -> Result<Option<LightVerb>, Unevaluable> {
-    let source = job.ctx.source.ok_or(Unevaluable)?;
-    let now = env.world.now_ms;
-    let base = match env.vol.hold_marks.get(&source) {
-        Some(mark) if now.saturating_sub(*mark) <= DIM_HOLD_RESET_MS => *mark,
-        _ => now,
-    };
-    let elapsed = now.saturating_sub(base);
-    let delta = clamp_step(i64::from(rate_per_s).saturating_mul(elapsed as i64) / 1_000);
-    if !job.dry {
-        env.vol.hold_marks.insert(source, if delta == 0 { base } else { now });
-    }
-    Ok((delta != 0).then_some(LightVerb::Dim { delta }))
 }
 
 fn prim_scene(

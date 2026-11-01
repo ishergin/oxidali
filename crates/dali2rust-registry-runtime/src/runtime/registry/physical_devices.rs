@@ -87,6 +87,22 @@ fn transition_setpoint(outcome: TransitionOutcome) -> LightSetpoint {
     }
 }
 
+// IEC 62386-102 §9.8.2
+fn transition_observation(
+    commit: &LevelTransitionCommit<'_>,
+    setpoint: &LightSetpoint,
+    rec: &PhysicalDeviceRecord,
+) -> RuntimeObservation {
+    let iterates = matches!(commit.transition, LevelTransition::Up | LevelTransition::Down);
+    if iterates && !setpoint.states_a_value() {
+        let untimed = RuntimeObservation { last_seen_ms: None, ..commit.observation.clone() };
+        if rec.runtime.observation_adds_nothing(&untimed) {
+            return untimed;
+        }
+    }
+    commit.observation.clone()
+}
+
 fn forget_commanded_level(rec: &mut PhysicalDeviceRecord) {
     rec.runtime_level = None;
     rec.last_active_level = None;
@@ -1164,10 +1180,11 @@ impl RegistryStore {
         }
         let outcome = resolve_transition(commit.transition, rec);
         let setpoint = transition_setpoint(outcome);
+        let observation = transition_observation(commit, &setpoint, rec);
         let physical = PhysicalRuntimeCommit {
             short_address: commit.short_address,
             setpoint: &setpoint,
-            observation: commit.observation,
+            observation: &observation,
             observed_at_mono_ms: commit.observed_at_mono_ms,
             entry_last_dapc_source: None,
             entry_source: commit.source,
@@ -1175,7 +1192,7 @@ impl RegistryStore {
             clears_power_cycle_seen: true,
         };
         let silent = !setpoint.states_a_value()
-            && rec.runtime.observation_adds_nothing(commit.observation);
+            && rec.runtime.observation_adds_nothing(&observation);
         let power_cycled = commit_physical_runtime(rec, &physical);
         if outcome == TransitionOutcome::OnAtUnknownLevel {
             forget_commanded_level(rec);

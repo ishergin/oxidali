@@ -34,14 +34,18 @@ not renumbered when a section closes.
 
 ## 1. Part 101 — multi-master behaviour
 
-### 1.6 Command iteration is not used — `GAP`
+### 1.6 Command iteration is paced by the input device — `MINOR`
 
 101 §9.4 (Tables 26 and 27) with 102 §9.8.2: `UP` / `DOWN` repeated at ≤ 175 ms form an
 iteration — the first frame steps, the gear then fades at `fadeRate`, and each further
 frame 12,6–180 ms after the previous one extends it, even with other frames in between.
-No product path sends `UP`, `DOWN`, `STEP UP` or `STEP DOWN` (the sniffer translator only
-decodes them from other masters); hold-to-dim is the rules engine repeating relative
-DAPC. Part 209's colour steps define no iteration: each frame is one step.
+The rules engine sends one `UP` or `DOWN` per `long_press_repeat` (`.dim_up()` /
+`.dim_down()`), so the frames come at the push button's `tRepeat` (160 ms by default),
+widened by the jitter of the rule's latency, and nothing on our side keeps the gap under
+175 ms. Each frame fades for 200 ms, so a longer gap or a lost repeat pauses the fade
+until the next frame. REST and Home Assistant offer no hold-to-dim, and
+`STEP UP` / `STEP DOWN` are never sent. Part 209's colour steps define no iteration:
+each frame is one step.
 
 ### 1.9 The §9.1.3 destroy-area test is not evaluated — `ACCEPTED`
 
@@ -63,7 +67,7 @@ cannot resolve.
 | 0x23 / 0x9E | `SET` / `QUERY OPERATING MODE` | Never sent. A gear parked in a manufacturer-specific mode (0x80–0xFF) looks healthy, although there the standard guarantees only the 101 bus behaviour, the operating-mode commands and the special commands (§9.9) — not level commands or `QUERY STATUS`. |
 | 0xC9, 0x24 | `WRITE MEMORY LOCATION – NO REPLY`, `RESET MEMORY BANK` | Never sent: the bank 1 `memory_luminaire` write uses the answering form, and no bank is reset — §3. |
 | 0x08 | `ON AND STEP UP` | Never sent by the product. It lights dark members at their own `minLevel` (§11.3.10). |
-| 0x01–0x04, 0x07 | `UP`, `DOWN`, `STEP UP`, `STEP DOWN`, `STEP DOWN AND OFF` | Never sent — §1.6. |
+| 0x03, 0x04, 0x07 | `STEP UP`, `STEP DOWN`, `STEP DOWN AND OFF` | Never sent — §1.6. |
 
 ## 3. Memory banks
 

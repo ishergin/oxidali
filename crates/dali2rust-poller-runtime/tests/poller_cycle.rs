@@ -5,14 +5,15 @@ use std::time::Duration;
 
 use dali2rust_bus::{
     BusChannel, BusConfig, BusFrame, BusHost, BusId, BusPublisher, BusSubscriberRx,
-    CorrelationIdAllocator,
+    CorrelationIdAllocator, PublishResult,
 };
 use dali2rust_contracts::bus::{build_confirmation_envelope_with_product_error, event_envelope};
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, BusCommandPayload, BusHealthVerdict, DaliAttributeGroup,
     DaliAttributeReadOutcomesEvent, DaliBusHealthProbeCommand, DaliBusHealthProbedEvent,
-    DaliReadAttributesCommand, DeliveryStatus, ErrorCode, MemoryBankReadPreset, Origin,
-    PollerSettingsChangedEvent, RegistrySliceReloadedEvent,
+    DaliLevelTransitionAppliedEvent, DaliReadAttributesCommand, DaliTargetScope, DeliveryStatus,
+    ErrorCode, LevelTransition, MemoryBankReadPreset, Origin, PollerSettingsChangedEvent,
+    RegistrySliceReloadedEvent, RuntimeSource,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{
@@ -50,15 +51,15 @@ impl PollerSettingsReadPort for StubRegistry {
 }
 
 fn device(short_address: u8) -> PollTargetView {
-    PollTargetView { short_address, is_dt8: false, is_dt6: false, declares_energy: false, declares_diagnostics: false }
+    PollTargetView { short_address, is_dt8: false, is_dt6: false, declares_energy: false, declares_diagnostics: false, dali_groups: 0 }
 }
 
 fn bound_device(short_address: u8, is_dt8: bool) -> PollTargetView {
-    PollTargetView { short_address, is_dt8, is_dt6: false, declares_energy: false, declares_diagnostics: false }
+    PollTargetView { short_address, is_dt8, is_dt6: false, declares_energy: false, declares_diagnostics: false, dali_groups: 0 }
 }
 
 fn bound_dt6_device(short_address: u8) -> PollTargetView {
-    PollTargetView { short_address, is_dt8: false, is_dt6: true, declares_energy: false, declares_diagnostics: false }
+    PollTargetView { short_address, is_dt8: false, is_dt6: true, declares_energy: false, declares_diagnostics: false, dali_groups: 0 }
 }
 
 fn outcomes_event(short_address: u8, outcome: AttributeGroupReadOutcome) -> DaliAttributeReadOutcomesEvent {
@@ -171,8 +172,12 @@ impl Harness {
     }
 
     fn release_one(&self) {
+        self.release_one_as(AttributeGroupReadOutcome::Success);
+    }
+
+    fn release_one_as(&self, outcome: AttributeGroupReadOutcome) {
         let next = self.held.lock().expect("held").pop_front().expect("a held read");
-        publish_outcomes(&self.publisher, next.correlation_id, next.target_adapter_id, next.command.short_address, AttributeGroupReadOutcome::Success);
+        publish_outcomes(&self.publisher, next.correlation_id, next.target_adapter_id, next.command.short_address, outcome);
     }
 
     fn release_probe(&self) {
@@ -1523,6 +1528,7 @@ fn metered_device(short_address: u8, energy: bool, diagnostics: bool) -> PollTar
         is_dt6: false,
         declares_energy: energy,
         declares_diagnostics: diagnostics,
+        dali_groups: 0,
     }
 }
 
@@ -1811,4 +1817,160 @@ impl dali2rust_domain::registry::DaliSettingsReadPort for SwitchableRole {
             ..dali2rust_domain::registry::DaliSettingsView::default()
         }
     }
+}
+
+fn publish_transition(publisher: &BusPublisher, scope: DaliTargetScope, target: u8, transition: LevelTransition) {
+    let ev = event_envelope(
+        SOURCE_ID_UNSPECIFIED,
+        0,
+        BusId::default().0,
+        Some(Origin::Internal),
+        DaliLevelTransitionAppliedEvent {
+            registry_adapter_id: 0,
+            scope,
+            virtual_lamp_id: None,
+            short_address: (scope == DaliTargetScope::Short).then_some(target),
+            group_id: (scope == DaliTargetScope::Group).then_some(target),
+            transition,
+            source: RuntimeSource::Rules,
+            applied_at_mono_ms: 0,
+            hold_hcl: true,
+        },
+    );
+    assert_eq!(publisher.try_publish(BusChannel::Events, BusFrame::event(ev)), PublishResult::Queued);
+}
+
+fn grouped_installation() -> StubRegistry {
+    StubRegistry {
+        devices: vec![
+            PollTargetView { dali_groups: 1 << 3, ..device(1) },
+            device(2),
+            PollTargetView { dali_groups: (1 << 3) | 1, ..device(4) },
+        ],
+        excluded_unbound: 0,
+        settings: disabled_fast_settings(),
+    }
+}
+
+fn seen_shorts(h: &Harness) -> Vec<u8> {
+    h.seen_all().iter().map(|read| read.command.short_address).collect()
+}
+
+#[test]
+fn an_up_or_down_is_read_back_from_the_gear_it_reached_with_the_poller_off() {
+    let h = spawn_harness(grouped_installation(), true, Some(AttributeGroupReadOutcome::Success));
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    let read = &h.seen_all()[0];
+    assert_eq!(read.command.short_address, 2);
+    assert_eq!(read.command.attribute_groups_mask, DaliAttributeGroup::RuntimeStatus.mask_bit());
+    assert_eq!(read.command.memory_banks, MemoryBankReadPreset::None);
+
+    publish_transition(&h.publisher, DaliTargetScope::Group, 3, LevelTransition::Down);
+    wait_until(|| h.seen_len() == 3, WAIT);
+    assert_eq!(seen_shorts(&h), vec![2, 1, 4], "a group's dim is read back from each member");
+    assert_eq!(h.counters.reads_published.load(Ordering::Relaxed), 3);
+}
+
+#[test]
+fn a_level_recall_is_not_read_back() {
+    let h = spawn_harness(grouped_installation(), true, Some(AttributeGroupReadOutcome::Success));
+
+    publish_transition(&h.publisher, DaliTargetScope::Broadcast, 0, LevelTransition::RecallMaxLevel);
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Down);
+    wait_until(|| h.seen_len() >= 1, WAIT);
+    assert_eq!(seen_shorts(&h)[0], 2, "the recall before the DOWN queued no read of its own");
+}
+
+#[test]
+fn repeats_of_one_iteration_queue_one_read_behind_the_one_in_flight() {
+    let h = spawn_harness(grouped_installation(), true, None);
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    h.release_one();
+    wait_until(|| h.seen_len() == 2, WAIT);
+    h.release_one();
+    assert!(
+        remains_false_for(|| h.seen_len() > 2, Duration::from_millis(1_500)),
+        "the third repeat found a read of its gear already queued: {:?}",
+        seen_shorts(&h)
+    );
+}
+
+#[test]
+fn a_preempted_read_back_joins_the_one_its_gear_already_owes() {
+    let h = spawn_harness(grouped_installation(), true, None);
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    h.release_one_as(AttributeGroupReadOutcome::Preempted);
+    wait_until(|| h.seen_len() == 2, WAIT);
+    h.release_one();
+    assert!(
+        remains_false_for(|| h.seen_len() > 2, Duration::from_millis(1_500)),
+        "the preempted read went back behind a read of the same gear: {:?}",
+        seen_shorts(&h)
+    );
+}
+
+#[test]
+fn a_settings_change_keeps_the_reads_a_dim_still_owes() {
+    let h = spawn_harness(grouped_installation(), true, None);
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    wait_until(|| h.seen_len() == 1, WAIT);
+    publish_transition(&h.publisher, DaliTargetScope::Short, 4, LevelTransition::Down);
+    publish_settings_changed(&h.publisher);
+    h.release_one();
+    wait_until(|| h.seen_len() == 2, WAIT);
+    assert_eq!(seen_shorts(&h), vec![2, 4], "the level the DOWN left is still unknown after the change");
+}
+
+#[test]
+fn a_read_back_lost_to_a_busy_wire_is_tried_again_and_a_failed_one_is_not() {
+    let h = spawn_harness(grouped_installation(), true, None);
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    for attempt in 1..=3 {
+        wait_until(|| h.seen_len() == attempt, WAIT);
+        h.release_one_as(AttributeGroupReadOutcome::ContendedAbort);
+    }
+    assert!(
+        remains_false_for(|| h.seen_len() > 3, Duration::from_millis(1_500)),
+        "a wire that stays busy gives up after three reads, not never"
+    );
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 4, LevelTransition::Down);
+    wait_until(|| h.seen_len() == 4, WAIT);
+    h.release_one_as(AttributeGroupReadOutcome::TransportAbort);
+    assert!(
+        remains_false_for(|| h.seen_len() > 4, Duration::from_millis(1_500)),
+        "a read that failed on the gear is not repeated: {:?}",
+        seen_shorts(&h)
+    );
+    assert_eq!(seen_shorts(&h), vec![2, 2, 2, 4]);
+}
+
+#[test]
+fn a_read_back_owed_beside_a_sweep_read_outlives_the_sweep() {
+    let port = Arc::new(ReplicatedSettings {
+        devices: vec![device(1), device(2)],
+        settings: Mutex::new(PollerSettingsView { power_cycle_watch: true, ..disabled_fast_settings() }),
+    });
+    let config = PollerConfig { probe_period: NO_PROBE_PERIOD };
+    let h = spawn_harness_configured(Arc::clone(&port) as Arc<dyn PollerReadPort>, true, None, 1, config);
+    yes_until(&h, 1);
+    wait_until(|| h.seen_len() == 1, WAIT);
+
+    publish_transition(&h.publisher, DaliTargetScope::Short, 2, LevelTransition::Up);
+    port.settings.lock().expect("settings").power_cycle_watch = false;
+    publish_settings_changed(&h.publisher);
+    h.release_one();
+    wait_until(|| h.seen_len() == 2, WAIT);
+    assert_eq!(seen_shorts(&h), vec![1, 2], "the watch went off, the UP's level is still unknown");
 }

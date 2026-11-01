@@ -4,7 +4,8 @@ use std::time::Duration;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    BusCommandPayload, BusEventPayload, ColorMode, Dali103InstanceAction, OperationType, Origin,
+    BusCommandPayload, BusEventPayload, ColorMode, Dali103InstanceAction, DaliTargetScope,
+    DimDirection, OperationType, Origin,
     PowerState, RULE_SOURCE_CHUNK_BYTES, RuleCommitCommand, RuleEnableCommand, RuleStageCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
@@ -117,6 +118,7 @@ const EXECUTOR_OUTPUT: &[&str] = &[
     "DaliRecallSceneCommand",
     "DaliStopFadeCommand",
     "DaliRecallLevelPresetCommand",
+    "DaliDimCommand",
     "SceneApplyExecuteCommand",
     "OperationBeginCommand",
     "Dali103FeedbackDriveCommand",
@@ -1117,10 +1119,71 @@ fn a_recall_publishes_its_own_command_and_carries_the_rule_s_hold() {
     assert!(!cmd.hold_hcl, "the rule said hold_hcl false, and the recall says so too");
 }
 
+fn published_dims(h: &Harness, count: usize) -> Vec<dali2rust_contracts::msg::DaliDimCommand> {
+    (0..count)
+        .map(|_| {
+            let published = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |payload| {
+                matches!(payload, dali2rust_contracts::msg::BusCommandPayload::DaliDimCommand(_))
+            })
+            .expect("each dim verb must reach the bus as its own command");
+            let dali2rust_contracts::msg::BusCommandPayload::DaliDimCommand(cmd) = published.payload else {
+                unreachable!("filtered above")
+            };
+            cmd
+        })
+        .collect()
+}
+
+#[test]
+fn a_dim_publishes_one_command_per_verb_on_its_scope_and_carries_the_rule_s_hold() {
+    let h = harness("rules-dim-scopes");
+    publish_document(
+        &h,
+        1,
+        "rule \"вниз\" hold_hcl false {\n  when http trigger\n  do group(2).dim_down()\n     broadcast.dim_up()\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 1);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    publish(&h, 2, dali2rust_contracts::msg::RuleRunCommand { name: dali2rust_contracts::msg::fixed_text_64("вниз"), dry: false });
+
+    let dims = published_dims(&h, 2);
+    let shape: Vec<_> = dims.iter().map(|cmd| (cmd.scope, cmd.group_id, cmd.direction)).collect();
+    assert_eq!(
+        shape,
+        vec![(DaliTargetScope::Group, 2, DimDirection::Down), (DaliTargetScope::Broadcast, 0, DimDirection::Up)],
+        "two verbs, two frames, in the order the rule wrote them"
+    );
+    assert!(dims.iter().all(|cmd| !cmd.hold_hcl), "the rule said hold_hcl false, and each dim says so too");
+}
+
+#[test]
+fn the_old_dim_hold_spelling_dims_by_its_sign() {
+    let h = harness("rules-dim-hold-sign");
+    publish_document(
+        &h,
+        1,
+        "rule \"старое\" {\n  when http trigger\n  do group(4).dim_hold(-60)\n     group(4).dim_hold(+5)\n}\n",
+        0,
+    );
+    let sig = recv_signal(&h, 1);
+    assert!(sig.error.is_none(), "the document must compile: {sig:?}");
+    wait_revision(&h.store, 1);
+
+    publish(&h, 2, dali2rust_contracts::msg::RuleRunCommand { name: dali2rust_contracts::msg::fixed_text_64("старое"), dry: false });
+
+    let dims = published_dims(&h, 2);
+    assert_eq!(
+        dims.iter().map(|cmd| (cmd.scope, cmd.group_id, cmd.direction, cmd.hold_hcl)).collect::<Vec<_>>(),
+        vec![(DaliTargetScope::Group, 4, DimDirection::Down, true), (DaliTargetScope::Group, 4, DimDirection::Up, true)]
+    );
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Landing {
     Bus(&'static str),
-    BusVia(&'static str, &'static str),
     Counted(&'static str),
     NoEffect,
 }
@@ -1131,14 +1194,7 @@ const LANDINGS: &[(&str, &str, Landing)] = &[
     ("light_toggle", "broadcast.toggle()", Landing::Bus("DaliSetTargetStateCommand")),
     ("light_level", "broadcast.level(100)", Landing::Bus("DaliSetTargetStateCommand")),
     ("light_dim", "lamp(0).dim(+10)", Landing::Bus("DaliSetTargetStateCommand")),
-    (
-        "light_dim_hold",
-        "lamp(0).dim_hold(+10)",
-        Landing::BusVia(
-            "DaliSetTargetStateCommand",
-            "engine_core::dim_hold_steps_by_elapsed_time_not_by_event_count",
-        ),
-    ),
+    ("light_dim_hold", "broadcast.dim_up()", Landing::Bus("DaliDimCommand")),
     ("light_cct", "broadcast.cct(3000)", Landing::Bus("DaliSetTargetStateCommand")),
     ("light_xy", "broadcast.xy(0.3128, 0.3290)", Landing::Bus("DaliSetTargetStateCommand")),
     ("light_rgb", "broadcast.rgb(254, 0, 0)", Landing::Bus("DaliSetTargetStateCommand")),
@@ -1253,25 +1309,6 @@ fn run_landing_on(
         seen.push(ce.payload.variant_name().to_string());
     }
     (seen, Arc::clone(&h.counters))
-}
-
-#[test]
-fn every_bus_via_landing_still_compiles_and_activates() {
-    for (kind, snippet, landing) in LANDINGS {
-        let Landing::BusVia(command, proof) = landing else {
-            continue;
-        };
-        assert!(
-            !proof.is_empty(),
-            "{kind}: lands on {command} via an unnamed test"
-        );
-        let (seen, _) = run_landing(kind, snippet);
-        assert!(
-            seen.is_empty(),
-            "{kind}: it DOES reach the bus from a manual run ({seen:?}) — make \
-             it a plain `Bus` row instead of pointing at {proof}"
-        );
-    }
 }
 
 #[test]
@@ -1963,8 +2000,10 @@ fn a_wet_run_is_reported_per_rule_and_a_dry_run_is_not() {
 const UNBOUND_DOC: &str = "rule \"recall\" {\n  when http trigger\n  do scene(3).recall(lamp(8))\n}\n\
 rule \"light\" {\n  when http trigger\n  do lamp(8).off()\n}\n\
 rule \"stop\" {\n  when http trigger\n  do lamp(8).stop_fade()\n}\n\
+rule \"dim\" {\n  when http trigger\n  do lamp(8).dim_up()\n}\n\
 rule \"absent\" {\n  when http trigger\n  do lamp(9).level(10)\n}\n\
-rule \"watch\" cooldown 0ms {\n  when rule(\"recall\") fails\n  when rule(\"light\") fails\n  when rule(\"stop\") fails\n  when rule(\"absent\") fails\n  do lamp(6).level(55)\n}\n";
+rule \"watch\" cooldown 0ms {\n  when rule(\"recall\") fails\n  when rule(\"light\") fails\n  when rule(\"stop\") fails\n  when rule(\"absent\") fails\n  do lamp(6).level(55)\n}\n\
+rule \"watch dim\" cooldown 0ms {\n  when rule(\"dim\") fails\n  do lamp(6).level(55)\n}\n";
 
 #[test]
 fn an_effect_on_a_lamp_with_no_binding_fails_its_activation_and_reaches_no_bus() {
@@ -1980,7 +2019,7 @@ fn an_effect_on_a_lamp_with_no_binding_fails_its_activation_and_reaches_no_bus()
     assert!(recv_signal(&h, 1).error.is_none());
     wait_revision(&h.store, 1);
 
-    for (corr, rule) in [(2u64, "recall"), (3, "light"), (4, "stop"), (5, "absent")] {
+    for (corr, rule) in [(2u64, "recall"), (3, "light"), (4, "stop"), (5, "dim"), (6, "absent")] {
         run_rule(&h, corr, rule);
         let ce = dali2rust_test_support::try_recv_command_matching(&h.out_rx, COMMAND_WAIT, |_| true)
             .unwrap_or_else(|| panic!("{rule}: the watching rule must fire"));
@@ -1993,7 +2032,7 @@ fn an_effect_on_a_lamp_with_no_binding_fails_its_activation_and_reaches_no_bus()
             "{rule}: the first command out must be the watcher's"
         );
     }
-    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 4);
+    assert_eq!(h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed), 5);
     let runtime = h.store.rule_runtime();
     let recall = runtime.iter().find(|r| r.name == "recall").expect("the recall fired");
     assert_eq!(recall.last_outcome, dali2rust_rules_runtime::RuleOutcome::Failed);

@@ -152,6 +152,7 @@ fn poll_targets(g: &Inner, adapter_id: u8) -> (Vec<PollTargetView>, u16) {
                 declares_energy: declared.is_some_and(|set| set.contains(DEVICE_TYPE_ENERGY)),
                 declares_diagnostics: declared
                     .is_some_and(|set| set.contains(DEVICE_TYPE_DIAGNOSTICS)),
+                dali_groups: rec.attributes.groups.membership.as_ref().map_or(0, |seen| seen.value),
             })
         })
         .collect();

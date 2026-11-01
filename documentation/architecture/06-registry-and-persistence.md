@@ -37,12 +37,15 @@ httpd stack in [07](07-memory-and-cores.md).
   last DAPC source, the `last_active_level` shadow — live on the physical-device record;
   virtual-lamp state is a projection through the binding.
 - They change only through `RegistryRuntimeUpdateCommand` (RRUC) and
-  `RegistryLevelTransitionCommand` (an arc command without a level, observed or our own
-  recall, whose level the registry computes); in production the state-fanout projector
-  is their only publisher. A verb whose bound was never read still lights the gear:
-  `RECALL MAX/MIN LEVEL`, `GO TO LAST ACTIVE LEVEL` and `ON AND STEP UP` commit power on
-  with an unknown level and forget the `last_active_level` shadow. An entry that names a
-  virtual lamp with no binding is refused (`VlUnbound`).
+  `RegistryLevelTransitionCommand` (an arc command without a level, observed or our own,
+  whose level the registry computes or marks unknown); in production the state-fanout
+  projector is their only publisher. A verb whose bound was never read still lights the
+  gear: `RECALL MAX/MIN LEVEL`, `GO TO LAST ACTIVE LEVEL` and `ON AND STEP UP` commit
+  power on with an unknown level and forget the `last_active_level` shadow, and so do
+  our `UP` and `DOWN` on lit gear, whose level the poller reads back. A repeat of an
+  `UP`/`DOWN` iteration that moves nothing known is answered, not announced, and leaves
+  `last_seen_ms` as it was. An entry that names a virtual lamp with no binding is
+  refused (`VlUnbound`).
 - Every successful runtime commit publishes `RuntimeStateChangedEvent` carrying the
   committed observation; an empty or default payload is forbidden.
 - Runtime fields are not persisted, and neither is operation status. After a reboot

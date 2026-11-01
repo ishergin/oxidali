@@ -346,7 +346,7 @@ function InstancePanel({
           20,
           'ms',
           'T_repeat',
-          'Long-press repeat interval. A rule that dims by counting repeats will drift — repeats are legally dropped under load, which is why dim_hold bills by elapsed time.',
+          'Long-press repeat interval. A rule that dims with dim_up or dim_down sends one UP or DOWN per repeat, and each frame fades the gear for 200 ms at its own rate; a longer interval makes the dimming pause between repeats.',
         )}
         {timerRow(
           3,

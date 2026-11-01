@@ -641,6 +641,8 @@ pub enum LevelTransition {
     StepDownAndOff = 4,
     OnAndStepUp = 5,
     GoToLastActiveLevel = 6,
+    Up = 7,
+    Down = 8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -656,6 +658,23 @@ impl LevelPreset {
         match self {
             Self::MaxLevel => LevelTransition::RecallMaxLevel,
             Self::MinLevel => LevelTransition::RecallMinLevel,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum DimDirection {
+    Up = 0,
+    Down = 1,
+}
+
+impl DimDirection {
+    #[must_use]
+    pub const fn transition(self) -> LevelTransition {
+        match self {
+            Self::Up => LevelTransition::Up,
+            Self::Down => LevelTransition::Down,
         }
     }
 }
