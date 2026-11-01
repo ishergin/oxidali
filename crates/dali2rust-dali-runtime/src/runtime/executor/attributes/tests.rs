@@ -479,7 +479,7 @@ fn write_attributes_fade_time_confirms_the_accepted_code_not_the_request() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None);
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None, Default::default());
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -502,7 +502,7 @@ fn a_collided_configuration_write_is_rearmed_before_it_goes_again() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None);
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None, Default::default());
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -530,7 +530,7 @@ fn a_collided_read_back_is_asked_again_without_writing_again() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None);
+        write_short_attributes(&mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None, Default::default());
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -558,7 +558,7 @@ fn write_attributes_small_fade_time_never_selects_the_extended_fade_code() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(100), None, None, None, None, (None, None), (None, None), None, None);
+        write_short_attributes(&mut controller, short, Some(100), None, None, None, None, (None, None), (None, None), None, None, Default::default());
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(700));
@@ -586,7 +586,7 @@ fn write_attributes_zero_fade_time_selects_the_extended_fade_code() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution =
-        write_short_attributes(&mut controller, short, Some(0), None, None, None, None, (None, None), (None, None), None, None);
+        write_short_attributes(&mut controller, short, Some(0), None, None, None, None, (None, None), (None, None), None, None, Default::default());
 
     assert_eq!(execution.error, None);
     assert_eq!(execution.confirmed.fade_time_ms, Some(0));
@@ -670,7 +670,7 @@ fn an_unanswered_fade_time_read_back_is_named_and_confirms_nothing() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None,
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None, Default::default(),
     );
 
     assert_eq!(execution.confirmed.fade_time_ms, None, "a silent query proves nothing");
@@ -690,7 +690,7 @@ fn a_silent_read_back_does_not_hold_back_the_fields_that_answered() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY), Default::default(),
     );
 
     assert_eq!(execution.confirmed.fade_time_ms, None);
@@ -726,7 +726,7 @@ fn an_unanswered_dimming_curve_read_back_is_named_and_confirms_nothing() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None, Default::default(),
     );
 
     assert_eq!(execution.confirmed.dimming_curve, None, "a gear without DT6 stays unconfirmed");
@@ -755,7 +755,7 @@ fn a_refused_power_on_level_fails_the_write_only_when_the_command_asks() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+        &mut controller, short, None, None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY), Default::default(),
     );
 
     assert_eq!(execution.confirmed.power_on_level, None, "a refused level is not confirmed");
@@ -773,7 +773,7 @@ fn a_refused_system_failure_level_fails_the_write_and_keeps_the_level_that_was_t
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, Some(200), Some(100), None, (None, None), (None, None), None, Some(LED_ONLY),
+        &mut controller, short, None, None, Some(200), Some(100), None, (None, None), (None, None), None, Some(LED_ONLY), Default::default(),
     )
     .failing_a_refusal(true);
 
@@ -791,7 +791,7 @@ fn a_write_without_a_refusal_stays_clean_when_refusals_fail() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+        &mut controller, short, None, None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY), Default::default(),
     )
     .failing_a_refusal(true);
 
@@ -808,7 +808,7 @@ fn silence_outranks_a_refusal_in_the_same_write() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY), Default::default(),
     )
     .failing_a_refusal(true);
 
@@ -845,7 +845,7 @@ fn a_violating_read_back_is_named_contended_not_silent() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None,
+        &mut controller, short, Some(500), None, None, None, None, (None, None), (None, None), None, None, Default::default(),
     );
 
     assert_eq!(execution.confirmed.fade_time_ms, None, "a violation proves nothing");
@@ -870,7 +870,7 @@ fn a_violating_bound_read_back_is_named_contended() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None, None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None, None, Default::default(),
     );
 
     assert_eq!(execution.confirmed.min_level, None);
@@ -878,6 +878,34 @@ fn a_violating_bound_read_back_is_named_contended() {
         execution.error,
         Some(SemanticDaliError::OperationFailed(VERIFY_CONTENDED_MESSAGE))
     );
+    assert_script_consumed(&transport);
+}
+
+#[test]
+fn a_curve_the_gear_keeps_confirms_nothing_and_is_a_refusal() {
+    let mock = MockDaliTransport::new();
+    let short = 17;
+    let (curve, kept) = (1, 0);
+    let enable_dt6 = DaliCommand::Special(SpecialCommand::EnableDeviceType(6)).to_forward_frame().raw();
+    let echo = DaliCommand::Standard { address: short_address(short), command: StandardCommand::QueryContentDtr0 };
+    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+        mock.expect_forward_frame(DaliCommand::Special(SpecialCommand::Dtr0(curve)).to_forward_frame().raw());
+        mock.expect_forward_frame_with_backward(echo.to_forward_frame().raw(), Some(curve));
+        mock.expect_forward_frame(enable_dt6);
+        mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+        mock.expect_forward_frame(dt6_frame(short, Dt6Command::SelectDimmingCurve));
+        mock.expect_forward_frame(enable_dt6);
+        mock.expect_forward_frame_with_backward(dt6_frame(short, Dt6Command::QueryDimmingCurve), Some(kept));
+    }
+
+    let (transport, mut controller) = setup_controller(mock);
+    let execution = write_short_attributes(
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None, Default::default(),
+    );
+
+    assert_eq!(execution.confirmed.dimming_curve, None);
+    assert_eq!(execution.error, None, "a kept curve is not a wire failure");
+    assert!(execution.refused, "the gear answered a curve other than the one stored");
     assert_script_consumed(&transport);
 }
 
@@ -900,7 +928,7 @@ fn a_violating_dimming_curve_read_back_is_named_contended() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None, Default::default(),
     );
 
     assert_eq!(execution.confirmed.dimming_curve, None);
@@ -942,7 +970,7 @@ fn a_curve_operand_that_never_proves_names_why_instead_of_succeeding() {
 
         let (transport, mut controller) = setup_controller(mock);
         let execution = write_short_attributes(
-            &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None,
+            &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None, Default::default(),
         );
 
         assert_eq!(execution.confirmed.dimming_curve, None);
@@ -969,7 +997,7 @@ fn a_contended_field_outranks_a_silent_one_in_the_named_outcome() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY),
+        &mut controller, short, Some(500), None, Some(200), None, None, (None, None), (None, None), None, Some(LED_ONLY), Default::default(),
     );
 
     assert_eq!(
@@ -989,7 +1017,7 @@ fn write_attributes_min_level_clamp_converges_to_accepted_value() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(220), None), None, None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(220), None), None, None, Default::default(),
     );
 
     assert_eq!(execution.error, None);
@@ -1011,7 +1039,7 @@ fn a_confirmed_curve_write_rereads_the_physical_minimum() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(0), None,
+        &mut controller, short, None, None, None, None, None, (None, None), (None, None), Some(0), None, Default::default(),
     );
 
     assert_eq!(execution.error, None);
@@ -1056,7 +1084,7 @@ fn write_attributes_unanswered_bound_verify_stays_unconfirmed_and_is_named() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None, None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(100), None), None, None, Default::default(),
     );
 
     assert_eq!(
@@ -1076,7 +1104,7 @@ fn write_attributes_max_level_alone_confirms_one_triple() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (None, Some(180)), None, None,
+        &mut controller, short, None, None, None, None, None, (None, None), (None, Some(180)), None, None, Default::default(),
     );
 
     assert_eq!(execution.error, None);
@@ -1098,7 +1126,7 @@ fn write_attributes_raising_both_bounds_redrives_min_after_max() {
 
     let (transport, mut controller) = setup_controller(mock);
     let execution = write_short_attributes(
-        &mut controller, short, None, None, None, None, None, (None, None), (Some(150), Some(200)), None, None,
+        &mut controller, short, None, None, None, None, None, (None, None), (Some(150), Some(200)), None, None, Default::default(),
     );
 
     assert_eq!(execution.error, None);
@@ -2248,7 +2276,7 @@ fn a_physical_minimum_re_read_held_after_the_curve_is_proved_names_the_hold() {
     let (transport, mut controller) = setup_controller(mock);
     let hold: Arc<dyn WireHold> = Arc::new(HeldWhenScriptLeft { transport: Arc::clone(&transport), left: 0 });
     let execution = controller.with_wire_hold(hold, |c| {
-        write_short_attributes(c, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None)
+        write_short_attributes(c, short, None, None, None, None, None, (None, None), (None, None), Some(curve), None, Default::default())
     });
 
     assert_eq!(execution.confirmed.dimming_curve, Some(curve), "the proved curve stays confirmed");
@@ -2436,5 +2464,119 @@ mod dt7_switching {
         assert_eq!(read.error_hold_off, None, "silence is not a hold-off of 0");
         assert_eq!(read.gear_type, Some(0x02));
         assert_script_consumed(&transport);
+    }
+
+    const DTR0: u16 = 0xA300;
+    const QUERY_CONTENT_DTR0: u16 = 0x2398;
+    // IEC 62386-208 §11.3.4.1
+    const STORE_UP_SWITCH_ON: u8 = 0xE1;
+    const STORE_UP_SWITCH_OFF: u8 = 0xE2;
+    const STORE_DOWN_SWITCH_ON: u8 = 0xE3;
+    const STORE_DOWN_SWITCH_OFF: u8 = 0xE4;
+    const STORE_ERROR_HOLD_OFF: u8 = 0xE5;
+    const QUERY_UP_SWITCH_ON: u8 = 0xF2;
+    const QUERY_UP_SWITCH_OFF: u8 = 0xF3;
+    const QUERY_DOWN_SWITCH_ON: u8 = 0xF4;
+    const QUERY_DOWN_SWITCH_OFF: u8 = 0xF5;
+    const QUERY_ERROR_HOLD_OFF: u8 = 0xF6;
+    const ARM_UNCONFIRMED: &str = "dt7_switching_arm_unconfirmed";
+
+    fn expect_armed(mock: &MockDaliTransport, value: u8, echo: Option<u8>) {
+        mock.expect_forward_frame(DTR0 | u16::from(value));
+        mock.expect_forward_frame_with_backward(QUERY_CONTENT_DTR0, echo);
+    }
+
+    fn expect_store(mock: &MockDaliTransport, value: u8, (store, query): (u8, u8), read_back: Option<u8>) {
+        expect_armed(mock, value, Some(value));
+        mock.expect_forward_frame(ENABLE_DEVICE_TYPE_7);
+        mock.expect_forward_frame(part_208_query(store));
+        mock.expect_forward_frame(part_208_query(store));
+        mock.expect_forward_frame(ENABLE_DEVICE_TYPE_7);
+        mock.expect_forward_frame_with_backward(part_208_query(query), read_back);
+    }
+
+    fn write(mock: MockDaliTransport, switching: Dt7SwitchingWrite) -> WriteAttributesExecution {
+        let (transport, mut controller) = setup_controller(mock);
+        let execution = write_short_attributes(
+            &mut controller, SHORT, None, None, None, None, None, (None, None), (None, None), None, None, switching,
+        );
+        assert_script_consumed(&transport);
+        execution
+    }
+
+    #[test]
+    fn each_threshold_and_the_hold_off_are_armed_in_dtr0_stored_twice_and_read_back() {
+        let mock = MockDaliTransport::new();
+        expect_store(&mock, 0x40, (STORE_UP_SWITCH_ON, QUERY_UP_SWITCH_ON), Some(0x40));
+        expect_store(&mock, 0x50, (STORE_UP_SWITCH_OFF, QUERY_UP_SWITCH_OFF), Some(0x50));
+        expect_store(&mock, 0x30, (STORE_DOWN_SWITCH_ON, QUERY_DOWN_SWITCH_ON), Some(0x30));
+        expect_store(&mock, 0xFF, (STORE_DOWN_SWITCH_OFF, QUERY_DOWN_SWITCH_OFF), Some(0xFF));
+        expect_store(&mock, 0x06, (STORE_ERROR_HOLD_OFF, QUERY_ERROR_HOLD_OFF), Some(0x06));
+        let asked = Dt7SwitchingWrite {
+            up_switch_on_threshold: Some(0x40),
+            up_switch_off_threshold: Some(0x50),
+            down_switch_on_threshold: Some(0x30),
+            down_switch_off_threshold: Some(0xFF),
+            error_hold_off: Some(0x06),
+        };
+
+        let execution = write(mock, asked);
+
+        assert_eq!(execution.confirmed.switching, asked, "MASK is a threshold the gear keeps");
+        assert_eq!(execution.error, None);
+        assert!(!execution.refused);
+    }
+
+    #[test]
+    fn a_gear_that_keeps_its_old_threshold_confirms_nothing_and_is_a_refusal() {
+        let mock = MockDaliTransport::new();
+        for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+            expect_store(&mock, 0x40, (STORE_UP_SWITCH_ON, QUERY_UP_SWITCH_ON), Some(0x01));
+        }
+        let asked = Dt7SwitchingWrite { up_switch_on_threshold: Some(0x40), ..Dt7SwitchingWrite::default() };
+
+        let execution = write(mock, asked);
+
+        assert_eq!(execution.confirmed.switching, Dt7SwitchingWrite::default());
+        assert!(execution.refused, "IEC 62386-208 §11.3.4.1: gear without the feature does not react");
+        assert_eq!(
+            execution.failing_a_refusal(true).error,
+            Some(SemanticDaliError::OperationFailed(VERIFY_FAILED_MESSAGE))
+        );
+    }
+
+    #[test]
+    fn a_silent_read_back_leaves_that_field_unverified_and_the_next_one_is_still_written() {
+        let mock = MockDaliTransport::new();
+        expect_store(&mock, 0x40, (STORE_UP_SWITCH_ON, QUERY_UP_SWITCH_ON), None);
+        expect_store(&mock, 0x06, (STORE_ERROR_HOLD_OFF, QUERY_ERROR_HOLD_OFF), Some(0x06));
+        let asked = Dt7SwitchingWrite {
+            up_switch_on_threshold: Some(0x40),
+            error_hold_off: Some(0x06),
+            ..Dt7SwitchingWrite::default()
+        };
+
+        let execution = write(mock, asked);
+
+        assert_eq!(execution.confirmed.switching.up_switch_on_threshold, None);
+        assert_eq!(execution.confirmed.switching.error_hold_off, Some(0x06));
+        assert_eq!(
+            execution.error,
+            Some(SemanticDaliError::OperationFailed(VERIFY_UNANSWERED_MESSAGE))
+        );
+    }
+
+    #[test]
+    fn an_operand_no_echo_proves_is_never_stored_and_names_why() {
+        let mock = MockDaliTransport::new();
+        for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+            expect_armed(&mock, 0x06, Some(0x07));
+        }
+        let asked = Dt7SwitchingWrite { error_hold_off: Some(0x06), ..Dt7SwitchingWrite::default() };
+
+        let execution = write(mock, asked);
+
+        assert_eq!(execution.confirmed.switching, Dt7SwitchingWrite::default());
+        assert_eq!(execution.error, Some(SemanticDaliError::OperationFailed(ARM_UNCONFIRMED)));
     }
 }

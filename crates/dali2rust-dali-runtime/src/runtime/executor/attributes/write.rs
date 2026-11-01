@@ -15,6 +15,7 @@ pub struct ConfirmedWritableAttributes {
     pub min_level: Option<u8>,
     pub max_level: Option<u8>,
     pub dimming_curve: Option<u8>,
+    pub switching: Dt7SwitchingWrite,
     pub physical_minimum_readback: Option<u8>,
 }
 
@@ -30,6 +31,7 @@ impl ConfirmedWritableAttributes {
             && self.min_level.is_none()
             && self.max_level.is_none()
             && self.dimming_curve.is_none()
+            && self.switching.is_empty()
     }
 }
 
@@ -132,6 +134,7 @@ pub fn write_short_attributes(
     min_max_levels: (Option<u8>, Option<u8>),
     dimming_curve: Option<u8>,
     supported_device_types: Option<DeviceTypeSet>,
+    switching: Dt7SwitchingWrite,
 ) -> WriteAttributesExecution {
     let mut tally = WriteTally::default();
     let error = apply_short_attribute_writes(
@@ -144,7 +147,7 @@ pub fn write_short_attributes(
         extended_fade_time_ms,
         tc_limits_mirek,
         min_max_levels,
-        dimming_curve,
+        (dimming_curve, switching),
     )
     .err();
     tally.into_execution(error)
@@ -161,7 +164,7 @@ fn apply_short_attribute_writes(
     extended_fade_time_ms: Option<u32>,
     tc_limits_mirek: (Option<u16>, Option<u16>),
     min_max_levels: (Option<u8>, Option<u8>),
-    dimming_curve: Option<u8>,
+    (dimming_curve, switching): (Option<u8>, Dt7SwitchingWrite),
 ) -> Result<(), SemanticDaliError> {
     let address = dali_short_address(short_address)?;
     if let Some(error) = write_fade_params(controller, address, tally, fade_time_ms, fade_rate) {
@@ -173,7 +176,8 @@ fn apply_short_attribute_writes(
     write_min_max_levels(controller, address, tally, min_max_levels)?;
     write_extended_fade_time(controller, address, tally, extended_fade_time_ms)?;
     write_tc_limits(controller, address, &mut tally.confirmed, tc_limits_mirek)?;
-    write_dimming_curve(controller, address, tally, dimming_curve)
+    write_dimming_curve(controller, address, tally, dimming_curve)?;
+    write_switching(controller, address, tally, switching)
 }
 
 pub(super) fn reread_physical_minimum(
@@ -202,6 +206,69 @@ pub(super) fn send_dtr0_config_verified<C: DaliApplicationController>(
             read_back(controller)
         })
     })
+}
+
+#[derive(Default)]
+struct UnprovedOperand {
+    violation: bool,
+    silence: bool,
+}
+
+impl UnprovedOperand {
+    fn note(&mut self, echo: DaliResponse) {
+        match echo {
+            DaliResponse::Violation => self.violation = true,
+            DaliResponse::NoAnswer => self.silence = true,
+            DaliResponse::Answer(_) => {}
+        }
+    }
+
+    // IEC 62386-101 §8.2.5
+    fn settle(self, tally: &mut WriteTally, arm_unconfirmed: &'static str) -> Result<(), SemanticDaliError> {
+        if self.violation {
+            tally.proved(ReadBack::Contended);
+        } else if self.silence {
+            tally.proved(ReadBack::Unanswered);
+        } else {
+            return Err(SemanticDaliError::OperationFailed(arm_unconfirmed));
+        }
+        Ok(())
+    }
+}
+
+pub(super) struct ExtendedStore {
+    pub(super) store: ExtendedCommand,
+    pub(super) query: ExtendedCommand,
+    pub(super) arm_unconfirmed: &'static str,
+}
+
+pub(super) fn store_extended_verified(
+    controller: &mut impl DaliApplicationController,
+    address: DaliAddress,
+    tally: &mut WriteTally,
+    value: u8,
+    step: &ExtendedStore,
+) -> Result<Option<u8>, SemanticDaliError> {
+    controller.step_boundary();
+    let (mut sent, mut unproved) = (false, UnprovedOperand::default());
+    for _ in 0..=PROGRAM_VERIFY_REPAIRS {
+        if let ArmedCommand::Unproved(echo) = send_dtr0_backed_extended(controller, address, value, step.store)? {
+            unproved.note(echo);
+            continue;
+        }
+        sent = true;
+        let read = send_extended_command(controller, address, step.query)?;
+        if let Some(unconfirmed) = ReadBack::without_value(read) {
+            return Ok(tally.proved(unconfirmed));
+        }
+        if read == DaliResponse::Answer(value) {
+            return Ok(Some(value));
+        }
+    }
+    if sent {
+        return Ok(tally.proved(ReadBack::Refused));
+    }
+    unproved.settle(tally, step.arm_unconfirmed).map(|()| None)
 }
 
 pub(super) fn verified_store<C: DaliApplicationController>(

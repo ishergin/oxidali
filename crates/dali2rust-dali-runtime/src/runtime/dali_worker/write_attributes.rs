@@ -24,6 +24,7 @@ pub(super) fn handle_write_attributes(
         (w.min_level, w.max_level),
         w.dimming_curve,
         w.known_device_types,
+        w.switching,
     )
     .failing_a_refusal(w.refusal_fails);
     let recorded = publish_attributes_written(publisher, adapter_id, correlation_id, w, &execution, counters);
@@ -91,7 +92,7 @@ fn publish_attributes_written(
     let error = execution
         .error
         .map(|error| dali2rust_contracts::msg::CompactErrorPayload::new(error.code(), error.message()));
-    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: w.short_address, fade_time_ms: confirmed.fade_time_ms, fade_rate: confirmed.fade_rate, power_on_level: confirmed.power_on_level, system_failure_level: confirmed.system_failure_level, extended_fade_time_ms: confirmed.extended_fade_time_ms, registry_adapter_id: w.registry_adapter_id, tc_coolest_mirek: confirmed.tc_coolest_mirek, tc_warmest_mirek: confirmed.tc_warmest_mirek, min_level: confirmed.min_level, max_level: confirmed.max_level, dimming_curve: confirmed.dimming_curve, error });
+    let ev = dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::DaliAttributesWrittenEvent { short_address: w.short_address, fade_time_ms: confirmed.fade_time_ms, fade_rate: confirmed.fade_rate, power_on_level: confirmed.power_on_level, system_failure_level: confirmed.system_failure_level, extended_fade_time_ms: confirmed.extended_fade_time_ms, registry_adapter_id: w.registry_adapter_id, tc_coolest_mirek: confirmed.tc_coolest_mirek, tc_warmest_mirek: confirmed.tc_warmest_mirek, min_level: confirmed.min_level, max_level: confirmed.max_level, dimming_curve: confirmed.dimming_curve, switching: confirmed.switching, error });
     publish_event_required(publisher, ev, counters, PublishKind::Series, "attributes-written")
 }
 

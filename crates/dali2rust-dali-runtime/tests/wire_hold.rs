@@ -356,7 +356,7 @@ fn a_held_attribute_write_ends_with_its_cause_and_is_not_an_execution_failure() 
         tc_warmest_mirek: None,
         min_level: None,
         max_level: None,
-        dimming_curve: None,
+        dimming_curve: None, switching: Default::default(),
         signals_operation: true,
         known_device_types: None,
         refusal_fails: false,

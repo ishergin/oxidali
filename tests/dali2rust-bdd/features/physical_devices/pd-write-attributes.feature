@@ -366,6 +366,74 @@ Feature: Physical device write-attributes
     And the JSON error should be "invalid_value"
     And the DALI mock transport should have received 0 forward frame
 
+  @id:PD-312
+  Scenario: A switching write arms each operand in DTR0, stores it twice under its prelude and reads it back
+    Given a discovery script where short address 0 declares only DT7
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a switching write script for short address 0 storing up switch-on threshold 64 and error hold-off 6
+    When I POST JSON {"up_switch_on_threshold":64,"error_hold_off":6} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the JSON field "type" should be "attribute_write"
+    And the last operation eventually succeeds
+    And physical device 0 eventually exposes write-confirmed dt7_switching up_switch_on_threshold 64
+    And physical device 0 eventually exposes write-confirmed dt7_switching error_hold_off 6
+    And all scripted DALI exchanges should be consumed without errors
+
+  @id:PD-313
+  Scenario Outline: A switching value outside its Part 208 range is refused before it reaches the wire
+    Given a discovery script where short address 0 declares only DT7
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    When I POST JSON {"<field>":<value>} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 422
+    And the JSON error should be "invalid_value"
+    And the DALI mock transport should have received 0 forward frame
+
+    Examples:
+      | field                    | value |
+      | up_switch_on_threshold   | 0     |
+      | up_switch_off_threshold  | 0     |
+      | down_switch_on_threshold | 256   |
+      | error_hold_off           | 256   |
+
+  @id:PD-314
+  Scenario: A gear that keeps its own threshold keeps the value the read saw
+    Given a discovery script where short address 0 declares only DT7
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a switching attribute-read script for a gear declaring only device type 7
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "dt7_switching" only
+    Then the last operation eventually succeeds
+    And physical device 0 eventually exposes the scripted Part 208 registers
+    Given a switching write script for short address 0 whose up switch-on threshold 80 the gear keeps at 64
+    When I POST JSON {"up_switch_on_threshold":80} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And all scripted DALI exchanges should be consumed without errors
+    And physical device 0 keeps the read-back dt7_switching up_switch_on_threshold 64
+
+  @id:PD-315
+  Scenario Outline: A switching value at either end of its Part 208 range is written and confirmed
+    Given a discovery script where short address 0 declares only DT7
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given a switching write script for short address 0 storing <field> <value>
+    When I POST JSON {"<field>":<value>} to "/api/v1/adapters/0/physical-devices/0/write-attributes"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And physical device 0 eventually exposes write-confirmed dt7_switching <field> <value>
+    And all scripted DALI exchanges should be consumed without errors
+
+    Examples:
+      | field                     | value |
+      | up_switch_on_threshold    | 1     |
+      | up_switch_off_threshold   | 255   |
+      | down_switch_on_threshold  | 0     |
+      | down_switch_off_threshold | 254   |
+      | error_hold_off            | 255   |
+
   @id:PD-275
   Scenario: Write-attributes to a short address with no record is 404 and opens no operation
     Given the DALI mock transport trace is cleared

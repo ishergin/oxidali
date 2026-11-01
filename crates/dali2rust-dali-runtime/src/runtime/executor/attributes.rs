@@ -1,6 +1,6 @@
 use dali2rust_contracts::msg::{
     AttributeGroupReadOutcome, ColorMode, DaliAttributeGroup, DeviceTypeSet, Dt6ReadSnapshot,
-    Dt7ReadSnapshot,
+    Dt7ReadSnapshot, Dt7SwitchingWrite,
     ExtendedVersionEntry, LightSetpoint, RuntimeObservation, StatusFlags,
     MAX_EXTENDED_VERSIONS,
 };
@@ -60,7 +60,7 @@ use common_102::{
 #[cfg(test)]
 use common_102::read_light_source_type;
 use dt6::{read_dt6_failure_byte, read_dt6_led_snapshot, write_dimming_curve};
-use dt7::read_dt7_snapshot;
+use dt7::{read_dt7_snapshot, write_switching};
 pub use dt8::Dt8ColorFields;
 use dt8::{
     dt8_narrow_value_sample, read_dt8_color_value_u16, read_dt8_color_value_u8,
@@ -76,7 +76,10 @@ use outcomes::{track, track_gated};
 pub use scene_colours::read_scene_colour_readback;
 use scene_colours::read_scene_colours;
 pub use write::{write_short_attributes, ConfirmedWritableAttributes, WriteAttributesExecution};
-use write::{reread_physical_minimum, send_dtr0_config_verified, ReadBack, WriteTally};
+use write::{
+    reread_physical_minimum, send_dtr0_config_verified, store_extended_verified, ExtendedStore, ReadBack,
+    WriteTally,
+};
 
 #[derive(Debug, Clone)]
 pub struct AttributeReadExecution {

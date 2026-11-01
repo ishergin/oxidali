@@ -288,7 +288,7 @@ pub(crate) fn read_groups_membership_from_gear(world: &mut DaliWorld, short: u8,
     );
 }
 
-// PD-159 PD-169 PD-164 SCN-085 SCN-096 PD-158 PD-270 PD-273 PD-309 PD-166 PD-168 PD-269 PD-256 PD-257 PD-258 PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303 PD-310 PD-311
+// PD-159 PD-169 PD-164 SCN-085 SCN-096 PD-158 PD-270 PD-273 PD-309 PD-166 PD-168 PD-269 PD-256 PD-257 PD-258 PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303 PD-310 PD-311 PD-314
 #[when(regex = r#"^I start an attribute read for adapter 0 physical device 0 with attribute group "(\w+)" only$"#)]
 async fn when_start_single_group_attribute_read(world: &mut DaliWorld, group: String) {
     let body = format!(r#"{{"attribute_groups":["{group}"],"memory_banks":"none"}}"#);

@@ -13,7 +13,7 @@ use super::kinds::{
 };
 use super::payload_macros::declare_bus_payloads;
 use super::state::{
-    Dt6ReadSnapshot, Dt7ReadSnapshot, ExtendedVersionEntry, LightSetpoint, RuntimeObservation, SetpointDimensions,
+    Dt6ReadSnapshot, Dt7ReadSnapshot, Dt7SwitchingWrite, ExtendedVersionEntry, LightSetpoint, RuntimeObservation, SetpointDimensions,
     MAX_EXTENDED_VERSIONS,
 };
 use super::wire::DaliEventPayload;
@@ -189,6 +189,7 @@ declare_bus_payloads! {
         pub min_level: Option<u8>,
         pub max_level: Option<u8>,
         pub dimming_curve: Option<u8>,
+        pub switching: Dt7SwitchingWrite,
         pub error: Option<CompactErrorPayload>,
     }
     budget = DaliAttributesWrittenEvent {
@@ -204,6 +205,7 @@ declare_bus_payloads! {
         min_level: Some(u8::MAX),
         max_level: Some(u8::MAX),
         dimming_curve: Some(u8::MAX),
+        switching: Dt7SwitchingWrite::WORST,
         error: Some(crate::msg::payload_test_samples::worst_compact_error_payload()),
     };
 
@@ -1047,6 +1049,7 @@ impl DaliAttributesWrittenEvent {
             && self.min_level.is_none()
             && self.max_level.is_none()
             && self.dimming_curve.is_none()
+            && self.switching.is_empty()
     }
 }
 

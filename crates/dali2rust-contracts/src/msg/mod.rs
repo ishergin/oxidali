@@ -33,7 +33,7 @@ pub use kinds::{
     OperationType, OperationWorkerSignal, Origin, PowerState, RuntimeSource,
 };
 pub use state::{
-    CapabilityFlags, ColorValue, Dt6ReadSnapshot, Dt7ReadSnapshot, ExtendedVersionEntry, FailureStatus, Level,
+    CapabilityFlags, ColorValue, Dt6ReadSnapshot, Dt7ReadSnapshot, Dt7SwitchingWrite, ExtendedVersionEntry, FailureStatus, Level,
     LightSetpoint, RuntimeObservation, SceneRow, SetpointDimensions, StatusFlags,
     ARC_POWER_OFF, MAX_EXTENDED_VERSIONS,
 };

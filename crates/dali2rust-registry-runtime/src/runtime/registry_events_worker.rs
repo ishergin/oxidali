@@ -139,7 +139,7 @@ dali2rust_contracts::dispatch_bus_events! {
                         body.extended_fade_time_ms,
                         (body.tc_coolest_mirek, body.tc_warmest_mirek),
                         (body.min_level, body.max_level),
-                        body.dimming_curve,
+                        (body.dimming_curve, body.switching),
                     )
             },
         );
