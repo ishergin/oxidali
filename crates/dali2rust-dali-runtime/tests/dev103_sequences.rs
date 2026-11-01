@@ -564,7 +564,8 @@ fn an_instance_is_under_local_control_when_either_part_holds_a_variable() {
         (&[(part_103, 0x00), (part_3xx, 0x04)], Some(true), true, "a 3xx variable alone"),
         (&[(part_103, 0x00), (part_3xx, 0x00)], Some(false), true, "neither part"),
         (&[(part_103, 0x00)], None, true, "silence on 3xx is no answer, not an answer of 0"),
-        (&[(part_103, 0x81)], None, false, "bit 7 of manualConfigInstance103 is reserved"),
+        (&[(part_103, 0x80)], None, false, "bit 7 of manualConfigInstance103 is reserved"),
+        (&[(part_103, 0x00), (part_3xx, 0x80)], Some(true), true, "a 3xx part owns all 8 bits"),
         (&[(part_103, 0xFF)], None, false, "MASK is never a value"),
         (&[(part_103, 0x00), (part_3xx, 0xFF)], None, true, "MASK is never a value"),
     ];
