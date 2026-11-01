@@ -33,8 +33,8 @@
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
-| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
-| Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр; правила (`manual config changed`) | **required** |
+| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `DaliInputManualConfigEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
+| Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр | **required** |
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
 | Home Assistant | `HomeAssistantDiscoveryPublishedEvent` | MQTT bridge | operation tracker | **required** |
@@ -169,12 +169,18 @@
   оставшееся, более старый номер отвергается.
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
-реестр проецирует в записи устройств ввода; флаг Part 333 из
-`Dali103InstanceConfiguredEvent` — вход триггера правил `manual config changed`. Пока
-Part 333 не читается, флаг и триггер инертны: единственный производитель шлёт
-`manual_config_active: None`, поле REST всегда `false`, а триггер не срабатывает
+реестр проецирует в записи устройств ввода. Флаг Part 333 в
+`Dali103InstanceConfiguredEvent` пока инертен: единственный производитель шлёт
+`manual_config_active: None`, и поле REST всегда `false`
 ([`../../reference/iec62386-conformance-gaps.md`](../../reference/iec62386-conformance-gaps.md)
 §9.4, строка 333).
+
+`DaliInputManualConfigEvent` — устройство сообщило, что его настроили вручную (Part 333
+§9.3): короткий адрес (`null` — MASK) и источник из Table 2 — переменная Part 103 или
+3xx инстанса данного типа, переменная устройства, сменённый адрес с прежним значением
+или переменная фичи. Номера инстанса в событии нет. Реестр отмечает время на записях
+названных адресов и публикует `InputDeviceChangedEvent`; правила будят
+`manual config changed` для каждого названного адреса.
 
 ## Отказоустойчивость
 

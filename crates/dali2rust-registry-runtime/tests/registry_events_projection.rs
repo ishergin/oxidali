@@ -1705,6 +1705,73 @@ fn publish_scan(
 }
 
 #[test]
+fn a_manual_configuration_event_dates_every_address_it_names_and_announces_each() {
+    let store = Arc::new(RegistryStore::with_adapter_count(1));
+    let counters = Arc::new(RegistryWorkerCounters::default());
+    let (publisher, ev_obs, _host) = spawn_registry_stack(Arc::clone(&store), Arc::clone(&counters));
+    for short in [5, 7] {
+        publish_scan(&publisher, scan_progress(short, false));
+    }
+    wait_until(
+        || store.input_device_detail(0, 5).is_some() && store.input_device_detail(0, 7).is_some(),
+        Duration::from_millis(500),
+    );
+    drain_events(&ev_obs);
+    let stamp =
+        |short| store.input_device_detail(0, short).and_then(|d| d.manual_config_changed_at_ms);
+    assert_eq!((stamp(5), stamp(7)), (None, None));
+
+    let moved = dali2rust_contracts::msg::DaliInputManualConfigEvent {
+        registry_adapter_id: 0,
+        short_address: Some(7),
+        source: dali2rust_contracts::msg::ManualConfigSource::ShortAddress { previous: Some(5) },
+        observed_at_ms: 1,
+        observed_at_mono_ms: 1,
+    };
+    let origin = Some(dali2rust_contracts::msg::Origin::Sniffer);
+    publish_event(&publisher, dali2rust_contracts::bus::event_envelope(
+        SOURCE_ID_UNSPECIFIED, 77, BUS_TID, origin, moved.clone()));
+    let announced = |short: u8| {
+        try_recv_event_matching_envelope(&ev_obs, CHANGED_EVENTS_DEADLINE, |event| {
+            event.meta.correlation_id == 77
+                && matches!(event.payload, BusEventPayload::InputDeviceChangedEvent(ref c)
+                    if c.short_address == short)
+        })
+        .is_some()
+    };
+    assert!(announced(7), "the address the device holds now is announced");
+    assert!(announced(5), "the address the device left is announced");
+    assert!(stamp(7).is_some() && stamp(5).is_some(), "both records are dated");
+
+    let knob = dali2rust_contracts::msg::ManualConfigSource::Device { variable_bit: 1 };
+    for (corr, short) in [(78, 9), (79, 5)] {
+        let event = dali2rust_contracts::msg::DaliInputManualConfigEvent {
+            short_address: Some(short),
+            source: knob,
+            ..moved
+        };
+        publish_event(&publisher, dali2rust_contracts::bus::event_envelope(
+            SOURCE_ID_UNSPECIFIED, corr, BUS_TID, origin, event));
+    }
+    let mut announced_by = Vec::new();
+    while let Ok(frame) = ev_obs.recv_timeout(CHANGED_EVENTS_DEADLINE) {
+        let BusFrame::Event(ev) = frame else { continue };
+        if matches!(ev.payload, BusEventPayload::InputDeviceChangedEvent(_)) {
+            announced_by.push(ev.meta.correlation_id);
+        }
+        if announced_by.contains(&79) {
+            break;
+        }
+    }
+    assert_eq!(
+        announced_by,
+        vec![79],
+        "an address with no record is neither created nor announced; the known one after it is"
+    );
+    assert!(store.input_device_detail(0, 9).is_none());
+}
+
+#[test]
 fn a_presence_that_was_never_readable_earns_no_home_assistant_entity() {
     let store = Arc::new(RegistryStore::with_adapter_count(1));
     let counters = Arc::new(RegistryWorkerCounters::default());

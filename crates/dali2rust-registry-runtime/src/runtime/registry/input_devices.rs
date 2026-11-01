@@ -106,6 +106,7 @@ pub(crate) struct InputDeviceRecord {
     pub(crate) version_number: Option<u8>,
     pub(crate) instances: Vec<InstanceRecord>,
     pub(crate) nvm_settling_until_ms: Option<u64>,
+    pub(crate) manual_config_changed_at_ms: Option<u64>,
     pub(crate) present: bool,
     pub(crate) last_seen_ms: Option<u64>,
     pub(crate) bank: u8,
@@ -125,6 +126,7 @@ impl InputDeviceRecord {
             version_number: None,
             instances: Vec::new(),
             nvm_settling_until_ms: None,
+            manual_config_changed_at_ms: None,
             present: false,
             last_seen_ms: None,
             bank: 0,
@@ -459,6 +461,20 @@ impl RegistryStore {
         true
     }
 
+    pub(crate) fn note_input_device_manual_config(
+        &self,
+        adapter_id: u8,
+        short_address: u8,
+        at_ms: u64,
+    ) -> bool {
+        let mut g = self.write_inner();
+        let Some(record) = g.input_devices.get_mut(&(adapter_id, short_address)) else {
+            return false;
+        };
+        record.manual_config_changed_at_ms = Some(at_ms);
+        true
+    }
+
     pub fn input_device_summaries(&self, adapter_id: u8) -> Vec<InputDeviceSummary> {
         let g = self.read_inner();
         let mut out: Vec<InputDeviceSummary> = g
@@ -759,6 +775,7 @@ impl RegistryStore {
             summary: InputDeviceSummary::from_record(record),
             notes: record.notes.clone(),
             nvm_settling_until_ms: record.nvm_settling_until_ms,
+            manual_config_changed_at_ms: record.manual_config_changed_at_ms,
             instances: record.instances.iter().map(InstanceView::of).collect(),
         })
     }
@@ -797,6 +814,7 @@ pub struct InputDeviceDetail {
     pub summary: InputDeviceSummary,
     pub notes: Option<String>,
     pub nvm_settling_until_ms: Option<u64>,
+    pub manual_config_changed_at_ms: Option<u64>,
     pub instances: Vec<InstanceView>,
 }
 

@@ -76,6 +76,7 @@ pub struct InputDeviceDto {
     pub version_number: Option<u8>,
     pub now_ms: u64,
     pub nvm_settling_until_ms: Option<u64>,
+    pub manual_config_changed_at_ms: Option<u64>,
     pub instances: Vec<InstanceDto>,
 }
 

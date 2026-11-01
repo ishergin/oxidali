@@ -189,7 +189,7 @@ supersedes both.
 | --- | --- |
 | 305, 306 | Colour and general-purpose sensor events are carried untyped (instance type and raw value). |
 | 302, 304 | Input values travel as the raw 10-bit magnitude: the scaling (103 AMD1 §9.8.2) is not available. |
-| 333 | Manual configuration: not implemented. Neither its event nor an instance's manual-configuration state is read, so the REST field `manual_config_active` stays `false` and the rules trigger `manual config changed` never fires. |
+| 333 | Manual configuration: the event is decoded, fires the rules trigger `manual config changed` and stamps `manual_config_changed_at_ms` on the device record. An instance's manual-configuration state is not read, so the REST field `manual_config_active` stays `false`. `SET MANUAL CONFIGURATION`, the capability queries and `QUERY ANY MANUAL CONFIGURATION ENABLED` are never sent. |
 | DiiA 341, 342 | Bluetooth Mesh and Zigbee gateways: relevant only if the controller becomes a gateway. |
 | DiiA 351 | Luminaire-mounted control devices: not implemented as a device; the controller answers their arbitration probe (§8). |
 | 104, 105, DiiA 150 | Not needed: alternative media, firmware update over DALI, auxiliary supply. |

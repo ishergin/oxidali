@@ -716,6 +716,17 @@ pub enum InputDeviceLifecycleKind {
     PowerCycle = 0,
 }
 
+// IEC 62386-333 Table 2
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ManualConfigSource {
+    Instance103 { instance_type: u8, variable_bit: u8 },
+    Instance3xx { instance_type: u8, variable_bit: u8 },
+    Device { variable_bit: u8 },
+    ShortAddress { previous: Option<u8> },
+    InstanceFeature { feature_type: u8, variable_bit: u8 },
+    DeviceFeature { feature_type: u8, variable_bit: u8 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum HclAlgorithm {

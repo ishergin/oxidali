@@ -1,4 +1,5 @@
 use crate::dali::dev103::frame::ForwardFrame24;
+use dali2rust_contracts::msg::ManualConfigSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -51,6 +52,10 @@ pub enum InputEvent {
         short_address: Option<u8>,
         device_group: Option<u8>,
     },
+    ManualConfig {
+        short_address: Option<u8>,
+        source: ManualConfigSource,
+    },
 }
 
 pub const EVENT_INFO_MASK: u16 = 0x03FF;
@@ -62,6 +67,17 @@ const POWER_CYCLE_GROUP_VALID: u8 = 0x10;
 const POWER_CYCLE_ADDRESS_VALID: u8 = 0x40;
 const POWER_CYCLE_SHORT_BITS: u8 = 0x3F;
 const POWER_CYCLE_GROUP_LOW_SHIFT: u8 = 7;
+
+// IEC 62386-333 Table 1
+const MANUAL_CONFIG_BYTE0_TOP: u8 = 0xE0;
+const MANUAL_CONFIG_BYTE1_MARK: u8 = 0x80;
+const MANUAL_CONFIG_FEATURE: u8 = 0x08;
+const MANUAL_CONFIG_DEVICE_LEVEL: u8 = 0x04;
+const MANUAL_CONFIG_SELECT: u8 = 0x02;
+const MANUAL_CONFIG_SHORT_VALID: u8 = 0x40;
+const MANUAL_CONFIG_SHORT_BITS: u8 = 0x3F;
+const MANUAL_CONFIG_PREVIOUS_RESERVED: u8 = 0x40;
+const MANUAL_CONFIG_PREVIOUS_VALID: u8 = 0x20;
 
 // IEC 62386-103 §9.6.2, Table 7
 #[must_use]
@@ -88,6 +104,10 @@ pub fn decode_event(frame: ForwardFrame24) -> Option<InputEvent> {
 
     if b0 == POWER_NOTIFICATION_BYTE0 && (b1 & 0xE0) == POWER_NOTIFICATION_BYTE1_TOP {
         return Some(decode_power_cycle(b1, b2));
+    }
+
+    if b0 & 0xF0 == MANUAL_CONFIG_BYTE0_TOP && b1 & MANUAL_CONFIG_BYTE1_MARK != 0 {
+        return decode_manual_config(b0, b1, b2);
     }
 
     let info = (u16::from(b1 & 0x03) << 8) | u16::from(b2);
@@ -123,6 +143,57 @@ fn decode_source(b0: u8, b1: u8) -> Option<EventSource> {
             _ => Some(lower),
         },
     })
+}
+
+// IEC 62386-333 Table 2
+fn decode_manual_config(b0: u8, b1: u8, b2: u8) -> Option<InputEvent> {
+    let short_address = manual_config_short(b2 & 0x7F)?;
+    let variable_bit = (b1 >> 4) & 0x07;
+    let field = ((b1 & 0x0F) << 1) | (b2 >> 7);
+    let select = b0 & MANUAL_CONFIG_SELECT != 0;
+    let source = match (b0 & MANUAL_CONFIG_FEATURE != 0, b0 & MANUAL_CONFIG_DEVICE_LEVEL != 0) {
+        (false, false) if select => {
+            ManualConfigSource::Instance3xx { instance_type: field, variable_bit }
+        }
+        (false, false) => ManualConfigSource::Instance103 { instance_type: field, variable_bit },
+        (false, true) if select => ManualConfigSource::ShortAddress {
+            previous: manual_config_previous_short(b1, b2)?,
+        },
+        (false, true) if field == 0 => ManualConfigSource::Device { variable_bit },
+        (false, true) => return None,
+        (true, device_level) => manual_config_feature(device_level, select, b1, b2),
+    };
+    Some(InputEvent::ManualConfig { short_address, source })
+}
+
+fn manual_config_short(bits: u8) -> Option<Option<u8>> {
+    match bits {
+        0 => Some(None),
+        _ if bits & MANUAL_CONFIG_SHORT_VALID != 0 => Some(Some(bits & MANUAL_CONFIG_SHORT_BITS)),
+        _ => None,
+    }
+}
+
+fn manual_config_previous_short(b1: u8, b2: u8) -> Option<Option<u8>> {
+    if b1 & MANUAL_CONFIG_PREVIOUS_RESERVED != 0 {
+        return None;
+    }
+    let previous = ((b1 & 0x1F) << 1) | (b2 >> 7);
+    match (b1 & MANUAL_CONFIG_PREVIOUS_VALID != 0, previous) {
+        (true, short) => Some(Some(short)),
+        (false, 0) => Some(None),
+        (false, _) => None,
+    }
+}
+
+fn manual_config_feature(device_level: bool, select: bool, b1: u8, b2: u8) -> ManualConfigSource {
+    let variable_bit = (u8::from(select) << 2) | ((b1 >> 5) & 0x03);
+    let feature_type = ((b1 & 0x1F) << 1) | (b2 >> 7);
+    if device_level {
+        ManualConfigSource::DeviceFeature { feature_type, variable_bit }
+    } else {
+        ManualConfigSource::InstanceFeature { feature_type, variable_bit }
+    }
 }
 
 fn decode_power_cycle(b1: u8, b2: u8) -> InputEvent {
@@ -628,5 +699,100 @@ mod tests {
             assert_eq!(scheme.code(), code);
         }
         assert_eq!(EventScheme::from_code(5), None);
+    }
+
+    fn manual_config(bytes: [u8; 3]) -> (Option<u8>, ManualConfigSource) {
+        match event(bytes) {
+            InputEvent::ManualConfig { short_address, source } => (short_address, source),
+            other => panic!("expected a manual configuration event, got {other:?}"),
+        }
+    }
+
+    // IEC 62386-333 §9.3.4 EXAMPLE
+    #[test]
+    fn the_standards_example_is_instance_active_of_a_push_button_at_short_5() {
+        assert_eq!(
+            manual_config([0xE0, 0xB0, 0xC5]),
+            (
+                Some(5),
+                ManualConfigSource::Instance103 { instance_type: 1, variable_bit: 3 }
+            )
+        );
+    }
+
+    #[test]
+    fn bit_17_moves_an_instance_source_from_part_103_to_its_3xx_variables() {
+        assert_eq!(
+            manual_config([0xE2, 0x80, 0x43]).1,
+            ManualConfigSource::Instance3xx { instance_type: 0, variable_bit: 0 }
+        );
+        assert_eq!(
+            manual_config([0xE2, 0xE1, 0xC3]).1,
+            ManualConfigSource::Instance3xx { instance_type: 3, variable_bit: 6 }
+        );
+    }
+
+    #[test]
+    fn a_device_variable_carries_no_instance_type_and_one_that_does_is_reserved() {
+        assert_eq!(
+            manual_config([0xE4, 0xC0, 0x45]),
+            (Some(5), ManualConfigSource::Device { variable_bit: 4 })
+        );
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x81, 0xC5])), None);
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE4, 0x80, 0xC5])), None);
+    }
+
+    #[test]
+    fn a_short_address_changed_by_hand_names_the_previous_and_the_current_address() {
+        assert_eq!(
+            manual_config([0xE6, 0xA2, 0xC7]),
+            (Some(7), ManualConfigSource::ShortAddress { previous: Some(5) })
+        );
+        assert_eq!(
+            manual_config([0xE6, 0xBF, 0xC0]),
+            (Some(0), ManualConfigSource::ShortAddress { previous: Some(63) })
+        );
+    }
+
+    #[test]
+    fn a_previous_or_current_mask_address_is_none_and_stray_bits_beside_it_are_reserved() {
+        assert_eq!(
+            manual_config([0xE6, 0x80, 0x47]),
+            (Some(7), ManualConfigSource::ShortAddress { previous: None })
+        );
+        assert_eq!(
+            manual_config([0xE6, 0xA2, 0x80]),
+            (None, ManualConfigSource::ShortAddress { previous: Some(5) })
+        );
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE6, 0x82, 0xC7])), None);
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE6, 0xE2, 0xC7])), None);
+        assert_eq!(decode_event(ForwardFrame24::from_bytes([0xE0, 0xB0, 0x05])), None);
+    }
+
+    #[test]
+    fn a_feature_source_splits_its_variable_bit_across_bits_17_14_and_13() {
+        assert_eq!(
+            manual_config([0xEA, 0xB0, 0xC3]),
+            (
+                Some(3),
+                ManualConfigSource::InstanceFeature { feature_type: 33, variable_bit: 5 }
+            )
+        );
+        assert_eq!(
+            manual_config([0xEC, 0xD0, 0x80]),
+            (
+                None,
+                ManualConfigSource::DeviceFeature { feature_type: 33, variable_bit: 2 }
+            )
+        );
+    }
+
+    #[test]
+    fn a_power_notification_and_an_instance_group_event_are_not_manual_configuration() {
+        assert!(matches!(
+            event([0xFE, 0xE0, 0x45]),
+            InputEvent::PowerCycle { short_address: Some(5), .. }
+        ));
+        assert_eq!(source_of(event([0xE0, 0x04, 0x02])).scheme, EventScheme::InstanceGroup);
     }
 }

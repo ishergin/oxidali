@@ -18,7 +18,7 @@ use cucumber::then;
 use dali2rust_test_support::remains_false_for;
 use dali2rust_test_support::sync::wait_until;
 
-// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027 RULE-032 RULE-080 RULE-081 RULE-084 RULE-085 RULE-025
+// RULE-020 RULE-021 RULE-023 RULE-024 RULE-027 RULE-032 RULE-080 RULE-081 RULE-084 RULE-085 RULE-025 INP-100 INP-101 INP-102
 #[then(regex = r#"^within (\d+) seconds the stats pointer "([^"]+)" reaches (\d+)$"#)]
 async fn then_stats_pointer_reaches(world: &mut DaliWorld, secs: u64, pointer: String, expected: u64) {
     let port = world.server_port();
@@ -63,7 +63,7 @@ fn stats_pointer(port: u16, pointer: &str) -> Option<u64> {
         .and_then(|json| json.pointer(pointer).and_then(serde_json::Value::as_u64))
 }
 
-// RULE-020
+// RULE-020 INP-100
 #[then("the mock transport should have sent a broadcast off frame")]
 async fn then_broadcast_off_sent(world: &mut DaliWorld) {
     let mock = world.dali_mock();

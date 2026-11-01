@@ -1076,6 +1076,7 @@ impl InputDeviceHttpState for InputDeviceHttpStateBridge {
             version_number,
             now_ms: 0,
             nvm_settling_until_ms: detail.nvm_settling_until_ms,
+            manual_config_changed_at_ms: detail.manual_config_changed_at_ms,
             instances: detail.instances.iter().map(instance_dto).collect(),
         })
     }

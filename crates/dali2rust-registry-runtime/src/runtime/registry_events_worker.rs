@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::runtime::registry::physical_devices::ReplacementOutcome;
 use crate::runtime::registry::publish::{
-    publish_group_matrix_changed, publish_physical_device_changed, publish_scene_matrix_changed,
-    publish_unbound_lamps, publish_virtual_lamp_changed,
+    publish_group_matrix_changed, publish_input_device_changed, publish_physical_device_changed,
+    publish_scene_matrix_changed, publish_unbound_lamps, publish_virtual_lamp_changed,
 };
 use crate::runtime::registry::{ForeignSceneWrite, RegistryStore};
 use crate::runtime::registry_worker::RegistryEventsCounters;
@@ -249,6 +249,15 @@ dali2rust_contracts::dispatch_bus_events! {
         counters
             .input_power_cycles_seen
             .fetch_add(1, Ordering::Relaxed);
+    },
+    DaliInputManualConfigEvent(body) => {
+        let now_ms = dali2rust_bsp::unix_clock::unix_wall_clock_millis();
+        let adapter_id = body.registry_adapter_id;
+        for short_address in body.named_short_addresses().into_iter().flatten() {
+            if store.note_input_device_manual_config(adapter_id, short_address, now_ms) {
+                publish_input_device_changed(publisher, corr, adapter_id, short_address);
+            }
+        }
     },
     DaliDiscoveryProgressEvent(body) => {
         let applied = store.apply_discovery_progress(body);

@@ -95,7 +95,7 @@ fn bus_command_payload_variant_order_is_frozen() {
     );
 }
 
-const FROZEN_EVENT_ORDER: [&str; 59] = [
+const FROZEN_EVENT_ORDER: [&str; 60] = [
     "DaliEventPayload",
     "IpAddressAssignedEvent",
     "RuntimeStateChangedEvent",
@@ -155,6 +155,7 @@ const FROZEN_EVENT_ORDER: [&str; 59] = [
     "BusUnitNvmObservedEvent",
     "BusUnitQuiescenceObservedEvent",
     "DaliLevelTransitionAppliedEvent",
+    "DaliInputManualConfigEvent",
 ];
 
 #[test]

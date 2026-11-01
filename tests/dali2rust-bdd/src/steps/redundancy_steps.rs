@@ -51,7 +51,7 @@ async fn json_pointer_eventually_contains(
     assert!(holds(), "{path}{pointer} never contained {part:?}: {:?}", read());
 }
 
-// RED-029 SET-DALI-010 SET-DALI-011 RED-034
+// RED-029 SET-DALI-010 SET-DALI-011 RED-034 INP-104
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be greater than (\d+)$"#)]
 async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String, path: String, floor: u64) {
     let port = world.server_port();
