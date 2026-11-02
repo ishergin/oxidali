@@ -6,7 +6,7 @@ import pytest
 from requests import RequestException
 
 from hil import api as api_mod
-from hil import prod_state
+from hil import mqtt_tap, prod_state
 from hil import virtual_gear, write_log
 from hil.lamp_guard import (HA_TEST_NAMESPACE, RULE_SEPARATOR, LampNotAllowed, shown_keys,
                             spell)
@@ -16,6 +16,7 @@ from hil_session_guards import refuse_schedule_suspension
 from hil_session import LIGHT_MARKER
 
 TEARDOWN_RETRY_S = 2.0
+BRIDGE_LEAVE_S = 30.0
 
 
 RULES_SOURCE_LIMIT_BYTES = 12_240
@@ -420,10 +421,34 @@ def namespace_controller_id():
     return HA_TEST_NAMESPACE["controller_id"]
 
 
+def _bridge_session(api):
+    mqtt = api.diagnostics().get("mqtt") or {}
+    return bool(mqtt.get("connected")), int(mqtt.get("connects_total", 0))
+
+
+def _session_ended(api, connected_then, connects_then):
+    connected, connects = _bridge_session(api)
+    return not connected_then or not connected or connects > connects_then
+
+
+def leave_ha_namespace(api, hil_config, before, retained_filters):
+    connected, connects = _bridge_session(api)
+    api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE
+                  if k in before})
+    left = wait_until(lambda: _session_ended(api, connected, connects), BRIDGE_LEAVE_S)
+    for filt in retained_filters:
+        try:
+            for topic in mqtt_tap.collect_retained(hil_config, filt):
+                mqtt_tap.clear_retained(hil_config, topic)
+        except Exception:
+            pass
+    assert left, ("the bridge kept its HIL-namespace session %.0f s after its settings were "
+                  "restored, so its retained farewell may still land on the owner's broker"
+                  % BRIDGE_LEAVE_S)
+
+
 @pytest.fixture()
 def ha_guard(api, hil_config):
-    from hil import mqtt_tap
-
     before = api.ha.get()
     if before.get("controller_id") == namespace_controller_id():
         pytest.fail(
@@ -468,14 +493,7 @@ def ha_guard(api, hil_config):
     try:
         yield Guard()
     finally:
-        for filt in Guard.retained_filters:
-            try:
-                for topic in mqtt_tap.collect_retained(hil_config, filt):
-                    mqtt_tap.clear_retained(hil_config, topic)
-            except Exception:
-                pass
-        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE
-                      if k in before})
+        leave_ha_namespace(api, hil_config, before, Guard.retained_filters)
 
 
 class _Clock:

@@ -279,8 +279,8 @@ hil-slow` wrap the cwd.
 - Person-at-the-rig tests skip unless asked for: `HIL_POWER_CUT=1` (cut the
   controller's power mid-write), `HIL_BUS_SHORT=1` (short the bus; every lamp sees it).
 - The `ha_bridge` tier uses the WB's mosquitto under `hiltest*` prefixes; `ha_guard`
-  restores the live settings and sweeps the test topics, never touching
-  `broker_password`. Acceptance against the live Home Assistant is manual.
+  restores the live settings, waits out the test session, then sweeps its topics, never
+  touching `broker_password`. Acceptance against the live Home Assistant is manual.
 - Artifacts land in `runs/<ts>/<test-id>/`.
 
 ## Run validity — how a red run is classified
