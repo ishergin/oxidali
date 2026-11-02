@@ -27,13 +27,13 @@ pub struct UnitReports {
 
 impl UnitReports {
     pub fn items(self) -> impl Iterator<Item = ObservedItem> {
-        let nvm = self.nvm.map(ObservedItem::BusUnit);
-        let test_frame = self.test_frame.map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
-        let power_notification = self.power_notification.map(ObservedItem::BusUnitPowerNotification);
-        nvm.into_iter()
-            .chain(self.quiescence.map(ObservedItem::BusUnitQuiescence))
-            .chain(test_frame)
-            .chain(power_notification)
+        let nvm = self.nvm.into_iter().map(ObservedItem::BusUnit);
+        let quiescence = self.quiescence.into_iter().map(ObservedItem::BusUnitQuiescence);
+        let test_frame = self.test_frame.into_iter()
+            .map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
+        let power_notification =
+            self.power_notification.into_iter().map(ObservedItem::BusUnitPowerNotification);
+        nvm.chain(quiescence).chain(test_frame).chain(power_notification)
     }
 }
 

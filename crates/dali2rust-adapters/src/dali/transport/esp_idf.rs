@@ -1389,6 +1389,7 @@ const _: () = assert!(SNIFFER_POLL_MS * MICROS_PER_MILLI / PHY_TICK_US < TABLE_M
 
 /// # Safety
 /// `inner` must be valid for the transport's lifetime.
+#[inline(never)]
 unsafe fn publish_answer_table(
     inner: *mut TransportInner,
     answers: &mut SnifferAnswers,
@@ -1416,7 +1417,7 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
     let mut late_scratch = vec![0u8; LATE_REPORT_BYTES].into_boxed_slice();
     let mut load_window =
         dali2rust_platform::dali::WireLoadWindow::new(super::WIRE_LOAD_WINDOW_TICKS);
-    let mut answers = SnifferAnswers::default();
+    let mut answers = Box::<SnifferAnswers>::default();
     let poll_ms = SNIFFER_POLL_MS;
     while !stop.load(Ordering::Acquire) {
         // sleep-ok: >= one tick
@@ -1481,9 +1482,14 @@ unsafe fn process_sniffed_captures(
             let forward_length = frame_length_class(ev.sample_count) == FrameLengthClass::Forward;
             let at_ms = clock.at(ev.rx_tick);
             let capture = Capture { after_gap, epoch: ev.rx_epoch, forward_length, frame, at_ms };
-            push_bus_unit_reports(inner, unit.on_capture(capture));
+            observe_unit_capture(inner, unit, capture);
         },
     );
+}
+
+#[inline(never)]
+fn observe_unit_capture(inner: *mut TransportInner, unit: &mut UnitTap, capture: Capture) {
+    push_bus_unit_reports(inner, unit.on_capture(capture));
 }
 
 /// # Safety
