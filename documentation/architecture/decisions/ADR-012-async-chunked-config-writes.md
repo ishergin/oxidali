@@ -21,7 +21,8 @@ report a half-written matrix to.
    at all).
 2. **Chunks stage; a closing bracket applies the series as one unit.** The owner stages
    every chunk, and a closing bracket commits the series — `ConfigWriteCommitCommand` for
-   the scene and group matrices, `RuleCommitCommand` for the rules document: one write
+   the scene and group matrices, `RuleCommitCommand` for the rules document,
+   `HomeAssistantSettingsCommitCommand` for the Home Assistant settings: one write
    lock, one revision bump, one changed event — or nothing. An HCL schedule has no
    bracket (below).
 3. **The routes answer `202` + operation id** under `OperationType::ConfigWrite` and wait
@@ -42,6 +43,11 @@ Supporting rules:
   filled it: a chunk from a newer series drops an older stage instead of appending to it,
   and a bracket closes only its own series. Two concurrent writes to one resource are
   last-writer-wins, and the older bracket is refused — a refusal, never a torn commit.
+- **Home Assistant settings close synchronously.** Their route answers `200` after
+  read-after-write, so each frame keeps its own correlation id and confirmation slot and
+  carries the series in its payload; the bracket's id is the series. One commit is one
+  move of the apply counter the bridge redials on, never a session dialled with half the
+  fields.
 - **HCL schedules have no bracket and no shared id.** Each chunk carries its own
   correlation id; the chunk marked last is the commit, its id is the operation's
   workflow id, and only it signals the operation, so a middle chunk's confirmation never
@@ -50,8 +56,8 @@ Supporting rules:
   id counts as taken, so `409 conflict` on create means "exists or is staging".
 - **`ConfigWrite` is exempt from operation coalescing**, because it names a resource,
   not one activity per adapter.
-- **Bounded staging.** At most two config-write stages exist at once, a stage older than
-  15 s is reaped on the registry worker's idle turn, and a `ConfigWrite` operation's TTL
+- **Bounded staging.** At most two config-write stages and one Home Assistant stage exist
+  at once, a stage older than 15 s is reaped on the registry worker's idle turn, and a `ConfigWrite` operation's TTL
   is 10 s rather than the general ten-minute TTL.
 - **A slice import stages off the bus.** A stored slice (up to 32 KiB) would be hundreds
   of chunks, so the HTTP import and a standby's replication pass hand its bytes to the

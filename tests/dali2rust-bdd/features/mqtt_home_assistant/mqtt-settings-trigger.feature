@@ -25,7 +25,7 @@ Feature: MQTT/HA — settings and capability changes reach the broker
     And MQTT should have a retained "online" on "dali/ctl1/availability"
 
   @id:MQTT-028
-  Scenario: One PATCH across the broker, its credentials and its topics restarts the session once
+  Scenario: One PATCH across the broker, its credentials and its topics redials with all of its fields
     Given the Home Assistant bridge is enabled with controller id "ctl1"
     Then MQTT should have a retained "online" on "dali/ctl1/availability"
     When I PATCH JSON {"broker_host":"broker2.test","broker_username":"u2","state_topic_prefix":"dali2"} to "/api/v1/settings/home-assistant"

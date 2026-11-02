@@ -8,7 +8,7 @@ use dali2rust_domain::registry::{
 use dali2rust_platform::net::node_name;
 
 use super::persistence_slices::PersistableHomeAssistantSettingsSlice;
-use super::store::{Inner, RegistryStore};
+use super::store::{registry_unix_ms, Inner, RegistryStore, STAGE_MAX_AGE_MS};
 
 const DEFAULT_BROKER_PORT: u16 = 1883;
 const DEFAULT_DISCOVERY_PREFIX: &str = "homeassistant";
@@ -18,6 +18,8 @@ const DEFAULT_PUBLISH_QOS: u8 = 1;
 const CONTROLLER_ID_FALLBACK: &str = "dali-controller";
 
 const MAX_HOME_ASSISTANT_STAGED_FRAMES: usize = 4;
+
+pub(crate) const HOME_ASSISTANT_STAGE_MAX_AGE_MS: u64 = STAGE_MAX_AGE_MS;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HomeAssistantSettingsRecord {
@@ -64,6 +66,7 @@ pub(crate) enum HomeAssistantPatch {
 pub(crate) struct HomeAssistantStage {
     series: u64,
     patches: Vec<HomeAssistantPatch>,
+    staged_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +177,7 @@ impl RegistryStore {
         let stage = slot.get_or_insert_with(|| HomeAssistantStage {
             series,
             patches: Vec::with_capacity(MAX_HOME_ASSISTANT_STAGED_FRAMES),
+            staged_at_ms: registry_unix_ms(),
         });
         if stage.patches.len() >= MAX_HOME_ASSISTANT_STAGED_FRAMES {
             *slot = None;
@@ -203,6 +207,13 @@ impl RegistryStore {
         drop(g);
         self.dirty.mark_home_assistant_settings_dirty();
         Ok(applied)
+    }
+
+    pub(crate) fn evict_stale_home_assistant_stage(&self, max_age_ms: u64) {
+        let now = registry_unix_ms();
+        self.write_inner()
+            .home_assistant_stage
+            .take_if(|stage| now.saturating_sub(stage.staged_at_ms) > max_age_ms);
     }
 }
 
@@ -277,6 +288,39 @@ mod tests {
                 "unsafe controller_id: {id}"
             );
         }
+    }
+
+    fn stage_a_password(store: &RegistryStore, series: u64) {
+        let patch = HomeAssistantPatch::Credentials(HomeAssistantCredentialsUpdateCommand {
+            series,
+            patch_mask: HomeAssistantCredentialsUpdateCommand::PATCH_BROKER_PASSWORD,
+            broker_username: dali2rust_contracts::msg::fixed_text_32(""),
+            broker_password: dali2rust_contracts::msg::fixed_text_48("hunter2"),
+        });
+        store.stage_home_assistant_patch(series, patch).expect("staged");
+    }
+
+    #[test]
+    fn an_abandoned_stage_and_its_password_are_reaped_by_age() {
+        let store = RegistryStore::new();
+        stage_a_password(&store, 7);
+        if let Some(stage) = store.write_inner().home_assistant_stage.as_mut() {
+            stage.staged_at_ms = stage.staged_at_ms.saturating_sub(HOME_ASSISTANT_STAGE_MAX_AGE_MS + 1);
+        }
+        store.evict_stale_home_assistant_stage(HOME_ASSISTANT_STAGE_MAX_AGE_MS);
+        assert_eq!(
+            store.commit_home_assistant_settings(7, 1),
+            Err(HomeAssistantStageRejection::NoStage)
+        );
+    }
+
+    #[test]
+    fn a_fresh_stage_outlives_the_idle_reaper() {
+        let store = RegistryStore::new();
+        stage_a_password(&store, 8);
+        store.evict_stale_home_assistant_stage(HOME_ASSISTANT_STAGE_MAX_AGE_MS);
+        assert!(store.commit_home_assistant_settings(8, 1).is_ok());
+        assert_eq!(store.home_assistant_broker_password(), "hunter2");
     }
 
     #[test]
