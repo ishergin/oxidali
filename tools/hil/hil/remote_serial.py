@@ -119,13 +119,18 @@ def bridge_listening(tgt, port):
     return int(count) > 0
 
 
+FUSER_HELD = {"0": True, "1": False}
+
+
 def port_holders(tgt):
-    out = _ssh(tgt, "fuser %s 2>/dev/null; echo ' end'" % tgt.device)
+    out = _ssh(tgt, "fuser %s 2>/dev/null; echo \" end $?\"" % tgt.device)
     tokens = out.stdout.split()
-    if out.returncode != 0 or not tokens or tokens[-1] != "end":
+    held = FUSER_HELD.get(tokens[-1]) if out.returncode == 0 and tokens[-2:-1] == ["end"] else None
+    holders = [int(pid) for pid in re.findall(r"\d+", " ".join(tokens[:-2]))]
+    if held is None or held != bool(holders):
         raise RemoteError("cannot tell who holds %s (%s)"
-                          % (tgt, out.stderr.strip() or "no answer"))
-    return [int(pid) for pid in re.findall(r"\d+", " ".join(tokens[:-1]))]
+                          % (tgt, out.stderr.strip() or "fuser answered %r" % out.stdout.strip()))
+    return holders
 
 
 def _refuse_a_held_port(tgt):
@@ -153,14 +158,21 @@ def start_bridge(cfg, tgt, restart=False):
     if restart or changed:
         _ssh(tgt, "fuser -k %s 2>/dev/null; fuser -k -n tcp %d %d 2>/dev/null; sleep 1"
                   % (tgt.device, cfg.serial_bridge_port, control_port(cfg)))
+    return _spawn_bridge(cfg, tgt)
+
+
+def _spawn_bridge(cfg, tgt):
     _ssh(tgt, "mkdir -p %s; nohup setsid python3 %s %s %d 127.0.0.1 %d %d "
               ">> %s 2>&1 < /dev/null &"
               % (REMOTE_DIR, REMOTE_SCRIPT, tgt.device, cfg.serial_baud,
                  cfg.serial_bridge_port, control_port(cfg), REMOTE_LOG))
     deadline = time.monotonic() + BRIDGE_START_TIMEOUT_S
     while time.monotonic() < deadline:
-        if bridge_listening(tgt, cfg.serial_bridge_port):
-            return "started"
+        try:
+            if bridge_listening(tgt, cfg.serial_bridge_port):
+                return "started"
+        except RemoteError:
+            pass
         time.sleep(0.5)
     log = _ssh(tgt, "tail -5 %s" % REMOTE_LOG).stdout.strip()
     raise RemoteError("bridge did not come up on %s\n%s" % (tgt, log))

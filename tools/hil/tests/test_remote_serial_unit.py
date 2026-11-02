@@ -187,38 +187,58 @@ class _WbShell:
         return [cmd for cmd in self.commands if "nohup" in cmd]
 
 
-def _start_bridge(monkeypatch, tmp_path, shell):
+HELD = _Reply(0, " %d end 0\n" % BRIDGE_PID)
+FREE = _Reply(0, " end 1\n")
+NOT_LISTENING = _Reply(1, "0\n")
+LISTENING = _Reply(0, "1\n")
+
+
+def _start_bridge(monkeypatch, tmp_path, shell, changed=False):
     monkeypatch.setattr(remote_serial, "resolve_device", lambda tgt: tgt.device)
-    monkeypatch.setattr(remote_serial, "deploy", lambda cfg, tgt: False)
+    monkeypatch.setattr(remote_serial, "deploy", lambda cfg, tgt: changed)
     monkeypatch.setattr(remote_serial, "_ssh", shell)
     monkeypatch.setattr(remote_serial.time, "sleep", lambda s: None)
+    monkeypatch.setattr(remote_serial, "BRIDGE_START_TIMEOUT_S", 1.0)
     return remote_serial.start_bridge(_cfg(tmp_path), _tgt())
 
 
 def test_an_ssh_that_never_answered_is_not_a_bridge_that_is_down(monkeypatch, tmp_path):
-    shell = _WbShell([_Reply(255, "", BANNER_TIMEOUT)], _Reply(0, " %d end\n" % BRIDGE_PID))
+    shell = _WbShell([_Reply(255, "", BANNER_TIMEOUT)], FREE)
     with pytest.raises(remote_serial.RemoteError, match=BANNER_TIMEOUT):
         _start_bridge(monkeypatch, tmp_path, shell)
     assert shell.spawned() == [], "a second bridge opens the port and resets the controller"
 
 
-def test_a_held_port_without_a_listener_is_never_opened_again(monkeypatch, tmp_path):
-    shell = _WbShell([_Reply(1, "0\n")], _Reply(0, " %d end\n" % BRIDGE_PID))
+@pytest.mark.parametrize("changed", [False, True], ids=["same-script", "new-script"])
+def test_a_held_port_without_a_listener_is_never_opened_again(monkeypatch, tmp_path, changed):
+    shell = _WbShell([NOT_LISTENING], HELD)
     with pytest.raises(remote_serial.RemoteError, match=str(BRIDGE_PID)) as refused:
-        _start_bridge(monkeypatch, tmp_path, shell)
+        _start_bridge(monkeypatch, tmp_path, shell, changed)
     assert remote_serial.RESTART_RESETS in str(refused.value)
     assert shell.spawned() == []
+    assert not any("fuser -k" in cmd for cmd in shell.commands), "the holder is not ours to kill"
 
 
-def test_holders_that_cannot_be_asked_are_not_a_free_port(monkeypatch, tmp_path):
-    shell = _WbShell([_Reply(1, "0\n")], _Reply(255, "", BANNER_TIMEOUT))
-    with pytest.raises(remote_serial.RemoteError, match=BANNER_TIMEOUT):
+@pytest.mark.parametrize("holders", [
+    _Reply(255, "", BANNER_TIMEOUT),
+    _Reply(0, " end 127\n"),
+    _Reply(0, " end 0\n"),
+], ids=["no-ssh", "no-fuser", "held-by-nobody"])
+def test_holders_that_cannot_be_asked_are_not_a_free_port(monkeypatch, tmp_path, holders):
+    shell = _WbShell([NOT_LISTENING], holders)
+    with pytest.raises(remote_serial.RemoteError, match="cannot tell who holds"):
         _start_bridge(monkeypatch, tmp_path, shell)
     assert shell.spawned() == []
 
 
 def test_a_free_port_without_a_listener_starts_one_bridge(monkeypatch, tmp_path):
-    shell = _WbShell([_Reply(1, "0\n"), _Reply(0, "1\n")], _Reply(0, " end\n"))
+    shell = _WbShell([NOT_LISTENING, LISTENING], FREE)
+    assert _start_bridge(monkeypatch, tmp_path, shell) == "started"
+    assert len(shell.spawned()) == 1
+
+
+def test_an_ssh_blip_after_the_spawn_keeps_waiting_for_the_bridge(monkeypatch, tmp_path):
+    shell = _WbShell([NOT_LISTENING, _Reply(255, "", BANNER_TIMEOUT), LISTENING], FREE)
     assert _start_bridge(monkeypatch, tmp_path, shell) == "started"
     assert len(shell.spawned()) == 1
 
