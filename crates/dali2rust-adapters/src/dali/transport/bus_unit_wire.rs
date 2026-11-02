@@ -27,13 +27,13 @@ pub struct UnitReports {
 
 impl UnitReports {
     pub fn items(self) -> impl Iterator<Item = ObservedItem> {
-        let nvm = self.nvm.map(ObservedItem::BusUnit);
-        let test_frame = self.test_frame.map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
-        let power_notification = self.power_notification.map(ObservedItem::BusUnitPowerNotification);
-        nvm.into_iter()
-            .chain(self.quiescence.map(ObservedItem::BusUnitQuiescence))
-            .chain(test_frame)
-            .chain(power_notification)
+        let nvm = self.nvm.into_iter().map(ObservedItem::BusUnit);
+        let quiescence = self.quiescence.into_iter().map(ObservedItem::BusUnitQuiescence);
+        let test_frame =
+            self.test_frame.into_iter().map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
+        let power_notification =
+            self.power_notification.into_iter().map(ObservedItem::BusUnitPowerNotification);
+        nvm.chain(quiescence).chain(test_frame).chain(power_notification)
     }
 }
 
@@ -569,9 +569,21 @@ mod tests {
     #[test]
     fn reports_reach_the_channel_evidence_first() {
         let evidence = BusUnitEvidence { adopted: FACTORY_NVM, adopted_revision: 1, observed: FACTORY_NVM, wire_sequence: 1 };
-        let reports = UnitReports { nvm: Some(evidence), quiescence: quiescence(1, None), ..UnitReports::default() };
+        let test_frame = TestFrame { data: 0x5A, dtr: [1, 2, 3] };
+        let notice = PowerNotice { short_address: Some(OPERATOR_SHORT), device_groups: 0 };
+        let reports = UnitReports {
+            nvm: Some(evidence),
+            quiescence: quiescence(1, None),
+            test_frame: Some(test_frame),
+            power_notification: Some(notice),
+        };
         let items: Vec<_> = reports.items().collect();
-        assert_eq!(items, [ObservedItem::BusUnit(evidence), ObservedItem::BusUnitQuiescence(quiescence(1, None).unwrap())]);
+        assert_eq!(items, [
+            ObservedItem::BusUnit(evidence),
+            ObservedItem::BusUnitQuiescence(quiescence(1, None).unwrap()),
+            ObservedItem::BusUnitTestFrame { data: test_frame.data, dtr: test_frame.dtr },
+            ObservedItem::BusUnitPowerNotification(notice),
+        ]);
         assert_eq!(UnitReports::default().items().count(), 0);
     }
 
