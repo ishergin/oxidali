@@ -354,6 +354,7 @@ pub(crate) struct Inner {
     pub(crate) policies: super::policies::PoliciesRecord,
     pub(crate) home_assistant_settings:
         super::home_assistant_settings::HomeAssistantSettingsRecord,
+    pub(crate) home_assistant_stage: Option<super::home_assistant_settings::HomeAssistantStage>,
     pub(crate) active_scene: HashMap<u8, u8>,
     pub(crate) group_commanded: std::collections::HashSet<(u8, u8)>,
     pub(crate) adapters_revision: u32,

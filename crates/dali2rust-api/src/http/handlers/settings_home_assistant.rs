@@ -4,8 +4,8 @@ use std::sync::Arc;
 use dali2rust_bus::{BusFrame, BusId, BusPublisher};
 use dali2rust_contracts::msg::{
     fixed_text_32, fixed_text_48, fixed_text_64, HomeAssistantControllerIdUpdateCommand,
-    HomeAssistantCredentialsUpdateCommand, HomeAssistantSettingsUpdateCommand,
-    HomeAssistantTopicsUpdateCommand,
+    HomeAssistantCredentialsUpdateCommand, HomeAssistantSettingsCommitCommand,
+    HomeAssistantSettingsUpdateCommand, HomeAssistantTopicsUpdateCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 
@@ -33,6 +33,7 @@ const MAX_BROKER_PASSWORD: usize =
 const MAX_PREFIX: usize = HomeAssistantTopicsUpdateCommand::PREFIX_MAX_BYTES;
 const MAX_CONTROLLER_ID: usize = HomeAssistantControllerIdUpdateCommand::CONTROLLER_ID_MAX_BYTES;
 const MAX_PUBLISH_QOS: u8 = 1;
+const ONE_COMMIT: u32 = 1;
 
 const READ_ONLY_KEYS: &[&str] = &["broker_password_set", "broker_url_view"];
 
@@ -106,7 +107,14 @@ impl HomeAssistantSettingsPatchHandler {
         &self,
         payload: impl Into<dali2rust_contracts::msg::BusCommandPayload>,
     ) -> (u64, BusFrame) {
-        let corr = self.correlation.next_id();
+        self.frame_with_corr(self.correlation.next_id(), payload)
+    }
+
+    fn frame_with_corr(
+        &self,
+        corr: u64,
+        payload: impl Into<dali2rust_contracts::msg::BusCommandPayload>,
+    ) -> (u64, BusFrame) {
         let cmd = dali2rust_contracts::bus::command_envelope(
             SOURCE_ID_UNSPECIFIED,
             corr,
@@ -117,9 +125,10 @@ impl HomeAssistantSettingsPatchHandler {
         (corr, BusFrame::command(cmd))
     }
 
-    fn settings_frame(&self, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
+    fn settings_frame(&self, series: u64, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
         (d.settings_mask != 0).then(|| {
             self.frame(HomeAssistantSettingsUpdateCommand {
+                series,
                 patch_mask: d.settings_mask,
                 enabled: d.enabled,
                 broker_host: fixed_text_64(&d.broker_host),
@@ -132,9 +141,10 @@ impl HomeAssistantSettingsPatchHandler {
         })
     }
 
-    fn credentials_frame(&self, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
+    fn credentials_frame(&self, series: u64, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
         (d.credentials_mask != 0).then(|| {
             self.frame(HomeAssistantCredentialsUpdateCommand {
+                series,
                 patch_mask: d.credentials_mask,
                 broker_username: fixed_text_32(&d.broker_username),
                 broker_password: fixed_text_48(&d.broker_password),
@@ -142,9 +152,10 @@ impl HomeAssistantSettingsPatchHandler {
         })
     }
 
-    fn topics_frame(&self, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
+    fn topics_frame(&self, series: u64, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
         (d.topics_mask != 0).then(|| {
             self.frame(HomeAssistantTopicsUpdateCommand {
+                series,
                 patch_mask: d.topics_mask,
                 discovery_prefix: fixed_text_32(&d.discovery_prefix),
                 state_topic_prefix: fixed_text_32(&d.state_topic_prefix),
@@ -152,24 +163,34 @@ impl HomeAssistantSettingsPatchHandler {
         })
     }
 
-    fn controller_id_frame(&self, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
+    fn controller_id_frame(&self, series: u64, d: &HomeAssistantPatchData) -> Option<(u64, BusFrame)> {
         d.controller_id.as_ref().map(|id| {
             self.frame(HomeAssistantControllerIdUpdateCommand {
+                series,
                 controller_id: fixed_text_32(id),
             })
         })
     }
 
     fn build_batch(&self, d: &HomeAssistantPatchData) -> Vec<(u64, BusFrame)> {
-        [
-            self.settings_frame(d),
-            self.credentials_frame(d),
-            self.topics_frame(d),
-            self.controller_id_frame(d),
+        let series = self.correlation.next_id();
+        let mut batch: Vec<(u64, BusFrame)> = [
+            self.settings_frame(series, d),
+            self.credentials_frame(series, d),
+            self.topics_frame(series, d),
+            self.controller_id_frame(series, d),
         ]
         .into_iter()
         .flatten()
-        .collect()
+        .collect();
+        if !batch.is_empty() {
+            let frames = u8::try_from(batch.len()).unwrap_or(u8::MAX);
+            batch.push(self.frame_with_corr(
+                series,
+                HomeAssistantSettingsCommitCommand { series, frames },
+            ));
+        }
+        batch
     }
 }
 
@@ -201,7 +222,6 @@ impl crate::http::handlers::common::MutatingHandler for HomeAssistantSettingsPat
         if batch.is_empty() {
             return Ok(());
         }
-        let published = batch.len() as u32;
         let before = self.apply_watch.home_assistant_settings_applied_load();
         crate::http::dispatcher::publish_batch_and_wait_for_success(
             &self.publisher,
@@ -213,7 +233,7 @@ impl crate::http::handlers::common::MutatingHandler for HomeAssistantSettingsPat
         wait_apply_counter(
             move || watch.home_assistant_settings_applied_load(),
             before,
-            published,
+            ONE_COMMIT,
             APPLY_WATCH_BUDGET_MS.min(self.timeout_ms),
         )
     }

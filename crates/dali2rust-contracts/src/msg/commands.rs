@@ -690,6 +690,7 @@ declare_bus_payloads! {
     };
 
     pub struct HomeAssistantSettingsUpdateCommand {
+        pub series: u64,
         pub patch_mask: u8,
         pub enabled: bool,
         pub broker_host: FixedText64,
@@ -700,6 +701,7 @@ declare_bus_payloads! {
         pub expose_input_devices: bool,
     }
     budget = HomeAssistantSettingsUpdateCommand {
+        series: u64::MAX,
         patch_mask: u8::MAX,
         enabled: true,
         broker_host: crate::msg::payload_test_samples::worst_text64(),
@@ -711,31 +713,37 @@ declare_bus_payloads! {
     };
 
     pub struct HomeAssistantCredentialsUpdateCommand {
+        pub series: u64,
         pub patch_mask: u8,
         pub broker_username: FixedText32,
         pub broker_password: FixedText48,
     }
     budget = HomeAssistantCredentialsUpdateCommand {
+        series: u64::MAX,
         patch_mask: u8::MAX,
         broker_username: crate::msg::payload_test_samples::worst_text32(),
         broker_password: crate::msg::payload_test_samples::worst_text48(),
     };
 
     pub struct HomeAssistantTopicsUpdateCommand {
+        pub series: u64,
         pub patch_mask: u8,
         pub discovery_prefix: FixedText32,
         pub state_topic_prefix: FixedText32,
     }
     budget = HomeAssistantTopicsUpdateCommand {
+        series: u64::MAX,
         patch_mask: u8::MAX,
         discovery_prefix: crate::msg::payload_test_samples::worst_text32(),
         state_topic_prefix: crate::msg::payload_test_samples::worst_text32(),
     };
 
     pub struct HomeAssistantControllerIdUpdateCommand {
+        pub series: u64,
         pub controller_id: FixedText32,
     }
     budget = HomeAssistantControllerIdUpdateCommand {
+        series: u64::MAX,
         controller_id: crate::msg::payload_test_samples::worst_text32(),
     };
 
@@ -1193,6 +1201,15 @@ declare_bus_payloads! {
         group_id: 15,
         direction: DimDirection::Down,
         hold_hcl: true,
+    };
+
+    pub struct HomeAssistantSettingsCommitCommand {
+        pub series: u64,
+        pub frames: u8,
+    }
+    budget = HomeAssistantSettingsCommitCommand {
+        series: u64::MAX,
+        frames: u8::MAX,
     };
 }
 

@@ -42,6 +42,7 @@ const MEMORY_BANK_STAGING_MAX_AGE_MS: u64 = 30_000;
 
 use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::hcl_schedules::HCL_SCHEDULE_STAGE_MAX_AGE_MS;
+use crate::runtime::registry::home_assistant_settings::HOME_ASSISTANT_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
 pub const ANNOUNCEMENT_INBOX_FLOOR: usize = 64;
@@ -282,6 +283,8 @@ fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
         .evict_stale_config_write_stages(CONFIG_WRITE_STAGE_MAX_AGE_MS);
     deps.store
         .evict_stale_hcl_schedule_stages(HCL_SCHEDULE_STAGE_MAX_AGE_MS);
+    deps.store
+        .evict_stale_home_assistant_stage(HOME_ASSISTANT_STAGE_MAX_AGE_MS);
     deps.store.evict_stale_import();
     flush_paced(deps, clock, |_| PERSISTENCE_DEBOUNCE);
     announce_queued(deps);

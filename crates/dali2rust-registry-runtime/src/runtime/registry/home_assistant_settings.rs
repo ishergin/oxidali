@@ -8,7 +8,7 @@ use dali2rust_domain::registry::{
 use dali2rust_platform::net::node_name;
 
 use super::persistence_slices::PersistableHomeAssistantSettingsSlice;
-use super::store::{Inner, RegistryStore};
+use super::store::{registry_unix_ms, Inner, RegistryStore, STAGE_MAX_AGE_MS};
 
 const DEFAULT_BROKER_PORT: u16 = 1883;
 const DEFAULT_DISCOVERY_PREFIX: &str = "homeassistant";
@@ -16,6 +16,10 @@ const DEFAULT_STATE_TOPIC_PREFIX: &str = "dali";
 const DEFAULT_PUBLISH_QOS: u8 = 1;
 
 const CONTROLLER_ID_FALLBACK: &str = "dali-controller";
+
+const MAX_HOME_ASSISTANT_STAGED_FRAMES: usize = 4;
+
+pub(crate) const HOME_ASSISTANT_STAGE_MAX_AGE_MS: u64 = STAGE_MAX_AGE_MS;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HomeAssistantSettingsRecord {
@@ -52,7 +56,48 @@ impl Default for HomeAssistantSettingsRecord {
     }
 }
 
+pub(crate) enum HomeAssistantPatch {
+    Settings(HomeAssistantSettingsUpdateCommand),
+    Credentials(HomeAssistantCredentialsUpdateCommand),
+    Topics(HomeAssistantTopicsUpdateCommand),
+    ControllerId(HomeAssistantControllerIdUpdateCommand),
+}
+
+pub(crate) struct HomeAssistantStage {
+    series: u64,
+    patches: Vec<HomeAssistantPatch>,
+    staged_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HomeAssistantStageRejection {
+    TooManyFrames,
+    NoStage,
+    FrameCountMismatch,
+}
+
+impl HomeAssistantStageRejection {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::TooManyFrames => "home_assistant_stage_limit",
+            Self::NoStage => "home_assistant_no_stage",
+            Self::FrameCountMismatch => "home_assistant_frame_mismatch",
+        }
+    }
+}
+
 impl HomeAssistantSettingsRecord {
+    fn apply_patch(&mut self, patch: &HomeAssistantPatch) {
+        match patch {
+            HomeAssistantPatch::Settings(body) => self.apply_settings_patch(body),
+            HomeAssistantPatch::Credentials(body) => self.apply_credentials_patch(body),
+            HomeAssistantPatch::Topics(body) => self.apply_topics_patch(body),
+            HomeAssistantPatch::ControllerId(body) => {
+                self.controller_id = body.controller_id.as_str().to_string();
+            }
+        }
+    }
+
     fn to_view(&self) -> HomeAssistantSettingsView {
         HomeAssistantSettingsView {
             enabled: self.enabled,
@@ -119,48 +164,57 @@ impl RegistryStore {
         g.home_assistant_settings.controller_id = node_name(mac);
     }
 
-    pub(crate) fn apply_home_assistant_settings_from_command(
+    pub(crate) fn stage_home_assistant_patch(
         &self,
-        body: &HomeAssistantSettingsUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| rec.apply_settings_patch(body))
-    }
-
-    pub(crate) fn apply_home_assistant_credentials_from_command(
-        &self,
-        body: &HomeAssistantCredentialsUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| rec.apply_credentials_patch(body))
-    }
-
-    pub(crate) fn apply_home_assistant_topics_from_command(
-        &self,
-        body: &HomeAssistantTopicsUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| rec.apply_topics_patch(body))
-    }
-
-    pub(crate) fn apply_home_assistant_controller_id_from_command(
-        &self,
-        body: &HomeAssistantControllerIdUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| {
-            rec.controller_id = body.controller_id.as_str().to_string();
-        })
-    }
-
-    fn mutate_home_assistant(
-        &self,
-        patch: impl FnOnce(&mut HomeAssistantSettingsRecord),
-    ) -> HomeAssistantSettingsRecord {
+        series: u64,
+        patch: HomeAssistantPatch,
+    ) -> Result<(), HomeAssistantStageRejection> {
         let mut g = self.write_inner();
-        patch(&mut g.home_assistant_settings);
+        let slot = &mut g.home_assistant_stage;
+        if slot.as_ref().is_some_and(|stage| stage.series != series) {
+            *slot = None;
+        }
+        let stage = slot.get_or_insert_with(|| HomeAssistantStage {
+            series,
+            patches: Vec::with_capacity(MAX_HOME_ASSISTANT_STAGED_FRAMES),
+            staged_at_ms: registry_unix_ms(),
+        });
+        if stage.patches.len() >= MAX_HOME_ASSISTANT_STAGED_FRAMES {
+            *slot = None;
+            return Err(HomeAssistantStageRejection::TooManyFrames);
+        }
+        stage.patches.push(patch);
+        Ok(())
+    }
+
+    pub(crate) fn commit_home_assistant_settings(
+        &self,
+        series: u64,
+        frames: u8,
+    ) -> Result<HomeAssistantSettingsRecord, HomeAssistantStageRejection> {
+        let mut g = self.write_inner();
+        let stage = g
+            .home_assistant_stage
+            .take_if(|stage| stage.series == series)
+            .ok_or(HomeAssistantStageRejection::NoStage)?;
+        if stage.patches.len() != usize::from(frames) {
+            return Err(HomeAssistantStageRejection::FrameCountMismatch);
+        }
+        for patch in &stage.patches {
+            g.home_assistant_settings.apply_patch(patch);
+        }
         let applied = g.home_assistant_settings.clone();
         drop(g);
         self.dirty.mark_home_assistant_settings_dirty();
-        applied
+        Ok(applied)
     }
 
+    pub(crate) fn evict_stale_home_assistant_stage(&self, max_age_ms: u64) {
+        let now = registry_unix_ms();
+        self.write_inner()
+            .home_assistant_stage
+            .take_if(|stage| now.saturating_sub(stage.staged_at_ms) > max_age_ms);
+    }
 }
 
 impl HomeAssistantSettingsReadPort for RegistryStore {
@@ -234,6 +288,39 @@ mod tests {
                 "unsafe controller_id: {id}"
             );
         }
+    }
+
+    fn stage_a_password(store: &RegistryStore, series: u64) {
+        let patch = HomeAssistantPatch::Credentials(HomeAssistantCredentialsUpdateCommand {
+            series,
+            patch_mask: HomeAssistantCredentialsUpdateCommand::PATCH_BROKER_PASSWORD,
+            broker_username: dali2rust_contracts::msg::fixed_text_32(""),
+            broker_password: dali2rust_contracts::msg::fixed_text_48("hunter2"),
+        });
+        store.stage_home_assistant_patch(series, patch).expect("staged");
+    }
+
+    #[test]
+    fn an_abandoned_stage_and_its_password_are_reaped_by_age() {
+        let store = RegistryStore::new();
+        stage_a_password(&store, 7);
+        if let Some(stage) = store.write_inner().home_assistant_stage.as_mut() {
+            stage.staged_at_ms = stage.staged_at_ms.saturating_sub(HOME_ASSISTANT_STAGE_MAX_AGE_MS + 1);
+        }
+        store.evict_stale_home_assistant_stage(HOME_ASSISTANT_STAGE_MAX_AGE_MS);
+        assert_eq!(
+            store.commit_home_assistant_settings(7, 1),
+            Err(HomeAssistantStageRejection::NoStage)
+        );
+    }
+
+    #[test]
+    fn a_fresh_stage_outlives_the_idle_reaper() {
+        let store = RegistryStore::new();
+        stage_a_password(&store, 8);
+        store.evict_stale_home_assistant_stage(HOME_ASSISTANT_STAGE_MAX_AGE_MS);
+        assert!(store.commit_home_assistant_settings(8, 1).is_ok());
+        assert_eq!(store.home_assistant_broker_password(), "hunter2");
     }
 
     #[test]

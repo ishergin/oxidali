@@ -16,7 +16,7 @@ fn payload_json(world: &DaliWorld, topic: &str) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("payload on {topic} is not JSON: {e}"))
 }
 
-// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 COMM-100 RULE-040 RULE-080 RULE-081 RULE-082 RULE-083 RULE-084 RULE-085 MQTT-021 MQTT-022 MQTT-023 MQTT-025 RULE-025 MQTT-026 MQTT-027
+// MQTT-003 MQTT-004 MQTT-005 MQTT-006 MQTT-007 MQTT-008 MQTT-009 MQTT-010 MQTT-011 MQTT-012 MQTT-013 MQTT-015 MQTT-016 MQTT-017 MQTT-018 MQTT-019 MQTT-001 MQTT-002 MQTT-014 MQTT-020 SET-HA-020 MQTT-024 COMM-100 RULE-040 RULE-080 RULE-081 RULE-082 RULE-083 RULE-084 RULE-085 MQTT-021 MQTT-022 MQTT-023 MQTT-025 RULE-025 MQTT-026 MQTT-027 MQTT-028
 #[given(regex = r#"^the Home Assistant bridge is enabled with controller id "([^"]*)"$"#)]
 async fn enable_bridge(world: &mut DaliWorld, controller_id: String) {
     let body = format!(
@@ -43,7 +43,7 @@ async fn will_registered(world: &mut DaliWorld, topic: String) {
     assert!(will.retain, "a non-retained will is invisible to a later client");
 }
 
-// MQTT-010 MQTT-011 MQTT-014 MQTT-019 MQTT-001 RULE-040 MQTT-021 MQTT-022 MQTT-023 MQTT-026
+// MQTT-010 MQTT-011 MQTT-014 MQTT-019 MQTT-001 RULE-040 MQTT-021 MQTT-022 MQTT-023 MQTT-026 MQTT-028
 #[then(regex = r#"^MQTT should have a retained "([^"]*)" on "([^"]*)"$"#)]
 async fn retained_text(world: &mut DaliWorld, expected: String, topic: String) {
     let mock = world.mqtt_mock().clone();
@@ -83,7 +83,7 @@ async fn birth_precedes_discovery(world: &mut DaliWorld, topic: String) {
     }
 }
 
-// MQTT-002 MQTT-005 MQTT-007 MQTT-008 MQTT-010 MQTT-013 MQTT-018 COMM-100 MQTT-023 RULE-025
+// MQTT-002 MQTT-005 MQTT-007 MQTT-008 MQTT-010 MQTT-013 MQTT-018 COMM-100 MQTT-023 RULE-025 MQTT-028
 #[then(regex = r#"^MQTT should have exactly (\d+) publish(?:es)? on "([^"]*)"$"#)]
 async fn publish_count(world: &mut DaliWorld, count: usize, topic: String) {
     let mock = world.mqtt_mock().clone();
@@ -205,12 +205,23 @@ async fn payload_field_absent(world: &mut DaliWorld, topic: String, field: Strin
     );
 }
 
-// MQTT-010 RULE-082
+// MQTT-010 RULE-082 MQTT-028
 #[then(regex = r#"^the MQTT broker should eventually observe (\d+) connects$"#)]
 async fn broker_connect_count(world: &mut DaliWorld, want: u32) {
     let mock = world.mqtt_mock().clone();
     wait_until(move || mock.connect_calls() >= want, PUBLISH_WAIT);
     assert_eq!(world.mqtt_mock().connect_calls(), want, "broker connect count");
+}
+
+// MQTT-028
+#[then(regex = r#"^the MQTT session should dial "([^"]*)" as "([^"]*)"$"#)]
+async fn session_dialled_with(world: &mut DaliWorld, host: String, username: String) {
+    let config = world.mqtt_mock().session_config().expect("a session was dialled");
+    assert_eq!(
+        (config.broker_host.as_str(), config.username.as_str()),
+        (host.as_str(), username.as_str()),
+        "the restart dials with every field of the PATCH"
+    );
 }
 
 // MQTT-016 MQTT-019 MQTT-020 MQTT-017 RULE-025 MQTT-012 MQTT-027
