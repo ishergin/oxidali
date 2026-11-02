@@ -1,4 +1,5 @@
 import hashlib
+import re
 import socket
 import subprocess
 import sys
@@ -110,7 +111,29 @@ def resolve_device(tgt):
 
 def bridge_listening(tgt, port):
     out = _ssh(tgt, "ss -ltn 2>/dev/null | grep -c '127.0.0.1:%d'" % port)
-    return out.stdout.strip().isdigit() and int(out.stdout.strip()) > 0
+    count = out.stdout.strip()
+    if not count.isdigit():
+        raise RemoteError("cannot tell whether a bridge listens on %s port %d (%s); "
+                          "starting one would open the port again and reset the controller"
+                          % (tgt.ssh, port, out.stderr.strip() or "no answer"))
+    return int(count) > 0
+
+
+def port_holders(tgt):
+    out = _ssh(tgt, "fuser %s 2>/dev/null; echo ' end'" % tgt.device)
+    tokens = out.stdout.split()
+    if out.returncode != 0 or not tokens or tokens[-1] != "end":
+        raise RemoteError("cannot tell who holds %s (%s)"
+                          % (tgt, out.stderr.strip() or "no answer"))
+    return [int(pid) for pid in re.findall(r"\d+", " ".join(tokens[:-1]))]
+
+
+def _refuse_a_held_port(tgt):
+    holders = port_holders(tgt)
+    if holders:
+        raise RemoteError("%s is held by pid %s while no bridge listens; opening it again "
+                          "resets the controller. %s"
+                          % (tgt, ",".join(str(pid) for pid in holders), RESTART_RESETS))
 
 
 KEPT_OLD_BRIDGE = ("serial bridge: a new bridge script was deployed and the running bridge "
@@ -125,6 +148,8 @@ def start_bridge(cfg, tgt, restart=False):
         if changed:
             print(KEPT_OLD_BRIDGE)
         return "reusing"
+    if not restart:
+        _refuse_a_held_port(tgt)
     if restart or changed:
         _ssh(tgt, "fuser -k %s 2>/dev/null; fuser -k -n tcp %d %d 2>/dev/null; sleep 1"
                   % (tgt.device, cfg.serial_bridge_port, control_port(cfg)))
