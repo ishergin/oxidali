@@ -352,11 +352,10 @@ bridge, pyserial and esptool this set-up works around are
 - The bridge serves **one client** and refuses a second rather than evicting the
   first.
 - Attaching to a live bridge resets nothing. **Starting a bridge that is down resets
-  the controller.** `hil remote start`, `hil monitor
-  start` and `hil flash` all start it when needed (`--restart` always does); first
-  check on the WB whether it still listens (`ss -ltn`) — if only the tunnel died,
-  the start reuses it. A changed `wb/serial_bridge.py` is copied to the WB but a live
-  bridge keeps running the old one until `--restart`, which resets the controller.
+  the controller.** `hil remote start`, `hil monitor start` and `hil flash` start one
+  only when the WB answers that none listens and nothing holds the port, and fail
+  when it cannot tell; `--restart` always does. A changed `wb/serial_bridge.py` is
+  copied to the WB but a live bridge keeps running the old one until `--restart`.
 - A bridge whose port is gone (node vanished, board enumerated again, a read failed)
   answers every control command `err port-gone: …`. `hil remote`, `hil monitor start`, `hil flash` and
   `hil preflight` fail on it instead of reusing a bridge that carries no data;
