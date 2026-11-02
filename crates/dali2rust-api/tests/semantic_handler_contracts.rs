@@ -19,6 +19,10 @@ use dali2rust_api::http::handlers::virtual_lamps::{
     VirtualLampTargetStateHandler,
 };
 use dali2rust_api::http::adapter_state::AdapterSettingsApplyWatch;
+use dali2rust_api::http::handlers::settings_home_assistant::HomeAssistantSettingsPatchHandler;
+use dali2rust_api::http::home_assistant_settings_state::{
+    HomeAssistantSettingsApplyWatch, HomeAssistantSettingsHttpStateBridge,
+};
 use dali2rust_api::http::physical_device_state::{
     CapabilityFlagsDto, MemoryBankSummaryDto, PhysicalDeviceCoreDto, PhysicalDeviceHttpState,
     PhysicalDevicePatchWatch, PhysicalDeviceSummaryDto,
@@ -27,7 +31,10 @@ use dali2rust_api::http::physical_device_state::{
 use dali2rust_api::http::types::HttpResponse;
 use dali2rust_domain::dali::banks::luminaire_write::Bank1Layout;
 use dali2rust_domain::dali::banks::{DeviceIdentity, IdentityRead};
-use dali2rust_domain::registry::{AttributeSectionKind, AttributeSectionView};
+use dali2rust_domain::registry::{
+    AttributeSectionKind, AttributeSectionView, HomeAssistantSettingsReadPort,
+    HomeAssistantSettingsView,
+};
 use dali2rust_api::http::virtual_lamp_state::{
     VirtualLampBindingApplyWatch, VirtualLampBindingDto, VirtualLampDto, VirtualLampHttpState,
     VirtualLampPatchWatch,
@@ -62,6 +69,20 @@ impl VirtualLampBindingApplyWatch for IncrementingApplyWatch {
 impl AdapterSettingsApplyWatch for IncrementingApplyWatch {
     fn adapter_settings_applied_load(&self) -> u32 {
         self.0.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+impl HomeAssistantSettingsApplyWatch for IncrementingApplyWatch {
+    fn home_assistant_settings_applied_load(&self) -> u32 {
+        self.0.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+struct DefaultHomeAssistantSettings;
+
+impl HomeAssistantSettingsReadPort for DefaultHomeAssistantSettings {
+    fn home_assistant_settings_view(&self) -> HomeAssistantSettingsView {
+        HomeAssistantSettingsView::default()
     }
 }
 
@@ -470,30 +491,45 @@ impl BusHarness {
                 let begin = rx.lock().expect("cmd lock").recv_timeout(deadline).expect("begin command");
                 assert!(matches!(begin, BusFrame::Command(_)));
             }
-            let frame = rx
-                .lock()
-                .expect("cmd lock")
-                .recv_timeout(deadline)
-                .expect("command frame");
-            let BusFrame::Command(command) = frame else {
-                panic!("expected command frame");
-            };
-            let command = command.as_ref().clone();
-            assert_eq!(
-                publisher.try_publish(
-                    BusChannel::Confirmations,
-                    BusFrame::confirmation(build_confirmation_envelope(
-                        command.meta.correlation_id,
-                        DeliveryStatus::Ok,
-                        0,
-                        SOURCE_ID_UNSPECIFIED,
-                    )),
-                ),
-                PublishResult::Queued
-            );
-            command
+            ack_one(&rx, &publisher, deadline)
         })
     }
+
+    fn ack_in_order(&self, count: usize) -> std::thread::JoinHandle<Vec<CommandEnvelope>> {
+        let rx = Arc::clone(&self.cmd_rx);
+        let publisher = self.publisher.clone();
+        let deadline = self.confirmation_deadline();
+        std::thread::spawn(move || (0..count).map(|_| ack_one(&rx, &publisher, deadline)).collect())
+    }
+}
+
+fn ack_one(
+    rx: &Mutex<Receiver<BusFrame>>,
+    publisher: &dali2rust_bus::BusPublisher,
+    deadline: Duration,
+) -> CommandEnvelope {
+    let frame = rx
+        .lock()
+        .expect("cmd lock")
+        .recv_timeout(deadline)
+        .expect("command frame");
+    let BusFrame::Command(command) = frame else {
+        panic!("expected command frame");
+    };
+    let command = command.as_ref().clone();
+    assert_eq!(
+        publisher.try_publish(
+            BusChannel::Confirmations,
+            BusFrame::confirmation(build_confirmation_envelope(
+                command.meta.correlation_id,
+                DeliveryStatus::Ok,
+                0,
+                SOURCE_ID_UNSPECIFIED,
+            )),
+        ),
+        PublishResult::Queued
+    );
+    command
 }
 
 #[test]
@@ -1321,4 +1357,49 @@ fn memory_luminaire_write_publishes_one_patch_command_and_answers_202() {
     assert_eq!((command.short_address, numbers.year, numbers.cct_kelvin), (1, 24, 2700));
     let text = command.text.expect("the one text field");
     assert_eq!((text.field, text.text.as_str()), (LuminaireTextField::LuminaireColour, "cool"));
+}
+
+fn staged_series(command: &CommandEnvelope) -> u64 {
+    match &command.payload {
+        BusCommandPayload::HomeAssistantSettingsUpdateCommand(body) => body.series,
+        BusCommandPayload::HomeAssistantCredentialsUpdateCommand(body) => body.series,
+        BusCommandPayload::HomeAssistantTopicsUpdateCommand(body) => body.series,
+        other => panic!("a staged Home Assistant frame was expected, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_home_assistant_patch_stages_every_group_under_one_series_and_commits_once() {
+    let harness = BusHarness::new();
+    let handler = HomeAssistantSettingsPatchHandler::new(
+        harness.publisher.clone(),
+        Arc::clone(&harness.slots),
+        Arc::clone(&harness.correlation),
+        Arc::new(HomeAssistantSettingsHttpStateBridge::new(Arc::new(DefaultHomeAssistantSettings))),
+        immediate_apply_watch(),
+        BusId::default(),
+        harness.confirmation_timeout_ms,
+    );
+    let acks = harness.ack_in_order(4);
+
+    let resp = handler.handle_request(
+        "PATCH",
+        "",
+        br#"{"broker_host":"broker2.test","broker_username":"u2","state_topic_prefix":"dali2"}"#,
+        &HashMap::new(),
+    );
+
+    assert_eq!(resp.status, 200);
+    let published = acks.join().expect("ack thread");
+    let BusCommandPayload::HomeAssistantSettingsCommitCommand(commit) = &published[3].payload else {
+        panic!("the PATCH must end with its one commit, got {:?}", published[3].payload);
+    };
+    assert_eq!(commit.frames, 3);
+    assert_eq!(published[3].meta.correlation_id, commit.series);
+    let series: Vec<u64> = published[..3].iter().map(staged_series).collect();
+    assert_eq!(series, vec![commit.series; 3], "every staged frame belongs to the commit's series");
+    assert!(
+        harness.cmd_rx.lock().expect("cmd lock").try_recv().is_err(),
+        "nothing follows the commit"
+    );
 }

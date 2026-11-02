@@ -565,8 +565,9 @@ def test_a_topic_that_is_not_utf8_neither_restarts_the_controller_nor_ends_the_s
         "the session took nothing after the topic that is not UTF-8")
     alive = mqtt_counters.all()
 
+    dialled = raw_broker.connects()
     raw_broker.drop()
-    assert raw_broker.wait_event(lambda e: e.get("ev") == "connect" and e["n"] >= 2,
+    assert raw_broker.wait_event(lambda e: e.get("ev") == "connect" and e["n"] > dialled,
                                  RAW_RECONNECT_S), (
         "the bridge did not dial the broker again by itself: %r" % raw_broker.events)
     assert wait_until(lambda: mqtt_counters.all().get("connected"), RAW_RECONNECT_S), (

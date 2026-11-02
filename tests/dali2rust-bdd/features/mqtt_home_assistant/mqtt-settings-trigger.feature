@@ -24,6 +24,17 @@ Feature: MQTT/HA — settings and capability changes reach the broker
     And MQTT should have exactly 3 publishes on "dali/ctl1/availability"
     And MQTT should have a retained "online" on "dali/ctl1/availability"
 
+  @id:MQTT-028
+  Scenario: One PATCH across the broker, its credentials and its topics restarts the session once
+    Given the Home Assistant bridge is enabled with controller id "ctl1"
+    Then MQTT should have a retained "online" on "dali/ctl1/availability"
+    When I PATCH JSON {"broker_host":"broker2.test","broker_username":"u2","state_topic_prefix":"dali2"} to "/api/v1/settings/home-assistant"
+    Then the response status should be 200
+    And the MQTT broker should eventually observe 2 connects
+    And the MQTT session should dial "broker2.test" as "u2"
+    And MQTT should have a retained "online" on "dali2/ctl1/availability"
+    And MQTT should have exactly 1 publish on "dali2/ctl1/availability"
+
   @id:MQTT-008
   Scenario: A colour-mode override republishes the bound lamp's discovery config
     Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0

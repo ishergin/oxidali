@@ -73,10 +73,22 @@ impl CommandCtx<'_> {
         apply: impl FnOnce() -> A,
         publish_changed: impl FnOnce(&BusPublisher, u64, u16, &A) -> R,
     ) {
+        self.try_update_global_settings(applied_counter, || Ok(apply()), publish_changed);
+    }
+
+    pub(super) fn try_update_global_settings<A, R>(
+        &self,
+        applied_counter: &AtomicU32,
+        apply: impl FnOnce() -> Result<A, &'static str>,
+        publish_changed: impl FnOnce(&BusPublisher, u64, u16, &A) -> R,
+    ) {
         if self.check_primary_adapter().is_err() {
             return;
         }
-        let applied = apply();
+        let applied = match apply() {
+            Ok(applied) => applied,
+            Err(message) => return self.reject(message),
+        };
         publish_changed(self.publisher, self.corr, self.tid, &applied);
         applied_counter.fetch_add(1, Ordering::Relaxed);
         self.counters.config_updates_applied.fetch_add(1, Ordering::Relaxed);

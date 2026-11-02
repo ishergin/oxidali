@@ -130,7 +130,8 @@ pub use events::{
 pub use events::PollerSettingsChangedEvent;
 pub use commands::{
     HomeAssistantControllerIdUpdateCommand, HomeAssistantCredentialsUpdateCommand,
-    HomeAssistantSettingsUpdateCommand, HomeAssistantTopicsUpdateCommand,
+    HomeAssistantSettingsCommitCommand, HomeAssistantSettingsUpdateCommand,
+    HomeAssistantTopicsUpdateCommand,
 };
 pub use commands::HomeAssistantDiscoveryPublishCommand;
 pub use events::{HomeAssistantDiscoveryPublishedEvent, HomeAssistantSettingsChangedEvent};

@@ -17,6 +17,8 @@ const DEFAULT_PUBLISH_QOS: u8 = 1;
 
 const CONTROLLER_ID_FALLBACK: &str = "dali-controller";
 
+const MAX_HOME_ASSISTANT_STAGED_FRAMES: usize = 4;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HomeAssistantSettingsRecord {
     pub enabled: bool,
@@ -52,7 +54,47 @@ impl Default for HomeAssistantSettingsRecord {
     }
 }
 
+pub(crate) enum HomeAssistantPatch {
+    Settings(HomeAssistantSettingsUpdateCommand),
+    Credentials(HomeAssistantCredentialsUpdateCommand),
+    Topics(HomeAssistantTopicsUpdateCommand),
+    ControllerId(HomeAssistantControllerIdUpdateCommand),
+}
+
+pub(crate) struct HomeAssistantStage {
+    series: u64,
+    patches: Vec<HomeAssistantPatch>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HomeAssistantStageRejection {
+    TooManyFrames,
+    NoStage,
+    FrameCountMismatch,
+}
+
+impl HomeAssistantStageRejection {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::TooManyFrames => "home_assistant_stage_limit",
+            Self::NoStage => "home_assistant_no_stage",
+            Self::FrameCountMismatch => "home_assistant_frame_mismatch",
+        }
+    }
+}
+
 impl HomeAssistantSettingsRecord {
+    fn apply_patch(&mut self, patch: &HomeAssistantPatch) {
+        match patch {
+            HomeAssistantPatch::Settings(body) => self.apply_settings_patch(body),
+            HomeAssistantPatch::Credentials(body) => self.apply_credentials_patch(body),
+            HomeAssistantPatch::Topics(body) => self.apply_topics_patch(body),
+            HomeAssistantPatch::ControllerId(body) => {
+                self.controller_id = body.controller_id.as_str().to_string();
+            }
+        }
+    }
+
     fn to_view(&self) -> HomeAssistantSettingsView {
         HomeAssistantSettingsView {
             enabled: self.enabled,
@@ -119,48 +161,49 @@ impl RegistryStore {
         g.home_assistant_settings.controller_id = node_name(mac);
     }
 
-    pub(crate) fn apply_home_assistant_settings_from_command(
+    pub(crate) fn stage_home_assistant_patch(
         &self,
-        body: &HomeAssistantSettingsUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| rec.apply_settings_patch(body))
-    }
-
-    pub(crate) fn apply_home_assistant_credentials_from_command(
-        &self,
-        body: &HomeAssistantCredentialsUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| rec.apply_credentials_patch(body))
-    }
-
-    pub(crate) fn apply_home_assistant_topics_from_command(
-        &self,
-        body: &HomeAssistantTopicsUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| rec.apply_topics_patch(body))
-    }
-
-    pub(crate) fn apply_home_assistant_controller_id_from_command(
-        &self,
-        body: &HomeAssistantControllerIdUpdateCommand,
-    ) -> HomeAssistantSettingsRecord {
-        self.mutate_home_assistant(|rec| {
-            rec.controller_id = body.controller_id.as_str().to_string();
-        })
-    }
-
-    fn mutate_home_assistant(
-        &self,
-        patch: impl FnOnce(&mut HomeAssistantSettingsRecord),
-    ) -> HomeAssistantSettingsRecord {
+        series: u64,
+        patch: HomeAssistantPatch,
+    ) -> Result<(), HomeAssistantStageRejection> {
         let mut g = self.write_inner();
-        patch(&mut g.home_assistant_settings);
+        let slot = &mut g.home_assistant_stage;
+        if slot.as_ref().is_some_and(|stage| stage.series != series) {
+            *slot = None;
+        }
+        let stage = slot.get_or_insert_with(|| HomeAssistantStage {
+            series,
+            patches: Vec::with_capacity(MAX_HOME_ASSISTANT_STAGED_FRAMES),
+        });
+        if stage.patches.len() >= MAX_HOME_ASSISTANT_STAGED_FRAMES {
+            *slot = None;
+            return Err(HomeAssistantStageRejection::TooManyFrames);
+        }
+        stage.patches.push(patch);
+        Ok(())
+    }
+
+    pub(crate) fn commit_home_assistant_settings(
+        &self,
+        series: u64,
+        frames: u8,
+    ) -> Result<HomeAssistantSettingsRecord, HomeAssistantStageRejection> {
+        let mut g = self.write_inner();
+        let stage = g
+            .home_assistant_stage
+            .take_if(|stage| stage.series == series)
+            .ok_or(HomeAssistantStageRejection::NoStage)?;
+        if stage.patches.len() != usize::from(frames) {
+            return Err(HomeAssistantStageRejection::FrameCountMismatch);
+        }
+        for patch in &stage.patches {
+            g.home_assistant_settings.apply_patch(patch);
+        }
         let applied = g.home_assistant_settings.clone();
         drop(g);
         self.dirty.mark_home_assistant_settings_dirty();
-        applied
+        Ok(applied)
     }
-
 }
 
 impl HomeAssistantSettingsReadPort for RegistryStore {

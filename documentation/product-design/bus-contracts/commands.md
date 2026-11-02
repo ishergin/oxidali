@@ -38,7 +38,7 @@
 | Семейство | Виды | Владелец | Кто публикует | Дисциплина |
 |---|---|---|---|---|
 | Конфигурация реестра | адаптер; виртуальная лампа (метаданные, bind/rebind/unbind, удаление записи); физическое устройство (override, notes, удаление); устройство ввода (метаданные, notes); метаданные группы и сцены | registry worker | HTTP | подтверждение + apply-watch |
-| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id`), отказоустойчивость, политики | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
+| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id` + `HomeAssistantSettingsCommitCommand`), отказоустойчивость, политики | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
 | Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
 | Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
 | Runtime реестра | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` | registry worker | только проектор state-fanout | подтверждение (short/VL) или внутренний факт |
@@ -78,6 +78,13 @@
   второй текст — нет.
 - **Пароль брокера** ходит только в `HomeAssistantCredentialsUpdateCommand` — это
   единственный payload шины, несущий секрет; событие настроек его не несёт.
+- **Home Assistant — одна запись на `PATCH`.** Четыре команды настроек Home Assistant
+  несут `series` и только складывают patch в staging реестра: ни применения, ни события,
+  ни сдвига счётчика. `HomeAssistantSettingsCommitCommand` с той же серией и числом
+  кадров применяет их одной записью, и мост, который перечитывает настройки по счётчику
+  применения, видит один сдвиг. Серия — correlation id коммита; кадр другой серии
+  выбрасывает незакрытый staging, а коммит чужой серии или с другим числом кадров не
+  применяет ничего.
 - `HomeAssistantControllerIdUpdateCommand` маски не имеет — публикация и есть patch;
   пустой `controller_id` отвергается на REST. Что мост делает при смене префиксов и
   `controller_id` — [`../runtime-modules/mqtt-home-assistant/README.md`](../runtime-modules/mqtt-home-assistant/README.md).

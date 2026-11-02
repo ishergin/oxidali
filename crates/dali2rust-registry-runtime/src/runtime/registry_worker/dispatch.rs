@@ -17,8 +17,8 @@ use super::hcl::{
 use super::input_devices::{handle_input_device_metadata, handle_input_device_notes};
 use super::matrix::{handle_metadata, stage_matrix_chunk};
 use super::home_assistant_settings::{
-    handle_controller_id_update, handle_credentials_update, handle_settings_update,
-    handle_topics_update,
+    handle_controller_id_update, handle_credentials_update, handle_settings_commit,
+    handle_settings_update, handle_topics_update,
 };
 use super::physical_device::{handle_pd_forget, handle_pd_notes, handle_pd_override};
 use super::dali_settings::handle_dali_settings_update;
@@ -128,4 +128,6 @@ dali2rust_contracts::dispatch_bus_commands! {
         handle_topics_update(ctx, body),
     HomeAssistantControllerIdUpdateCommand(body) =>
         handle_controller_id_update(ctx, body),
+    HomeAssistantSettingsCommitCommand(body) =>
+        handle_settings_commit(ctx, body),
 }
