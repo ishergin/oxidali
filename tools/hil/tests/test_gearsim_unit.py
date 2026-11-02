@@ -21,6 +21,8 @@ def test_a_level_change_is_parsed_with_its_gear():
     ("C 1 A20 rgbwaf 0,0,0,0,0,0 -> 254,0,0,0,0,0", "rgbwaf", "0,0,0,0,0,0", "254,0,0,0,0,0"),
     ("C 1 U03 short_address - -> 40", "short_address", "-", "40"),
     ("C 1 A21 groups 0x0000 -> 0x0010", "groups", "0x0000", "0x0010"),
+    ("C 1 A16 extended_fade_time 0x00 -> 0x44", "extended_fade_time", "0x00", "0x44"),
+    ("C 1 A16 fade_time 0 -> 7", "fade_time", "0", "7"),
 ])
 def test_every_change_line_shape_parses(line, field, old, new):
     change = gearsim.parse_change(STAMP + line)

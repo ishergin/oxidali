@@ -11,6 +11,7 @@ ALL_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,groups,scenes,extended
 FADE_CODE_MS = {0: 0, 1: 700, 2: 1000, 3: 1400, 4: 2000, 5: 2800, 6: 4000,
                 7: 5700, 8: 8000, 9: 11300, 10: 16000, 11: 22600, 12: 32000,
                 13: 45300, 14: 64000, 15: 90500}
+EXTENDED_FADE_MAX_MS = 16 * 60_000
 
 
 def _attr_section(device, section):
@@ -61,7 +62,7 @@ def test_attribute_read_sweep_plausible(api, lamps, sniffer, paced, op_check,
         assert fade in FADE_CODE_MS.values(), fade
     _, ext_fade = _fade_time_value(device, section="extended")
     if ext_fade is not None:
-        assert 0 <= ext_fade <= 65_535, ext_fade
+        assert 0 <= ext_fade <= EXTENDED_FADE_MAX_MS, ext_fade
     ext_fade = _attr_section(device, "extended").get("fade_time_ms") or {}
     assert ext_fade.get("last_read_ms") is not None, (
         "extended.fade_time_ms was not read by the full sweep: %r" % (ext_fade,))

@@ -155,7 +155,13 @@ _ATTR_GUARD_SECTIONS = {
     "power_on_level": "common_102",
     "system_failure_level": "common_102",
     "dimming_curve": "dt6_led",
+    "extended_fade_time_ms": "extended",
 }
+_ATTR_GUARD_READ_KEYS = {"extended_fade_time_ms": "fade_time_ms"}
+
+
+def guarded_value(section, attr):
+    return (section.get(_ATTR_GUARD_READ_KEYS.get(attr, attr)) or {}).get("value")
 
 
 def refuse_unread(short, attrs, values, default):
@@ -178,8 +184,7 @@ def attr_guard(api):
             api.attr_read_checked(short, groups=name)
         sections = {name: _section(short, name)
                     for name in {_ATTR_GUARD_SECTIONS[a] for a in attrs}}
-        values = {attr: (sections[_ATTR_GUARD_SECTIONS[attr]].get(attr)
-                         or {}).get("value")
+        values = {attr: guarded_value(sections[_ATTR_GUARD_SECTIONS[attr]], attr)
                   for attr in attrs}
         if required:
             refuse_unread(short, attrs, values, default)
@@ -194,8 +199,7 @@ def attr_guard(api):
                 continue
             api.wait_op(api.write_attrs(short, {attr: want}))
             if verify:
-                holds = (_section(short, _ATTR_GUARD_SECTIONS[attr]).get(attr)
-                         or {}).get("value")
+                holds = guarded_value(_section(short, _ATTR_GUARD_SECTIONS[attr]), attr)
                 assert holds == want, (
                     "FAILED TO RESTORE %s on gear %d: wanted %r, holds %r — "
                     "the gear is left holding test configuration, and every "

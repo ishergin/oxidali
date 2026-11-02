@@ -257,6 +257,7 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
 | `test_scenarios` | — | default | часть | Образец сценария; групповой DAPC; скан без переадресации. |
 | `test_optical_*` | — | smoke | да | ON/OFF, яркость, RGB, colour-only, порядок CCT. Нужна оптика. |
 | `test_virtual_gear` | VG-01..07 | `HIL_VIRTUAL_GEAR=1`; VG-04 — ещё `HIL_ALLOW_DESTRUCTIVE=1` и `HIL_ALLOW_VIRTUAL_COMMISSIONING=1` | нет (эмулятор) | Уровень доходит до своего гира и ни до какого другого; группа — только до членов; сцена записана в гир; безадресный гир получает адрес парка; цвет — `ACTIVATE` без `QUERY STATUS`; `.stop_fade()` — один `DAPC(MASK)` группе; мастер WB читает уровень эмулированного гира. |
+| `test_virtual_gear_levels` | VG-08..10 | `HIL_VIRTUAL_GEAR=1`; VG-09 — ещё `HIL_ALLOW_RULE_COMMITS=1` | нет (эмулятор) | `recall` и правила `.recall_*()`, `.dim_*()` — свой кадр, граница и направление; `UP` не зажигает тёмную лампу; extended fade длиннее 16 бит — в кодировке IEC. |
 | `test_groups` | GRP-02..07, 10, 11 | default | часть (GRP-02, 10, 11) | Матрица и dirty; apply программирует гир; пустой diff; конфликт; `.stop_fade()` останавливает фейд группы и одной лампы по короткому адресу. |
 | `test_group_colour` | GRP-08, 09, HCL-10, TS-08 | default | да | Групповой и broadcast цвет активируется на каждом члене. |
 | `test_capability_gate` | CAP-01..03 | default | да | Групповой цвет режется по возможностям члена. |
@@ -304,6 +305,7 @@ ID — маркер `hil_id` теста ([README](README.md#writing-a-scenario))
   хостом), два гира на одном адресе (только переадресацией).
 - Переадресация на живом сегменте (на эмулированных гирах — §4.8); формы HTTP (BDD); внешний
   вид web UI (глаз мейнтейнера).
+- Время фейда и шаг `UP`/`DOWN` по fade rate: эмулятор их хранит, но уровень меняет сразу. DT7 (Part 208) в парк не ставится: его нет в консоли эмулятора.
 
 ## 7. Watchlist
 

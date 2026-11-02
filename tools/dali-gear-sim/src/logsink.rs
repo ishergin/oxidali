@@ -192,6 +192,9 @@ pub struct GearDigest {
     tc_limits: (u16, u16),
     min_level: u8,
     max_level: u8,
+    fade_time: u8,
+    fade_rate: u8,
+    extended_fade_time: u8,
     identifying: bool,
     enabled: bool,
 }
@@ -218,6 +221,9 @@ impl GearDigest {
             tc_limits: (gear.tc_coolest_limit, gear.tc_warmest_limit),
             min_level: gear.min_level,
             max_level: gear.max_level,
+            fade_time: gear.fade_time,
+            fade_rate: gear.fade_rate,
+            extended_fade_time: gear.extended_fade_time,
             identifying: gear.identifying,
             enabled: gear.enabled,
         }
@@ -251,6 +257,7 @@ fn report(index: usize, was: &GearDigest, now: &GearDigest) {
     report_output(was, now, &line);
     report_colour(was, now, &line);
     report_limits(was, now, &line);
+    report_fade(was, now, &line);
     report_scenes(was, now, &line);
 }
 
@@ -307,6 +314,21 @@ fn report_limits(was: &GearDigest, now: &GearDigest, line: &dyn Fn(String)) {
         line(format!(
             "tc_limits {}..{} -> {}..{}",
             was.tc_limits.0, was.tc_limits.1, now.tc_limits.0, now.tc_limits.1
+        ));
+    }
+}
+
+fn report_fade(was: &GearDigest, now: &GearDigest, line: &dyn Fn(String)) {
+    if was.fade_time != now.fade_time {
+        line(format!("fade_time {} -> {}", was.fade_time, now.fade_time));
+    }
+    if was.fade_rate != now.fade_rate {
+        line(format!("fade_rate {} -> {}", was.fade_rate, now.fade_rate));
+    }
+    if was.extended_fade_time != now.extended_fade_time {
+        line(format!(
+            "extended_fade_time {:#04x} -> {:#04x}",
+            was.extended_fade_time, now.extended_fade_time
         ));
     }
 }
