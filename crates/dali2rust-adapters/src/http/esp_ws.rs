@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dali2rust_ws_runtime::{RegisterRejected, WsHub, WsSessions, WS_SENDER_SLOTS};
+use dali2rust_ws_runtime::{RegisterRejected, WsCounters, WsHub, WsSessions};
 use esp_idf_svc::http::server::ws::EspHttpWsConnection;
 use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::handle::RawHandle;
@@ -31,11 +31,12 @@ pub fn register_ws_handler(
     hub: Arc<WsHub>,
 ) -> Result<(), EspError> {
     let handle = server.handle();
+    let slots = super::esp_ws_send::slot_pool(hub.sender_slots());
     let context = Box::new(WsContext {
         hub,
         sessions: WsSessions::new(),
         server: handle,
-        slots: super::esp_ws_send::slot_pool(WS_SENDER_SLOTS),
+        slots,
     });
     // SAFETY: one leak at boot; esp-idf keeps `user_ctx` for the registration, which is never removed.
     let context: &'static WsContext = Box::leak(context);
@@ -90,7 +91,11 @@ fn open_session(context: &'static WsContext, conn: &mut EspHttpWsConnection) {
     };
     let Some(sink) = super::esp_ws_send::DirectWsSink::claim(&context.slots, server, fd, session)
     else {
-        log::warn!("ws: no send slot left for fd {fd}; refusing it");
+        log::warn!(
+            "ws: no send slot left for fd {fd} ({} lost a queued send); refusing it",
+            context.slots.lost()
+        );
+        WsCounters::bump(&hub.counters().upgrades_rejected_total, 1);
         refuse(conn, server, fd, RegisterRejected::CapacityExhausted);
         return;
     };

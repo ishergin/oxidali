@@ -5,5 +5,5 @@ pub use counters::WsCounters;
 pub use runtime::{
     close_code, origin_allowed, spawn_ws_worker, ClientId, HandoffOutcome, RegisterRejected, SendSlot,
     SlotPool, WsHub, WsHubConfig, WsSessions, WsSink, WsSinkError, WsWorkerPorts, MAX_WS_CLIENTS,
-    NO_CLIENT_PARK, WS_SENDER_SLOTS,
+    NO_CLIENT_PARK,
 };

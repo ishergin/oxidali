@@ -109,11 +109,18 @@ registry locking → [06](06-registry-and-persistence.md).
   every socket.
 - A client's whole backlog travels as **one** work item, not one per frame: the httpd
   loop takes one control message per turn, so a sender that queued each frame on its own
-  got no more than a frame a turn under REST load.
-- The queued request lives in the client's send slot, never on the sender's stack, and
-  the sender waits for its outcome with a deadline: the control socket may drop the
-  datagram and answer success. A request whose work item never lands keeps its slot out
-  of rotation — the pool holds one slot per sender — and its client is closed.
+  got no more than a frame a turn under REST load. The batch is bounded by the client's
+  queue, so a stalled client holds the task for the sends of one batch — the hold the
+  second-instance decision watches.
+- The queued request lives in the client's send slot, never on the sender's stack,
+  because the control socket may drop the datagram and answer success. The sender's
+  deadline covers only the wait for the httpd task to **take** the request: one being
+  served is waited for however long its sends take, so a slow client is never read as a
+  lost one. A request that was never taken ends its client's session —
+  `httpd_sess_trigger_close`, since no frame of ours can reach a socket whose sends are
+  not landing — and its slot stays out of rotation until that request lands; the pool
+  holds one slot per sender, so losing them all refuses upgrades
+  (`websocket.upgrades_rejected_total`) until a reboot.
 - Bounds that keep it there: sniffer records batched into one frame per 100 ms under a
   2048-byte payload budget (a byte cap, enforced where the bytes exist; shed records are
   reported in `dropped_since`); a per-client queue bounded by 32 frames and 16 KiB,

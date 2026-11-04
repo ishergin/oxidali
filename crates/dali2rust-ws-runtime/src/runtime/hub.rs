@@ -23,8 +23,6 @@ const CLIENT_QUEUE_DEPTH: usize = 32;
 
 const SENDER_BATCH_FRAMES: usize = CLIENT_QUEUE_DEPTH + 1;
 
-pub const WS_SENDER_SLOTS: usize = MAX_WS_CLIENTS * SENDERS_PER_CLIENT_SLOT;
-
 const MAX_CLIENT_QUEUE_BYTES: usize = 16 * 1024;
 
 const DEFAULT_LOG_LEVEL: LogLevel = LogLevel::Info;
@@ -166,6 +164,10 @@ impl WsHub {
             tap,
             log_ring,
         })
+    }
+
+    pub fn sender_slots(&self) -> usize {
+        self.config.max_clients * SENDERS_PER_CLIENT_SLOT
     }
 
     pub fn log_ring(&self) -> &'static LogRing {
@@ -560,8 +562,9 @@ impl SenderEnds {
         while let Ok(first) = self.rx.recv() {
             batch.push(first);
             batch.extend(self.rx.try_iter());
+            let sent = self.sink.send_batch(&batch);
             self.release_bytes(&batch);
-            if let Err(err) = self.sink.send_batch(&batch) {
+            if let Err(err) = sent {
                 log::info!("ws: client {} send failed ({err:?}); closing", self.id);
                 return;
             }

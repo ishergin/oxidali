@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -13,10 +14,12 @@ const SETTLE: Duration = Duration::from_secs(2);
 struct HeldSink {
     batches: Arc<Mutex<Vec<usize>>>,
     hold: Arc<(Mutex<bool>, Condvar)>,
+    entered: Arc<AtomicUsize>,
 }
 
 impl WsSink for HeldSink {
     fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
+        self.entered.fetch_add(1, Ordering::SeqCst);
         let (lock, released) = &*self.hold;
         let mut held = lock.lock().expect("hold");
         while *held {
@@ -45,12 +48,15 @@ fn a_clients_backlog_reaches_its_sink_as_one_batch() {
     );
     let seen = Arc::new(Mutex::new(Vec::new()));
     let hold = Arc::new((Mutex::new(true), Condvar::new()));
+    let entered = Arc::new(AtomicUsize::new(0));
     let id = hub
         .register(Box::new(HeldSink {
             batches: Arc::clone(&seen),
             hold: Arc::clone(&hold),
+            entered: Arc::clone(&entered),
         }))
         .expect("register");
+    wait_until(|| entered.load(Ordering::SeqCst) == 1, SETTLE);
     hub.handle_client_text(id, r#"{"op":"subscribe","channels":["groups"]}"#);
     for _ in 0..BACKLOG_EVENTS {
         hub.broadcast(Channel::Groups, "EVENT");

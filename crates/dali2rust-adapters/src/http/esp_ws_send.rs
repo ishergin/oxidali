@@ -5,11 +5,12 @@ use std::time::Duration;
 use dali2rust_ws_runtime::{HandoffOutcome, SendSlot, SlotPool, WsSink, WsSinkError};
 use esp_idf_svc::http::server::ws::EspHttpWsDetachedSender;
 use esp_idf_svc::sys::{
-    httpd_handle_t, httpd_queue_work, httpd_ws_frame_t, httpd_ws_send_frame_async, httpd_ws_type_t,
-    httpd_ws_type_t_HTTPD_WS_TYPE_CLOSE, httpd_ws_type_t_HTTPD_WS_TYPE_TEXT, ESP_OK,
+    httpd_handle_t, httpd_queue_work, httpd_sess_trigger_close, httpd_ws_frame_t,
+    httpd_ws_send_frame_async, httpd_ws_type_t, httpd_ws_type_t_HTTPD_WS_TYPE_CLOSE,
+    httpd_ws_type_t_HTTPD_WS_TYPE_TEXT, ESP_OK,
 };
 
-const SEND_DEADLINE: Duration = Duration::from_secs(10);
+const SEND_DEADLINE: Duration = Duration::from_secs(30);
 
 pub type WsSlotPool = SlotPool<SendWork>;
 
@@ -36,7 +37,7 @@ pub struct DirectWsSink {
     session: EspHttpWsDetachedSender,
 }
 
-// SAFETY: `server` is usable from any task via `httpd_queue_work`; `session` is only asked `is_closed`.
+// SAFETY: `server` is usable from any task via `httpd_queue_work`; the sender is `Send`.
 unsafe impl Send for DirectWsSink {}
 unsafe impl Sync for DirectWsSink {}
 
@@ -88,10 +89,16 @@ impl DirectWsSink {
             return Ok(());
         }
         self.closed.store(true, Ordering::Release);
-        if outcome == HandoffOutcome::Lost {
+        if outcome == HandoffOutcome::Lost && !self.session.is_closed() {
             log::warn!("ws: fd {} waited out its queued send; closing it", self.fd);
+            self.close_socket();
         }
         Err(WsSinkError::Closed)
+    }
+
+    fn close_socket(&self) {
+        // SAFETY: esp-idf's own way to close a session from another task; the handle and socket are this sink's.
+        unsafe { httpd_sess_trigger_close(self.server, self.fd) };
     }
 }
 
@@ -114,8 +121,7 @@ impl WsSink for DirectWsSink {
 unsafe extern "C" fn send_on_httpd_task(arg: *mut core::ffi::c_void) {
     // SAFETY: `arg` is the slot `queue` handed to esp-idf; it lives in the pool leaked at boot.
     let slot = unsafe { &*arg.cast::<SendSlot<SendWork>>() };
-    let sent = slot.take_work().is_some_and(send_work);
-    slot.finish(sent);
+    slot.execute(send_work);
 }
 
 fn send_work(work: SendWork) -> bool {
