@@ -93,17 +93,15 @@ pub(super) struct Session {
     pub(super) announced: HashMap<EntityKey, u64>,
     pub(super) lamp_availability: HashMap<(u8, u8), bool>,
     pub(super) groups_dirty: HashSet<u8>,
-    pub(super) dialled_with: u64,
 }
 
 impl Session {
-    pub(super) fn begin(&mut self, generation: u32, dialled_with: u64, topics: &HaTopics) {
+    pub(super) fn begin(&mut self, generation: u32, topics: &HaTopics) {
         let Self {
             generation: gen_slot,
             subscriptions,
             filters,
             rule_topics,
-            dialled_with: dialled_slot,
             announced,
             lamp_availability,
             groups_dirty,
@@ -112,7 +110,6 @@ impl Session {
         *subscriptions = Subscriptions::default();
         *filters = BridgeFilters::of(topics);
         *rule_topics = RuleFollow::default();
-        *dialled_slot = dialled_with;
         announced.clear();
         lamp_availability.clear();
         groups_dirty.clear();
