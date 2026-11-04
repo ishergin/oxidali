@@ -195,6 +195,10 @@ fn read_client_frame(
     Ok(frame)
 }
 
+fn serves_a_client(hub: &Arc<WsHub>, sessions: &WsSessions, fd: i32) -> bool {
+    sessions.lookup(fd).is_some_and(|id| hub.knows(id))
+}
+
 fn forward_client_frame(hub: &Arc<WsHub>, sessions: &WsSessions, conn: &mut EspHttpWsConnection) {
     let EspHttpWsConnection::Receiving(server, raw_req, _) = conn else {
         return;
@@ -205,6 +209,11 @@ fn forward_client_frame(hub: &Arc<WsHub>, sessions: &WsSessions, conn: &mut EspH
         fail_connection(hub, sessions, conn, server);
         return;
     };
+    if !serves_a_client(hub, sessions, conn.session()) {
+        log::info!("ws: fd {} has no client left; closing it", conn.session());
+        fail_connection(hub, sessions, conn, server);
+        return;
+    }
     let payload = &buf[..frame.len];
     match classify(frame.type_) {
         ClientFrame::Text => {

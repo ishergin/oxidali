@@ -112,7 +112,7 @@ impl<P> SendSlot<P> {
 
     pub fn execute(&self, run: impl FnOnce(P) -> bool) -> bool {
         let Some(work) = self.take_work() else {
-            self.finish(false);
+            self.discard();
             return false;
         };
         let sent = run(work);
@@ -130,16 +130,23 @@ impl<P> SendSlot<P> {
     }
 
     fn finish(&self, sent: bool) {
+        if let Ok(mut pending) = self.pending.lock() {
+            if pending.phase != Phase::Running {
+                return;
+            }
+            pending.phase = Phase::Done(sent);
+        }
+        self.settled.notify_one();
+    }
+
+    fn discard(&self) {
         let Ok(mut pending) = self.pending.lock() else {
             return;
         };
-        if pending.phase == Phase::Running {
-            pending.phase = Phase::Done(sent);
-        } else {
+        if pending.phase == Phase::Lost {
             pending.phase = Phase::Idle;
             pending.work = None;
         }
-        self.settled.notify_one();
     }
 
     pub fn release(&self) {
@@ -183,16 +190,23 @@ impl<P> SlotPool<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dali2rust_test_support::wait_until;
     use std::sync::mpsc;
     use std::thread;
+    use std::time::Instant;
 
-    const DEADLINE: Duration = Duration::from_millis(200);
+    const DEADLINE: Duration = Duration::from_millis(300);
 
     const WORK: u8 = 7;
 
     fn pool(slots: usize) -> &'static SlotPool<u8> {
         // SAFETY: test-only leak; a slot handed to a foreign executor must outlive it.
         Box::leak(Box::new(SlotPool::new(slots, DEADLINE)))
+    }
+
+    fn hold_past_the_deadline() {
+        let until = Instant::now() + DEADLINE * 2;
+        wait_until(|| Instant::now() >= until, DEADLINE * 4);
     }
 
     fn executor(rx: mpsc::Receiver<&'static SendSlot<u8>>) -> thread::JoinHandle<bool> {
@@ -226,15 +240,37 @@ mod tests {
     }
 
     #[test]
-    fn only_work_still_waiting_to_be_taken_is_ever_waited_out() {
-        assert!(waited_out(Phase::Queued), "a queued item may never have landed");
-        assert!(
-            !waited_out(Phase::Running),
-            "an item the executor took is being served, however slowly; the deadline \
-             is there for the one lost on the way"
+    fn work_the_executor_holds_past_the_deadline_is_waited_for() {
+        let pool = pool(1);
+        let slot = pool.claim().expect("a free slot");
+        let (tx, rx) = mpsc::channel();
+        let executor = thread::spawn(move || {
+            let slot: &'static SendSlot<u8> = rx.recv().expect("the submitted slot");
+            slot.execute(|work| {
+                hold_past_the_deadline();
+                work == WORK
+            })
+        });
+        assert_eq!(
+            slot.hand_over(WORK, || tx.send(slot).is_ok()),
+            HandoffOutcome::Done,
+            "an item the executor took is being served, however slowly; the deadline is \
+             there for the one lost on the way"
         );
-        for settled in [Phase::Idle, Phase::Done(true), Phase::Done(false), Phase::Lost] {
-            assert!(!waited_out(settled), "{settled:?} is not a wait");
+        assert!(executor.join().expect("the executor"));
+    }
+
+    #[test]
+    fn a_phase_that_is_settled_or_served_is_never_waited_out() {
+        assert!(waited_out(Phase::Queued), "a queued item may never have landed");
+        for settled in [
+            Phase::Idle,
+            Phase::Running,
+            Phase::Done(true),
+            Phase::Done(false),
+            Phase::Lost,
+        ] {
+            assert!(!waited_out(settled), "{settled:?} is not a wait to be cut short");
         }
     }
 

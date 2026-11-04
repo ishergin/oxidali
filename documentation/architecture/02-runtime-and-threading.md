@@ -116,11 +116,15 @@ registry locking → [06](06-registry-and-persistence.md).
   because the control socket may drop the datagram and answer success. The sender's
   deadline covers only the wait for the httpd task to **take** the request: one being
   served is waited for however long its sends take, so a slow client is never read as a
-  lost one. A request that was never taken ends its client's session —
-  `httpd_sess_trigger_close`, since no frame of ours can reach a socket whose sends are
-  not landing — and its slot stays out of rotation until that request lands; the pool
-  holds one slot per sender, so losing them all refuses upgrades
-  (`websocket.upgrades_rejected_total`) until a reboot.
+  lost one, and the deadline itself is above the socket timeouts of a whole batch.
+- A request that was never taken drops its client and keeps its slot out of rotation
+  until that request lands, so a datagram the control socket really dropped costs the
+  slot until a reboot; the pool holds one slot per sender, and losing them all refuses
+  upgrades (`websocket.upgrades_rejected_total` in `/api/v1/diagnostics`).
+- Only the httpd task closes a socket: it resolves the session without a lock, so off
+  the task the fd may already serve another session. A socket whose client is gone is
+  closed by the first frame the client sends — the handler finds no client behind the
+  session — or reclaimed by the httpd LRU purge.
 - Bounds that keep it there: sniffer records batched into one frame per 100 ms under a
   2048-byte payload budget (a byte cap, enforced where the bytes exist; shed records are
   reported in `dropped_since`); a per-client queue bounded by 32 frames and 16 KiB,

@@ -2,15 +2,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dali2rust_ws_runtime::{HandoffOutcome, SendSlot, SlotPool, WsSink, WsSinkError};
+use dali2rust_ws_runtime::{
+    HandoffOutcome, SendSlot, SlotPool, WsSink, WsSinkError, SENDER_BATCH_FRAMES,
+};
 use esp_idf_svc::http::server::ws::EspHttpWsDetachedSender;
 use esp_idf_svc::sys::{
-    httpd_handle_t, httpd_queue_work, httpd_sess_trigger_close, httpd_ws_frame_t,
-    httpd_ws_send_frame_async, httpd_ws_type_t, httpd_ws_type_t_HTTPD_WS_TYPE_CLOSE,
-    httpd_ws_type_t_HTTPD_WS_TYPE_TEXT, ESP_OK,
+    httpd_handle_t, httpd_queue_work, httpd_ws_frame_t, httpd_ws_send_frame_async, httpd_ws_type_t,
+    httpd_ws_type_t_HTTPD_WS_TYPE_CLOSE, httpd_ws_type_t_HTTPD_WS_TYPE_TEXT, ESP_OK,
 };
 
-const SEND_DEADLINE: Duration = Duration::from_secs(30);
+const SOCKET_SEND_TIMEOUT_S: u64 = 5;
+
+const SENDS_PER_FRAME: u64 = 2;
+
+const SEND_DEADLINE: Duration =
+    Duration::from_secs(SOCKET_SEND_TIMEOUT_S * SENDS_PER_FRAME * SENDER_BATCH_FRAMES as u64);
 
 pub type WsSlotPool = SlotPool<SendWork>;
 
@@ -89,16 +95,10 @@ impl DirectWsSink {
             return Ok(());
         }
         self.closed.store(true, Ordering::Release);
-        if outcome == HandoffOutcome::Lost && !self.session.is_closed() {
-            log::warn!("ws: fd {} waited out its queued send; closing it", self.fd);
-            self.close_socket();
+        if outcome == HandoffOutcome::Lost {
+            log::warn!("ws: fd {} waited out its queued send; dropping it", self.fd);
         }
         Err(WsSinkError::Closed)
-    }
-
-    fn close_socket(&self) {
-        // SAFETY: esp-idf's own way to close a session from another task; the handle and socket are this sink's.
-        unsafe { httpd_sess_trigger_close(self.server, self.fd) };
     }
 }
 

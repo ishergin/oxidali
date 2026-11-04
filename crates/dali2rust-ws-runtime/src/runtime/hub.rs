@@ -21,7 +21,7 @@ const SENDERS_PER_CLIENT_SLOT: usize = 2;
 
 const CLIENT_QUEUE_DEPTH: usize = 32;
 
-const SENDER_BATCH_FRAMES: usize = CLIENT_QUEUE_DEPTH + 1;
+pub const SENDER_BATCH_FRAMES: usize = CLIENT_QUEUE_DEPTH + 1;
 
 const MAX_CLIENT_QUEUE_BYTES: usize = 16 * 1024;
 
@@ -222,6 +222,10 @@ impl WsHub {
 
     pub fn client_count(&self) -> usize {
         self.lock().len()
+    }
+
+    pub fn knows(&self, id: ClientId) -> bool {
+        self.lock().iter().any(|c| c.id == id)
     }
 
     pub fn handle_client_text(&self, id: ClientId, text: &str) {
