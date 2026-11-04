@@ -151,25 +151,28 @@ def test_an_rgb_colour_object_lands_as_an_rgb_setpoint(ha_guard, api, mqtt_count
     set_topic = ha_guard.topic("a0/vl/%d/set" % vl_id)
     state_topic = ha_guard.topic("a0/vl/%d/state" % vl_id)
 
+    def landed():
+        state = _vl_state(api, vl_id)
+        return (state["rgb"] == RGB_TARGET and state["level"] == RGB_LEVEL
+                and state["power"] == "on")
+
+    assert not landed(), (
+        "INCONCLUSIVE, not a product failure: the lamp already shows the triple and the "
+        "level the command carries, so landing it would prove nothing")
     _command_with_ledger(
         api, hil_config, set_topic,
         '{"state":"ON","brightness":%d,"color":{"r":%d,"g":%d,"b":%d}}'
         % (RGB_LEVEL, RGB_TARGET["r"], RGB_TARGET["g"], RGB_TARGET["b"]),
-        lambda: _vl_state(api, vl_id)["color_mode"] == "rgb",
-        "mqtt_rgb_first_command")
+        landed, "mqtt_rgb_first_command")
 
     state = _vl_state(api, vl_id)
-    assert state["power"] == "on" and state["level"] == RGB_LEVEL, state
-    assert state["rgb"] == RGB_TARGET, (
-        "an HA colour object must land as the sRGB triple it names: %r" % (state,))
+    assert state["color_mode"] == "rgb", (
+        "an HA colour object must land as an rgb setpoint: %r" % (state,))
 
     assert wait_until(
         lambda: (mqtt_tap.retained_json(hil_config, state_topic) or {}
-                 ).get("color_mode") == "rgb", STATE_WAIT_S), \
-        "the state topic never carried the rgb mode back"
-    payload = mqtt_tap.retained_json(hil_config, state_topic)
-    assert payload["color"] == RGB_TARGET, (
-        "the bridge must mirror the channels it accepted: %r" % (payload,))
+                 ).get("color") == RGB_TARGET, STATE_WAIT_S), \
+        "the state topic never carried the channels back"
 
     _pub(hil_config, set_topic, '{"state":"OFF"}')
     assert wait_until(lambda: _vl_state(api, vl_id)["power"] == "off", STATE_WAIT_S)
