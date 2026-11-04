@@ -106,8 +106,10 @@ struct HostWsSink {
 }
 
 impl WsSink for HostWsSink {
-    fn send_text(&self, text: &str) -> Result<(), WsSinkError> {
-        self.send(Message::Text(text.into()))
+    fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
+        frames
+            .iter()
+            .try_for_each(|frame| self.send(Message::Text(frame.as_ref().into())))
     }
 
     fn close(&self) {

@@ -21,6 +21,10 @@ const SENDERS_PER_CLIENT_SLOT: usize = 2;
 
 const CLIENT_QUEUE_DEPTH: usize = 32;
 
+const SENDER_BATCH_FRAMES: usize = CLIENT_QUEUE_DEPTH + 1;
+
+pub const WS_SENDER_SLOTS: usize = MAX_WS_CLIENTS * SENDERS_PER_CLIENT_SLOT;
+
 const MAX_CLIENT_QUEUE_BYTES: usize = 16 * 1024;
 
 const DEFAULT_LOG_LEVEL: LogLevel = LogLevel::Info;
@@ -546,18 +550,35 @@ struct SenderEnds {
 }
 
 impl SenderEnds {
+    fn serve(self: Box<Self>) {
+        self.pump();
+        self.shut();
+    }
+
+    fn pump(&self) {
+        let mut batch: Vec<Arc<str>> = Vec::with_capacity(SENDER_BATCH_FRAMES);
+        while let Ok(first) = self.rx.recv() {
+            batch.push(first);
+            batch.extend(self.rx.try_iter());
+            self.release_bytes(&batch);
+            if let Err(err) = self.sink.send_batch(&batch) {
+                log::info!("ws: client {} send failed ({err:?}); closing", self.id);
+                return;
+            }
+            batch.clear();
+        }
+    }
+
+    fn release_bytes(&self, batch: &[Arc<str>]) {
+        let bytes: usize = batch.iter().map(|frame| frame.len()).sum();
+        self.queued_bytes.fetch_sub(bytes, Ordering::Relaxed);
+    }
+
     #[allow(
         clippy::boxed_local,
         reason = "boxed, the ends stay off the ws-client stack: its frame holds a pointer"
     )]
-    fn serve(self: Box<Self>) {
-        while let Ok(text) = self.rx.recv() {
-            self.queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
-            if let Err(err) = self.sink.send_text(&text) {
-                log::info!("ws: client {} send failed ({err:?}); closing", self.id);
-                break;
-            }
-        }
+    fn shut(self: Box<Self>) {
         for text in self.rx.try_iter() {
             self.queued_bytes.fetch_sub(text.len(), Ordering::Relaxed);
         }
@@ -585,15 +606,15 @@ mod tests {
     }
 
     impl WsSink for RecordingSink {
-        fn send_text(&self, text: &str) -> Result<(), WsSinkError> {
+        fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
             if *self.gate.lock().unwrap() {
                 return Err(WsSinkError::Closed);
             }
-            self.tx
-                .lock()
-                .unwrap()
-                .send(text.to_string())
-                .map_err(|_| WsSinkError::Closed)
+            let tx = self.tx.lock().unwrap();
+            for frame in frames {
+                tx.send(frame.to_string()).map_err(|_| WsSinkError::Closed)?;
+            }
+            Ok(())
         }
         fn close(&self) {}
     }
@@ -625,7 +646,7 @@ mod tests {
     }
 
     impl WsSink for ThreadSink {
-        fn send_text(&self, _text: &str) -> Result<(), WsSinkError> {
+        fn send_batch(&self, _frames: &[Arc<str>]) -> Result<(), WsSinkError> {
             self.senders.lock().unwrap().insert(std::thread::current().id());
             Ok(())
         }
@@ -1155,14 +1176,15 @@ mod tests {
     }
 
     impl WsSink for PausedSink {
-        fn send_text(&self, text: &str) -> Result<(), WsSinkError> {
+        fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
             let (lock, released) = &*self.hold;
             let mut held = lock.lock().unwrap();
             while *held {
                 held = released.wait(held).unwrap();
             }
             drop(held);
-            self.frames.lock().unwrap().push(text.to_string());
+            let mut seen = self.frames.lock().unwrap();
+            seen.extend(frames.iter().map(|frame| frame.to_string()));
             Ok(())
         }
         fn close(&self) {}

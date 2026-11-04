@@ -107,6 +107,13 @@ registry locking → [06](06-registry-and-persistence.md).
   calls `httpd_ws_send_frame_async`) and occupies the task every socket shares.
   `esp-idf-svc` fixes the send timeout at 5 s, so the design case is one 5 s stall of
   every socket.
+- A client's whole backlog travels as **one** work item, not one per frame: the httpd
+  loop takes one control message per turn, so a sender that queued each frame on its own
+  got no more than a frame a turn under REST load.
+- The queued request lives in the client's send slot, never on the sender's stack, and
+  the sender waits for its outcome with a deadline: the control socket may drop the
+  datagram and answer success. A request whose work item never lands keeps its slot out
+  of rotation — the pool holds one slot per sender — and its client is closed.
 - Bounds that keep it there: sniffer records batched into one frame per 100 ms under a
   2048-byte payload budget (a byte cap, enforced where the bytes exist; shed records are
   reported in `dropped_since`); a per-client queue bounded by 32 frames and 16 KiB,

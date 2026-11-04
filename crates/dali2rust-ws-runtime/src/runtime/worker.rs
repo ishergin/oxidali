@@ -585,7 +585,7 @@ mod tests {
     }
 
     impl WsSink for PausedSink {
-        fn send_text(&self, text: &str) -> Result<(), WsSinkError> {
+        fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
             self.entered.fetch_add(1, Ordering::SeqCst);
             let (lock, released) = &*self.hold;
             let mut held = lock.lock().unwrap();
@@ -593,7 +593,8 @@ mod tests {
                 held = released.wait(held).unwrap();
             }
             drop(held);
-            self.frames.lock().unwrap().push(text.to_string());
+            let mut seen = self.frames.lock().unwrap();
+            seen.extend(frames.iter().map(|frame| frame.to_string()));
             Ok(())
         }
         fn close(&self) {}
