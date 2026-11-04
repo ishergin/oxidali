@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dali2rust_bus::{
@@ -19,22 +20,29 @@ use dali2rust_mqtt_runtime::{
     MQTT_WORKER_HANDLED_COMMANDS, MQTT_WORKER_HANDLED_EVENTS,
 };
 
-pub struct StubSettings(Mutex<HomeAssistantSettingsView>);
+pub struct StubSettings(Mutex<HomeAssistantSettingsView>, AtomicU32);
 
 impl StubSettings {
     pub fn new(view: HomeAssistantSettingsView) -> Arc<Self> {
-        Arc::new(Self(Mutex::new(view)))
+        Arc::new(Self(Mutex::new(view), AtomicU32::new(0)))
     }
 
     #[allow(dead_code, reason = "one binary per test file; not every file flips settings")]
     pub fn set(&self, view: HomeAssistantSettingsView) {
         *self.0.lock().unwrap() = view;
     }
+
+    #[allow(dead_code, reason = "one binary per test file; not every file waits for a read")]
+    pub fn reads(&self) -> u32 {
+        self.1.load(Ordering::Relaxed)
+    }
 }
 
 impl HomeAssistantSettingsReadPort for StubSettings {
     fn home_assistant_settings_view(&self) -> HomeAssistantSettingsView {
-        self.0.lock().unwrap().clone()
+        let view = self.0.lock().unwrap();
+        self.1.fetch_add(1, Ordering::Relaxed);
+        view.clone()
     }
 }
 

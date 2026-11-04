@@ -13,10 +13,7 @@ use dali2rust_domain::registry::{
 use dali2rust_platform::mqtt::{MqttClient, MqttIncoming, MqttLink};
 
 use crate::counters::MqttCounters;
-use crate::runtime::dial::{
-    ensure_session, park_after_failed_dial, ready, restart_if_settings_changed, stand_down,
-    DialPacer,
-};
+use crate::runtime::dial::{ensure_session, park_after_failed_dial, ready, stand_down, DialPacer};
 use crate::runtime::discovery::{advance_job, DiscoveryJob};
 use crate::runtime::ha_out::HaOut;
 use crate::runtime::inbound::serve_inbound;
@@ -97,7 +94,6 @@ fn run(
             WORKER_STACK.note("stand-down");
             continue;
         }
-        restart_if_settings_changed(&mut client, session, topics, settings, password, &ports);
         if !ensure_session(&mut client, session, topics, job, settings, password, pacer, &ports, rules)
         {
             park_after_failed_dial(&ev_rx, job, pacer, &link, &ports);

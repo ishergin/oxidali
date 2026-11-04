@@ -38,11 +38,15 @@ impl DialPacer {
         if self.failures == 0 {
             return false;
         }
-        if self.dialled != session_settings_fingerprint(settings, password) {
+        if self.dialled_other(settings, password) {
             return false;
         }
         let step = (self.failures.saturating_sub(1) as usize).min(REDIAL_BACKOFF.len() - 1);
         at.elapsed() < REDIAL_BACKOFF[step]
+    }
+
+    fn dialled_other(&self, settings: &HomeAssistantSettingsView, password: &str) -> bool {
+        self.dialled != session_settings_fingerprint(settings, password)
     }
 
     fn note_attempt(&mut self, settings: &HomeAssistantSettingsView, password: &str) {
@@ -70,27 +74,23 @@ pub(super) fn ready(
 }
 
 #[inline(never)]
-pub(super) fn restart_if_settings_changed(
+fn restart_if_settings_changed(
     client: &mut Box<dyn MqttClient>,
     session: &mut Session,
     topics: &HaTopics,
     settings: &HomeAssistantSettingsView,
     password: &str,
-    ports: &MqttWorkerPorts,
-) {
-    if !client.link().is_connected() {
-        return;
+    pacer: &DialPacer,
+) -> bool {
+    if !pacer.dialled_other(settings, password) {
+        return false;
     }
-    if session.generation == 0 {
-        return;
+    if session.generation == client.link().session_generation() {
+        announce_offline(client.as_mut(), topics);
     }
-    if session.dialled_with == session_settings_fingerprint(settings, password) {
-        return;
-    }
-    announce_offline(client.as_mut(), topics);
     client.disconnect();
-    ports.counters.set_connected(false);
     *session = Session::default();
+    true
 }
 
 #[allow(clippy::too_many_arguments, reason = "the loop's state is threaded, not rebuilt")]
@@ -107,10 +107,12 @@ pub(super) fn ensure_session(
     rules: &mut RuleTopicCache,
 ) -> bool {
     let link = client.link();
-    if !link.is_connected() || link.session_generation() != session.generation {
+    let redial = !link.is_connected()
+        || restart_if_settings_changed(client, session, topics, settings, password, pacer);
+    if redial || link.session_generation() != session.generation {
         end_rule_session(rules, ports);
     }
-    if !link.is_connected() {
+    if redial {
         ports.counters.set_connected(false);
         if !dial(client, &link, settings, password, pacer, ports) {
             return false;
@@ -118,7 +120,7 @@ pub(super) fn ensure_session(
     }
     pacer.established();
     if link.session_generation() != session.generation
-        && !begin_session(client, &link, session, topics, job, settings, password, ports)
+        && !begin_session(client, &link, session, topics, job, settings, ports)
     {
         return false;
     }
@@ -130,7 +132,6 @@ pub(super) fn ensure_session(
     true
 }
 
-#[allow(clippy::too_many_arguments, reason = "the loop's state is threaded, not rebuilt")]
 #[inline(never)]
 fn begin_session(
     client: &mut Box<dyn MqttClient>,
@@ -139,7 +140,6 @@ fn begin_session(
     topics: &mut HaTopics,
     job: &mut Option<DiscoveryJob>,
     settings: &HomeAssistantSettingsView,
-    password: &str,
     ports: &MqttWorkerPorts,
 ) -> bool {
     let announced = topics_of(settings);
@@ -151,11 +151,7 @@ fn begin_session(
             return false;
         }
     };
-    session.begin(
-        link.session_generation(),
-        session_settings_fingerprint(settings, password),
-        &announced,
-    );
+    session.begin(link.session_generation(), &announced);
     for (filter, message_id) in &sent {
         session.subscriptions.sent(filter, *message_id);
     }
@@ -290,6 +286,7 @@ mod tests {
     use crate::client::{MockMqttClient, MockMqttHandle};
     use crate::counters::MqttCounters;
     use crate::runtime::rule_traffic::pace_rule_message;
+    use crate::runtime::session::PAYLOAD_ONLINE;
     use dali2rust_bus::{BusId, BusPublisher};
     use dali2rust_domain::registry::{
         HaGroupView, HaLampView, HaPublishReadPort, HaSceneView, HomeAssistantSecretReadPort,
@@ -472,6 +469,62 @@ mod tests {
             &mut rules,
         ));
         assert!(ports.counters.is_connected(), "every SUBACK in: the gauge reads 1");
+    }
+
+    fn settings_for(controller_id: &str) -> HomeAssistantSettingsView {
+        HomeAssistantSettingsView {
+            enabled: true,
+            broker_host: "broker.example".to_string(),
+            controller_id: controller_id.to_string(),
+            ..HomeAssistantSettingsView::default()
+        }
+    }
+
+    struct Turns {
+        client: Box<dyn MqttClient>,
+        session: Session,
+        topics: HaTopics,
+        job: Option<DiscoveryJob>,
+        pacer: DialPacer,
+        rules: RuleTopicCache,
+    }
+
+    impl Turns {
+        fn on(mock: &Arc<MockMqttClient>) -> Self {
+            Self {
+                client: Box::new(MockMqttHandle::new(Arc::clone(mock))),
+                session: Session::default(),
+                topics: HaTopics::default(),
+                job: None,
+                pacer: DialPacer::default(),
+                rules: RuleTopicCache::default(),
+            }
+        }
+
+        fn turn(&mut self, settings: &HomeAssistantSettingsView, ports: &MqttWorkerPorts) -> bool {
+            let Self { client, session, topics, job, pacer, rules } = self;
+            ensure_session(client, session, topics, job, settings, "", pacer, ports, rules)
+        }
+    }
+
+    #[test]
+    fn a_stale_link_says_nothing_on_the_topics_of_a_session_it_never_carried() {
+        let (ports, _host) = test_ports();
+        let (mock, _incoming) = MockMqttClient::new();
+        let mut turns = Turns::on(&mock);
+        let (first, dialled, current) = (settings_for("ctl1"), settings_for("ctl2"), settings_for("ctl3"));
+        assert!(turns.turn(&first, &ports), "the first session opens at once");
+        mock.stall_next_connects(1);
+        mock.set_connected(false);
+        assert!(!turns.turn(&dialled, &ports), "the redial is in flight");
+        mock.set_connected(true);
+        assert!(turns.turn(&current, &ports), "the stale link is replaced in the same turn");
+        let first_said: Vec<_> =
+            mock.published_on(&topics_of(&first).availability_topic()).into_iter().map(|m| m.payload).collect();
+        assert_eq!(first_said, vec![PAYLOAD_ONLINE.as_bytes().to_vec()], "only the first session's own birth");
+        assert!(mock.published_on(&topics_of(&dialled).availability_topic()).is_empty());
+        assert_eq!(mock.session_config().map(|c| c.client_id), Some("ctl3".to_string()));
+        assert_eq!(mock.connect_calls(), 3, "one dial per settings, no more");
     }
 
     const RULE_MESSAGE_WAIT_PROOF_MS: u32 = 1_000;

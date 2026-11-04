@@ -11,6 +11,10 @@ use support::{
 
 const RECOVERY_WAIT: Duration = Duration::from_secs(20);
 const PUBLISH_WAIT: Duration = Duration::from_secs(6);
+const DIALLED_AVAILABILITY: &str = "dali/ctl1/availability";
+const MOVED_BROKER: &str = "broker2.test";
+const MOVED_CONTROLLER: &str = "ctl2";
+const MOVED_AVAILABILITY: &str = "dali/ctl2/availability";
 
 fn bridge_refusing_its_first_dials(refusals: u32) -> Harness {
     let settings = StubSettings::new(dali2rust_domain::registry::HomeAssistantSettingsView {
@@ -99,6 +103,58 @@ fn a_dial_still_in_flight_is_not_dialled_again() {
     let counters = std::sync::Arc::clone(&h.counters);
     wait_until(move || counters.is_connected(), RECOVERY_WAIT);
     assert_eq!(h.mock.connect_calls(), 1, "one dial, one session");
+}
+
+fn moved_settings() -> dali2rust_domain::registry::HomeAssistantSettingsView {
+    dali2rust_domain::registry::HomeAssistantSettingsView {
+        broker_host: MOVED_BROKER.to_string(),
+        controller_id: MOVED_CONTROLLER.to_string(),
+        ..enabled_settings()
+    }
+}
+
+fn settings_moved_under_a_dial_in_flight() -> (Harness, u32) {
+    let settings = StubSettings::new(dali2rust_domain::registry::HomeAssistantSettingsView {
+        enabled: false,
+        ..enabled_settings()
+    });
+    let h = spawn_bridge(std::sync::Arc::clone(&settings), StubHaReadPort::with_lamp(1));
+    h.mock.stall_next_connects(1);
+    settings.set(enabled_settings());
+    let mock = std::sync::Arc::clone(&h.mock);
+    wait_until(move || mock.connect_calls() >= 1, RECOVERY_WAIT);
+    settings.set(moved_settings());
+    let read_before = settings.reads();
+    wait_until(move || settings.reads() > read_before, RECOVERY_WAIT);
+    let disconnects = h.mock.disconnect_calls();
+    h.mock.set_connected(true);
+    (h, disconnects)
+}
+
+#[test]
+fn a_dial_that_lands_after_a_settings_change_is_redialled_before_anything_is_announced() {
+    let (h, disconnects) = settings_moved_under_a_dial_in_flight();
+
+    let mock = std::sync::Arc::clone(&h.mock);
+    wait_until(move || mock.connect_calls() >= 2, RECOVERY_WAIT);
+    let counters = std::sync::Arc::clone(&h.counters);
+    wait_until(move || counters.is_connected(), RECOVERY_WAIT);
+    let mock = std::sync::Arc::clone(&h.mock);
+    assert!(
+        remains_false_for(move || mock.connect_calls() > 2, Duration::from_secs(1)),
+        "one redial, not {} dials",
+        h.mock.connect_calls()
+    );
+    assert_eq!(h.mock.disconnect_calls(), disconnects + 1, "the stale link was closed once");
+    let config = h.mock.session_config().expect("the redial carried a session");
+    assert_eq!((config.broker_host.as_str(), config.client_id.as_str()), (MOVED_BROKER, MOVED_CONTROLLER));
+    let will = config.last_will.map(|will| will.topic);
+    assert_eq!(will.as_deref(), Some(MOVED_AVAILABILITY), "the will names the new namespace");
+    let births = h.mock.published_on(MOVED_AVAILABILITY);
+    assert_eq!(births.len(), 1, "one birth, on the link dialled with the new settings: {births:?}");
+    assert_eq!(births[0].payload, b"online");
+    let dialled = h.mock.published_on(DIALLED_AVAILABILITY);
+    assert!(dialled.is_empty(), "nothing went to the namespace the stale link was dialled for: {dialled:?}");
 }
 
 #[test]
