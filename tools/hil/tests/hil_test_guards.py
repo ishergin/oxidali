@@ -1,12 +1,13 @@
 import datetime
 import os
+import subprocess
 import time
 
 import pytest
 from requests import RequestException
 
 from hil import api as api_mod
-from hil import prod_state
+from hil import mqtt_tap, prod_state
 from hil import virtual_gear, write_log
 from hil.lamp_guard import (HA_TEST_NAMESPACE, RULE_SEPARATOR, LampNotAllowed, shown_keys,
                             spell)
@@ -16,6 +17,8 @@ from hil_session_guards import refuse_schedule_suspension
 from hil_session import LIGHT_MARKER
 
 TEARDOWN_RETRY_S = 2.0
+BRIDGE_LEAVE_S = 30.0
+ONLINE = "online"
 
 
 RULES_SOURCE_LIMIT_BYTES = 12_240
@@ -420,10 +423,44 @@ def namespace_controller_id():
     return HA_TEST_NAMESPACE["controller_id"]
 
 
+def _still_announced(hil_config, availability_topic):
+    try:
+        return mqtt_tap.retained(hil_config, availability_topic) == ONLINE
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
+def _sweep(hil_config, retained_filters):
+    unswept = []
+    for filt in retained_filters:
+        try:
+            for topic in mqtt_tap.collect_retained(hil_config, filt):
+                mqtt_tap.clear_retained(hil_config, topic)
+        except (OSError, subprocess.SubprocessError) as exc:
+            unswept.append("%s (%s)" % (filt, exc))
+    return unswept
+
+
+def leave_ha_namespace(api, hil_config, before, availability_topic, retained_filters):
+    announced = _still_announced(hil_config, availability_topic)
+    try:
+        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE
+                      if k in before})
+        left = not announced or wait_until(
+            lambda: not _still_announced(hil_config, availability_topic), BRIDGE_LEAVE_S)
+    finally:
+        unswept = _sweep(hil_config, retained_filters)
+    if not left:
+        pytest.fail("the bridge still announces %r on %s %.0f s after its settings were "
+                    "restored, so its retained farewell may land after the sweep"
+                    % (ONLINE, availability_topic, BRIDGE_LEAVE_S), pytrace=False)
+    if unswept:
+        pytest.fail("ha_guard could not sweep %s from the owner's broker" % ", ".join(unswept),
+                    pytrace=False)
+
+
 @pytest.fixture()
 def ha_guard(api, hil_config):
-    from hil import mqtt_tap
-
     before = api.ha.get()
     if before.get("controller_id") == namespace_controller_id():
         pytest.fail(
@@ -468,14 +505,8 @@ def ha_guard(api, hil_config):
     try:
         yield Guard()
     finally:
-        for filt in Guard.retained_filters:
-            try:
-                for topic in mqtt_tap.collect_retained(hil_config, filt):
-                    mqtt_tap.clear_retained(hil_config, topic)
-            except Exception:
-                pass
-        api.ha.patch({k: before[k] for k in api_mod._HomeAssistantSettings.RESTORABLE
-                      if k in before})
+        leave_ha_namespace(api, hil_config, before, Guard.topic("availability"),
+                           Guard.retained_filters)
 
 
 class _Clock:
