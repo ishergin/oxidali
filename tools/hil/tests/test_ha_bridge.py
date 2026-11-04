@@ -17,6 +17,8 @@ pytestmark = pytest.mark.ha_bridge
 CONNECT_WAIT_S = 20.0
 STATE_WAIT_S = 12.0
 COLOR_RAMP_S = 3.0
+RGB_LEVEL = 140
+RGB_TARGET = {"r": 254, "g": 0, "b": 120}
 
 
 def _vl_state(api, vl_id):
@@ -25,6 +27,10 @@ def _vl_state(api, vl_id):
 
 def _exposed_cct(lamp):
     return lamp["ha_entity_enabled"] and lamp["capabilities"]["cct"]
+
+
+def _exposed_rgb(lamp):
+    return lamp["ha_entity_enabled"] and lamp["capabilities"]["rgb"]
 
 
 def _cct_lamp(api):
@@ -60,16 +66,21 @@ def _pub(hil_config, topic, payload):
     mqtt_tap.publish(hil_config, topic, payload)
 
 
-def _cct_command_with_ledger(api, hil_config, topic, payload, vl_id, kelvin):
+def _command_with_ledger(api, hil_config, topic, payload, settled, ledger):
     _pub(hil_config, topic, payload)
-    if wait_until(lambda: _vl_state(api, vl_id)["color_temperature_kelvin"] == kelvin,
-                  STATE_WAIT_S):
+    if wait_until(settled, STATE_WAIT_S):
         return
-    api.retries["mqtt_cct_first_command"] += 1
+    api.retries[ledger] += 1
     _pub(hil_config, topic, payload)
-    assert wait_until(
+    assert wait_until(settled, STATE_WAIT_S), \
+        "the command did not land after one retry counted as %s" % ledger
+
+
+def _cct_command_with_ledger(api, hil_config, topic, payload, vl_id, kelvin):
+    _command_with_ledger(
+        api, hil_config, topic, payload,
         lambda: _vl_state(api, vl_id)["color_temperature_kelvin"] == kelvin,
-        STATE_WAIT_S), "CCT command did not land after one counted retry"
+        "mqtt_cct_first_command")
 
 
 def test_session_discovery_and_kelvin_dialect(ha_guard, api, mqtt_counters, hil_config):
@@ -125,6 +136,40 @@ def test_cct_round_trip_and_colour_only_power(ha_guard, api, mqtt_counters,
         "a colour-only change must not regress a lit lamp to OFF"
     assert payload["brightness"] == 140
     assert "color_temp_kelvin" not in payload, "config flag name is not a payload key"
+
+    _pub(hil_config, set_topic, '{"state":"OFF"}')
+    assert wait_until(lambda: _vl_state(api, vl_id)["power"] == "off", STATE_WAIT_S)
+
+
+@pytest.mark.hil_id("HIL-MQTT-14")
+@pytest.mark.light
+def test_an_rgb_colour_object_lands_as_an_rgb_setpoint(ha_guard, api, mqtt_counters,
+                                                       hil_config, state_snapshot):
+    vl_id, _short = allowed_bound_lamp(
+        api, "an MQTT command carrying an RGB colour object", _exposed_rgb)
+    _enter_and_connect(ha_guard, api, mqtt_counters)
+    set_topic = ha_guard.topic("a0/vl/%d/set" % vl_id)
+    state_topic = ha_guard.topic("a0/vl/%d/state" % vl_id)
+
+    _command_with_ledger(
+        api, hil_config, set_topic,
+        '{"state":"ON","brightness":%d,"color":{"r":%d,"g":%d,"b":%d}}'
+        % (RGB_LEVEL, RGB_TARGET["r"], RGB_TARGET["g"], RGB_TARGET["b"]),
+        lambda: _vl_state(api, vl_id)["color_mode"] == "rgb",
+        "mqtt_rgb_first_command")
+
+    state = _vl_state(api, vl_id)
+    assert state["power"] == "on" and state["level"] == RGB_LEVEL, state
+    assert state["rgb"] == RGB_TARGET, (
+        "an HA colour object must land as the sRGB triple it names: %r" % (state,))
+
+    assert wait_until(
+        lambda: (mqtt_tap.retained_json(hil_config, state_topic) or {}
+                 ).get("color_mode") == "rgb", STATE_WAIT_S), \
+        "the state topic never carried the rgb mode back"
+    payload = mqtt_tap.retained_json(hil_config, state_topic)
+    assert payload["color"] == RGB_TARGET, (
+        "the bridge must mirror the channels it accepted: %r" % (payload,))
 
     _pub(hil_config, set_topic, '{"state":"OFF"}')
     assert wait_until(lambda: _vl_state(api, vl_id)["power"] == "off", STATE_WAIT_S)
