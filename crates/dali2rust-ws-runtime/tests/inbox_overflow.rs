@@ -13,8 +13,9 @@ struct RecordingSink {
 }
 
 impl WsSink for RecordingSink {
-    fn send_text(&self, text: &str) -> Result<(), WsSinkError> {
-        self.frames.lock().expect("frames").push(text.to_string());
+    fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
+        let mut seen = self.frames.lock().expect("frames");
+        seen.extend(frames.iter().map(|frame| frame.to_string()));
         Ok(())
     }
     fn close(&self) {}

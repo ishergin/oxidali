@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dali2rust_ws_runtime::{RegisterRejected, WsHub, WsSessions};
+use dali2rust_ws_runtime::{RegisterRejected, WsCounters, WsHub, WsSessions};
 use esp_idf_svc::http::server::ws::EspHttpWsConnection;
 use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::handle::RawHandle;
@@ -23,6 +23,7 @@ struct WsContext {
     hub: Arc<WsHub>,
     sessions: WsSessions,
     server: httpd_handle_t,
+    slots: super::esp_ws_send::WsSlotPool,
 }
 
 pub fn register_ws_handler(
@@ -30,10 +31,12 @@ pub fn register_ws_handler(
     hub: Arc<WsHub>,
 ) -> Result<(), EspError> {
     let handle = server.handle();
+    let slots = super::esp_ws_send::slot_pool(hub.sender_slots());
     let context = Box::new(WsContext {
         hub,
         sessions: WsSessions::new(),
         server: handle,
+        slots,
     });
     // SAFETY: one leak at boot; esp-idf keeps `user_ctx` for the registration, which is never removed.
     let context: &'static WsContext = Box::leak(context);
@@ -62,7 +65,7 @@ extern "C" fn ws_uri_handler(req: *mut httpd_req_t) -> esp_err_t {
     let method = unsafe { (*req).method };
     if method == http_method_HTTP_GET as i32 {
         let mut conn = EspHttpWsConnection::New(context.server, req);
-        open_session(&context.hub, &context.sessions, &mut conn, context.server);
+        open_session(context, &mut conn);
     } else {
         let mut conn = EspHttpWsConnection::Receiving(context.server, req, None);
         forward_client_frame(&context.hub, &context.sessions, &mut conn);
@@ -70,12 +73,8 @@ extern "C" fn ws_uri_handler(req: *mut httpd_req_t) -> esp_err_t {
     ESP_OK
 }
 
-fn open_session(
-    hub: &Arc<WsHub>,
-    sessions: &WsSessions,
-    conn: &mut EspHttpWsConnection,
-    server: httpd_handle_t,
-) {
+fn open_session(context: &'static WsContext, conn: &mut EspHttpWsConnection) {
+    let (hub, sessions, server) = (&context.hub, &context.sessions, context.server);
     let fd = conn.session();
     sessions.close(hub, fd);
     if let Some(reason) = refuse_reason(conn) {
@@ -90,7 +89,16 @@ fn open_session(
             return;
         }
     };
-    let sink = super::esp_ws_send::DirectWsSink::new(server, fd, session);
+    let Some(sink) = super::esp_ws_send::DirectWsSink::claim(&context.slots, server, fd, session)
+    else {
+        log::warn!(
+            "ws: no send slot left for fd {fd} ({} lost a queued send); refusing it",
+            context.slots.lost()
+        );
+        WsCounters::bump(&hub.counters().upgrades_rejected_total, 1);
+        refuse(conn, server, fd, RegisterRejected::CapacityExhausted);
+        return;
+    };
     match hub.register(Box::new(sink)) {
         Ok(id) => sessions.insert(fd, id),
         Err(reason) => refuse(conn, server, fd, reason),
@@ -187,6 +195,10 @@ fn read_client_frame(
     Ok(frame)
 }
 
+fn serves_a_client(hub: &Arc<WsHub>, sessions: &WsSessions, fd: i32) -> bool {
+    sessions.lookup(fd).is_some_and(|id| hub.knows(id))
+}
+
 fn forward_client_frame(hub: &Arc<WsHub>, sessions: &WsSessions, conn: &mut EspHttpWsConnection) {
     let EspHttpWsConnection::Receiving(server, raw_req, _) = conn else {
         return;
@@ -197,6 +209,11 @@ fn forward_client_frame(hub: &Arc<WsHub>, sessions: &WsSessions, conn: &mut EspH
         fail_connection(hub, sessions, conn, server);
         return;
     };
+    if !serves_a_client(hub, sessions, conn.session()) {
+        log::info!("ws: fd {} has no client left; closing it", conn.session());
+        fail_connection(hub, sessions, conn, server);
+        return;
+    }
     let payload = &buf[..frame.len];
     match classify(frame.type_) {
         ClientFrame::Text => {
