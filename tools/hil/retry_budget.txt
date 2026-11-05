@@ -16,6 +16,8 @@ optical_gear_colour_lag      0
 witness_fallbacks        0
 # One re-send of a CCT MQTT command whose DT8 staging lost its readback to the foreign master's traffic.
 mqtt_cct_first_command   1
+# The same for an MQTT command carrying an RGB colour object; no loss has been measured on this path.
+mqtt_rgb_first_command   0
 # Non-zero means wb-mqtt-dali jammed: check the delivered frames in the validity section, restart the service.
 foreign_master_silent    0
 # A multi-frame injection another master's frame split on the wire (the WB's own sweep), sent again.
