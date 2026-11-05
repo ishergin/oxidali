@@ -49,13 +49,6 @@ class RestLoadUnavailable(RuntimeError):
 
 
 class BenchLanLoad:
-    """REST load from the sniffer host, which shares the controller's LAN.
-
-    A client a wide-area hop away cannot hold the single `httpd` task busy: its
-    own round trip paces it. The deadline lives in the remote script, so a lost
-    ssh session cannot leave a generator running on the board.
-    """
-
     def __init__(self, cfg, seconds, threads):
         self.seconds = seconds
         self.threads = threads
@@ -69,7 +62,7 @@ class BenchLanLoad:
             raise RestLoadUnavailable("ssh did not start: %s" % exc)
         self.proc.stdin.write(HAMMER)
         self.proc.stdin.close()
-        self.proc.stdin = None  # `python3 -` runs the script at EOF; communicate() must not flush it
+        self.proc.stdin = None
         self._await_start()
 
     def _await_start(self):
