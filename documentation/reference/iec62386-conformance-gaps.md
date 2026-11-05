@@ -242,8 +242,11 @@ with the poller off; a YES sweeps the adapter's gear with status reads unless th
 poller reads `runtime_status` in its cycle, and the registry forgets the RAM state of a
 gear whose bit it sees set after it knew it clear
 ([09](../architecture/09-dali-protocol-rules.md) §Faults and identification; schedule,
-sweep and hold-off: [poller](../product-design/runtime-modules/poller/README.md)). With
-the watch on, what it does not see:
+sweep and hold-off: [poller](../product-design/runtime-modules/poller/README.md)). The
+default is deliberate: the watch pays a broadcast query every probe period and a sweep of
+status reads for every answer that is news, on a wire an operator and a foreign master
+share, and it buys back state an attribute read gives on demand. Whoever wants the stale
+level found without asking turns the watch on. With the watch on, what it does not see:
 
 - A second power cycle before anything clears the bit: the bit is already set.
 - A cycle after a clearing command that reached the gear but committed nothing to the
@@ -272,8 +275,6 @@ the watch on, what it does not see:
 
 Ordered by consequence per unit of work:
 
-1. §16.3 — `power_cycle_watch` closes it and is off by default, so the work left is
-   its default.
-2. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
-3. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
-4. §3 — the remaining memory-bank writes (bank 1's OEM identity, `RESET MEMORY BANK`), when a commissioning surface asks for them.
+1. §9.1 Part 202 — needed the day an emergency fixture joins the segment.
+2. §8 — the controller as a Part 103 control device; the route to DALI-2 certification.
+3. §3 — the remaining memory-bank writes (bank 1's OEM identity, `RESET MEMORY BANK`), when a commissioning surface asks for them.
