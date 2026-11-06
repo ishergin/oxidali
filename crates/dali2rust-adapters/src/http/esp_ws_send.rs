@@ -63,15 +63,6 @@ impl DirectWsSink {
         })
     }
 
-    fn work(&self, frames: &[Arc<str>], kind: httpd_ws_type_t) -> SendWork {
-        SendWork {
-            frames: frames.to_vec(),
-            kind,
-            server: self.server,
-            fd: self.fd,
-            session: self.session.clone(),
-        }
-    }
 
     fn send(&self, frames: &[Arc<str>], kind: httpd_ws_type_t) -> Result<(), WsSinkError> {
         if self.closed.load(Ordering::Acquire) || self.session.is_closed() {
@@ -79,8 +70,14 @@ impl DirectWsSink {
             return Err(WsSinkError::Closed);
         }
         let slot = self.slot;
-        let outcome = slot.hand_over(self.work(frames, kind), || self.queue(slot));
-        self.judge(outcome)
+        let work = || SendWork {
+            frames: frames.to_vec(),
+            kind,
+            server: self.server,
+            fd: self.fd,
+            session: self.session.clone(),
+        };
+        self.judge(slot.hand_over(work, || self.queue(slot)))
     }
 
     fn queue(&self, slot: &'static SendSlot<SendWork>) -> bool {
