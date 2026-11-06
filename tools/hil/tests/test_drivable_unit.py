@@ -12,6 +12,7 @@ WHAT = "a fan-out test"
 class _Session:
     def __init__(self, park):
         self.park = park
+        self.vl_of_short = {str(short): PARK_VL[str(short)] for short in park}
 
     def vl(self, short):
         return PARK_VL[str(short)]
@@ -64,3 +65,11 @@ def test_a_kind_comes_from_the_park_and_only_the_parks_own_kinds_exist():
         subject.kind_first("dt8")
     assert PARK_KINDS == ("dt6", "cct", "rgb")
     assert drivable_of(None, _Roster(ROSTER)).kind_first("cct") is None
+
+
+def test_a_matrix_guard_writes_back_only_the_sessions_rows_on_the_tier():
+    from hil_test_guards import ours_to_restore
+    rows = [{"virtual_lamp_id": 0}, {"virtual_lamp_id": 52}, {"virtual_lamp_id": 53}]
+    assert ours_to_restore(rows, None) == rows
+    assert ours_to_restore(rows, _Session(PARK)) == [{"virtual_lamp_id": 52},
+                                                     {"virtual_lamp_id": 53}]
