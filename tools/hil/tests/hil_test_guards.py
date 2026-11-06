@@ -140,13 +140,21 @@ def _teardown_write(api, what, fn):
         return fn()
 
 
+def ours_to_restore(rows, session):
+    if session is None:
+        return rows
+    ours = set(session.vl_of_short.values())
+    return [row for row in rows if row["virtual_lamp_id"] in ours]
+
+
 @pytest.fixture()
-def group_matrix_guard(api):
+def group_matrix_guard(api, virtual_gear_session):
     ask_guard(api, "POST", "adapters/%d/groups/apply" % api.adapter)
     before = api.groups.matrix()
     yield before
-    rows = [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
-            for r in before["rows"]]
+    rows = ours_to_restore(
+        [{"virtual_lamp_id": r["virtual_lamp_id"], "desired": r["desired"]}
+         for r in before["rows"]], virtual_gear_session)
     if rows:
         _teardown_write(api, "group matrix PATCH",
                         lambda: api.groups.matrix_patch(rows))
@@ -165,7 +173,7 @@ def _scene_desired_writeback(desired):
 
 
 @pytest.fixture()
-def scene_matrix_guard(api):
+def scene_matrix_guard(api, virtual_gear_session):
     guarded = []
 
     def guard(scene_id):
@@ -175,9 +183,10 @@ def scene_matrix_guard(api):
         return snap
     yield guard
     for scene_id, before in reversed(guarded):
-        rows = [{"virtual_lamp_id": r["virtual_lamp_id"],
-                 "desired": _scene_desired_writeback(r["desired"])}
-                for r in before["rows"]]
+        rows = ours_to_restore(
+            [{"virtual_lamp_id": r["virtual_lamp_id"],
+              "desired": _scene_desired_writeback(r["desired"])}
+             for r in before["rows"]], virtual_gear_session)
         if rows:
             _teardown_write(api, "scene %d matrix PATCH" % scene_id,
                             lambda: api.scenes.matrix_patch(scene_id, rows))
