@@ -11,6 +11,7 @@ from hil.config import load as load_config
 from hil.foreign import (PEER_LOG_STALE_S, ForeignMaster, ForeignMasterSilent, PeerLog,
                          frame_hex, frames_on_wire, interleaving, monitor_verdict, peer_note,
                          sniffed)
+from hil.foreign import ForeignMasterUnready, probe_until
 from hil.lamp_guard import LampNotAllowed, VirtualFence
 
 TOPIC = "/wb-dali/wb-dali_19_bus_1/bus_monitor"
@@ -155,6 +156,40 @@ class _Api:
 
     def segment_shorts(self):
         return []
+
+
+class _Gateway:
+    def __init__(self, fails):
+        self.fails, self.probes = fails, 0
+
+    def probe(self):
+        self.probes += 1
+        if self.probes <= self.fails:
+            raise RuntimeError("connection refused")
+        return {"ready": True}
+
+
+class _Clock:
+    def __init__(self):
+        self.at = 0.0
+
+    def now(self):
+        return self.at
+
+    def sleep(self, seconds):
+        self.at += seconds
+
+
+def test_a_gateway_that_is_still_coming_up_is_waited_for_and_a_dead_one_is_not():
+    clock, late = _Clock(), _Gateway(fails=3)
+    assert probe_until(late, window_s=30.0, gap_s=3.0, now=clock.now,
+                       sleep=clock.sleep) == {"ready": True}
+    assert late.probes == 4
+
+    clock, dead = _Clock(), _Gateway(fails=1000)
+    with pytest.raises(ForeignMasterUnready):
+        probe_until(dead, window_s=30.0, gap_s=3.0, now=clock.now, sleep=clock.sleep)
+    assert dead.probes == 11 and clock.at == 30.0
 
 
 PARK_SHORT, OUTSIDE_SHORT, FOREIGN_LEVEL = 16, 1, 77

@@ -96,6 +96,23 @@ asyncio.run(main())
 """
 
 
+PROBE_WINDOW_S = 75.0
+PROBE_GAP_S = 3.0
+
+
+def probe_until(master, window_s=PROBE_WINDOW_S, gap_s=PROBE_GAP_S, now=time.monotonic,
+                sleep=time.sleep):
+    deadline = now() + window_s
+    while True:
+        try:
+            return master.probe()
+        except Exception as exc:
+            if now() >= deadline:
+                raise ForeignMasterUnready(
+                    "the gateway did not answer within %.0fs: %s" % (window_s, exc))
+            sleep(gap_s)
+
+
 def remote_client_script(line):
     return _REMOTE_CLIENT % (FRAME_SETTLE_S, WS_PORT, line)
 
@@ -254,6 +271,10 @@ def injection_refusal(raw, compiled, adapter):
     if fired:
         return "the owner's rule(s) %s could fire on the event it carries" % fired
     return None
+
+
+class ForeignMasterUnready(RuntimeError):
+    pass
 
 
 class ForeignMasterError(RuntimeError):

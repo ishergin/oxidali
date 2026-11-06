@@ -273,10 +273,10 @@ def dut_reboot(api, hil_config, peer_api_if_any):
 
 @pytest.fixture(scope="session")
 def foreign(request, hil_config, api):
-    from hil.foreign import ForeignMaster
+    from hil.foreign import ForeignMaster, probe_until
     master = ForeignMaster(hil_config, api=api)
     try:
-        master.probe()
+        probe_until(master)
     except Exception as exc:
         pytest.skip("WB foreign master (lunatone ws) unavailable: %s" % exc)
     request.config._hil_counted = getattr(request.config, "_hil_counted", [])

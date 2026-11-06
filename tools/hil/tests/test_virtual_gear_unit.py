@@ -1216,6 +1216,14 @@ def test_owner_rules_that_watch_a_test_lamp_stop_the_light_tests():
     assert "SA2 reports no group membership" in conflicts(_RealTier("", masks={2: None}))[0]
 
 
+def test_the_parks_identity_read_asks_for_the_membership_the_rule_guard_demands():
+    assert "groups" in virtual_gear.IDENTITY_GROUPS.split(","), (
+        "the owner-rule guard refuses a park whose group membership was never read, so the "
+        "session's identity read is what must ask for it")
+    assert virtual_gear.real_tier_conflicts(_RealTier("", masks={2: None}), {2}) != []
+    assert virtual_gear.real_tier_conflicts(_RealTier("", masks={2: 0}), {2}) == []
+
+
 class _Groups(_RealTier):
     def __init__(self, masks, source="", answering=(), rows=()):
         super().__init__(source, masks=masks, rows=rows)
