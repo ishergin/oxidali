@@ -273,10 +273,10 @@ def dut_reboot(api, hil_config, peer_api_if_any):
 
 @pytest.fixture(scope="session")
 def foreign(request, hil_config, api):
-    from hil.foreign import ForeignMaster
+    from hil.foreign import ForeignMaster, probe_until
     master = ForeignMaster(hil_config, api=api)
     try:
-        master.probe()
+        probe_until(master)
     except Exception as exc:
         pytest.skip("WB foreign master (lunatone ws) unavailable: %s" % exc)
     request.config._hil_counted = getattr(request.config, "_hil_counted", [])
@@ -285,7 +285,7 @@ def foreign(request, hil_config, api):
 
 
 @pytest.fixture(scope="session")
-def fanout_supported(api, foreign, lamps, wait_state):
+def fanout_supported(api, foreign, drivable, wait_state):
     diag = api._req("GET", "diagnostics")
     if "sniffer_translator" not in diag:
         pytest.skip("pre-I1 firmware: /api/v1/diagnostics has no "
@@ -296,8 +296,7 @@ def fanout_supported(api, foreign, lamps, wait_state):
         return (d.get("sniffer_translator", {}).get("observed_published", 0),
                 d.get("projector", {}).get("runtime_updates_published", 0))
 
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     api.off(short)
     before = counters()
     foreign.dapc(short, 77)

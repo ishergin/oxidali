@@ -11,6 +11,8 @@ from hil.config import load as load_config
 from hil.foreign import (PEER_LOG_STALE_S, ForeignMaster, ForeignMasterSilent, PeerLog,
                          frame_hex, frames_on_wire, interleaving, monitor_verdict, peer_note,
                          sniffed)
+from hil.foreign import ForeignMasterUnready, probe_until
+from hil.lamp_guard import LampNotAllowed, VirtualFence
 
 TOPIC = "/wb-dali/wb-dali_19_bus_1/bus_monitor"
 DTR0_114 = {"bits": 16, "bytes": [0xA3, 0x72]}
@@ -149,8 +151,60 @@ def test_a_peer_that_sniffs_nothing_is_named_no_witness(tmp_path):
 class _Api:
     adapter = 0
 
+    def __init__(self, fence=None):
+        self.guard = types.SimpleNamespace(fence=fence)
+
     def segment_shorts(self):
         return []
+
+
+class _Gateway:
+    def __init__(self, fails):
+        self.fails, self.probes = fails, 0
+
+    def probe(self):
+        self.probes += 1
+        if self.probes <= self.fails:
+            raise RuntimeError("connection refused")
+        return {"ready": True}
+
+
+class _Clock:
+    def __init__(self):
+        self.at = 0.0
+
+    def now(self):
+        return self.at
+
+    def sleep(self, seconds):
+        self.at += seconds
+
+
+def test_a_gateway_that_is_still_coming_up_is_waited_for_and_a_dead_one_is_not():
+    clock, late = _Clock(), _Gateway(fails=3)
+    assert probe_until(late, window_s=30.0, gap_s=3.0, now=clock.now,
+                       sleep=clock.sleep) == {"ready": True}
+    assert late.probes == 4
+
+    clock, dead = _Clock(), _Gateway(fails=1000)
+    with pytest.raises(ForeignMasterUnready):
+        probe_until(dead, window_s=30.0, gap_s=3.0, now=clock.now, sleep=clock.sleep)
+    assert dead.probes == 11 and clock.at == 30.0
+
+
+PARK_SHORT, OUTSIDE_SHORT, FOREIGN_LEVEL = 16, 1, 77
+
+
+def test_a_read_only_session_reaches_the_park_only_through_the_fence_it_installed():
+    cfg = dataclasses.replace(load_config(), lamp_shorts="1", lamps_read_only=True)
+    bare = ForeignMaster(cfg, api=_Api())
+    with pytest.raises(LampNotAllowed):
+        bare.guard.check_frame(PARK_SHORT << 1, FOREIGN_LEVEL)
+    fenced = ForeignMaster(cfg, api=_Api(VirtualFence([PARK_SHORT], [], [])))
+    fenced.guard.check_frame(PARK_SHORT << 1, FOREIGN_LEVEL)
+    with pytest.raises(LampNotAllowed):
+        fenced.guard.check_frame(OUTSIDE_SHORT << 1, FOREIGN_LEVEL)
+    assert ForeignMaster(cfg).guard.fence is None
 
 
 def _master(monkeypatch, tmp_path, verdict, peer_sees):

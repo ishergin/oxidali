@@ -10,6 +10,7 @@ from hil import remote_serial as remote_serial_mod
 from hil import serialmon as serialmon_mod
 from hil import tiers
 from hil import validity
+from hil import virtual_gear
 from hil.lamp_guard import LampNotAllowed
 from hil.results import failure_line
 from hil.seriallog import SerialLog
@@ -52,12 +53,21 @@ def _collection_lint(items):
 NO_SERIAL = "no board attached here and no WB bridge answering"
 LIGHT_MARKER = "light"
 PAIR_MARKER = "redundancy"
+FENCED_MARKER = "virtual_gear"
 RULE_COMMITS_ENV = "HIL_ALLOW_RULE_COMMITS"
 RULE_COMMITTING_FIXTURE = "rules_guard"
 
 
-def ungated(item, drives_lamps, commits_rules, names_peer):
-    if item.get_closest_marker(LIGHT_MARKER) and not drives_lamps:
+def drives_the_owners_light(item, drives_lamps, fenced_tier):
+    if not item.get_closest_marker(LIGHT_MARKER):
+        return False
+    if fenced_tier and item.get_closest_marker(FENCED_MARKER):
+        return False
+    return not drives_lamps
+
+
+def ungated(item, drives_lamps, commits_rules, names_peer, fenced_tier=False):
+    if drives_the_owners_light(item, drives_lamps, fenced_tier):
         return True
     if item.get_closest_marker(PAIR_MARKER) and not names_peer:
         return True
@@ -68,9 +78,10 @@ def _deselect_ungated(config, items, cfg):
     drives_lamps = cfg.drives_lamps()
     commits_rules = os.environ.get(RULE_COMMITS_ENV) == "1"
     names_peer = bool(cfg.peer_base)
+    fenced_tier = virtual_gear.run_enabled()
     kept, dropped = [], []
     for item in items:
-        gated = ungated(item, drives_lamps, commits_rules, names_peer)
+        gated = ungated(item, drives_lamps, commits_rules, names_peer, fenced_tier)
         (dropped if gated else kept).append(item)
     if dropped:
         config.hook.pytest_deselected(items=dropped)
