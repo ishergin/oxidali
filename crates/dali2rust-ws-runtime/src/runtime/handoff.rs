@@ -45,7 +45,11 @@ impl<P> SendSlot<P> {
         }
     }
 
-    pub fn hand_over(&self, work: P, submit: impl FnOnce() -> bool) -> HandoffOutcome {
+    pub fn hand_over(
+        &self,
+        work: impl FnOnce() -> P,
+        submit: impl FnOnce() -> bool,
+    ) -> HandoffOutcome {
         if !self.arm(work) {
             return HandoffOutcome::Refused;
         }
@@ -58,14 +62,14 @@ impl<P> SendSlot<P> {
         self.wait_for_outcome(pending)
     }
 
-    fn arm(&self, work: P) -> bool {
+    fn arm(&self, work: impl FnOnce() -> P) -> bool {
         let Ok(mut pending) = self.pending.lock() else {
             return false;
         };
         if pending.phase != Phase::Idle {
             return false;
         }
-        pending.work = Some(work);
+        pending.work = Some(work());
         pending.phase = Phase::Queued;
         true
     }
@@ -223,7 +227,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let executor = executor(rx);
         assert_eq!(
-            slot.hand_over(WORK, || tx.send(slot).is_ok()),
+            slot.hand_over(|| WORK, || tx.send(slot).is_ok()),
             HandoffOutcome::Done
         );
         assert!(executor.join().expect("the executor"), "the work never ran");
@@ -236,7 +240,7 @@ mod tests {
     fn work_the_executor_never_runs_stops_waiting_at_the_deadline() {
         let pool = pool(1);
         let slot = pool.claim().expect("a free slot");
-        assert_eq!(slot.hand_over(WORK, || true), HandoffOutcome::Lost);
+        assert_eq!(slot.hand_over(|| WORK, || true), HandoffOutcome::Lost);
     }
 
     #[test]
@@ -252,7 +256,7 @@ mod tests {
             })
         });
         assert_eq!(
-            slot.hand_over(WORK, || tx.send(slot).is_ok()),
+            slot.hand_over(|| WORK, || tx.send(slot).is_ok()),
             HandoffOutcome::Done,
             "an item the executor took is being served, however slowly; the deadline is \
              there for the one lost on the way"
@@ -278,11 +282,11 @@ mod tests {
     fn work_refused_outright_leaves_the_slot_usable() {
         let pool = pool(1);
         let slot = pool.claim().expect("a free slot");
-        assert_eq!(slot.hand_over(WORK, || false), HandoffOutcome::Refused);
+        assert_eq!(slot.hand_over(|| WORK, || false), HandoffOutcome::Refused);
         let (tx, rx) = mpsc::channel();
         let executor = executor(rx);
         assert_eq!(
-            slot.hand_over(WORK, || tx.send(slot).is_ok()),
+            slot.hand_over(|| WORK, || tx.send(slot).is_ok()),
             HandoffOutcome::Done
         );
         assert!(executor.join().expect("the executor"));
@@ -292,7 +296,7 @@ mod tests {
     fn a_lost_slot_is_freed_by_the_work_that_lands_late_and_sends_nothing() {
         let pool = pool(1);
         let slot = pool.claim().expect("a free slot");
-        assert_eq!(slot.hand_over(WORK, || true), HandoffOutcome::Lost);
+        assert_eq!(slot.hand_over(|| WORK, || true), HandoffOutcome::Lost);
         slot.release();
         assert_eq!(pool.lost(), 1);
         assert!(
@@ -311,8 +315,8 @@ mod tests {
     fn a_sink_whose_work_was_lost_is_refused_rather_than_wedged() {
         let pool = pool(1);
         let slot = pool.claim().expect("a free slot");
-        assert_eq!(slot.hand_over(WORK, || true), HandoffOutcome::Lost);
-        assert_eq!(slot.hand_over(WORK, || true), HandoffOutcome::Refused);
+        assert_eq!(slot.hand_over(|| WORK, || true), HandoffOutcome::Lost);
+        assert_eq!(slot.hand_over(|| WORK, || true), HandoffOutcome::Refused);
     }
 
     #[test]

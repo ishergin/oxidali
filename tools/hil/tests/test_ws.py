@@ -1,10 +1,11 @@
 import socket
 import struct
+import threading
 import time
 
 import pytest
 
-from hil import provoke, seriallog, tripwire, wsclient
+from hil import provoke, restload, seriallog, tripwire, wsclient
 from hil.wait import wait_until
 from hil.wsclient import OP_BINARY, OP_PONG, WsError
 
@@ -353,4 +354,134 @@ def test_two_sniffer_subscribers_keep_ws_client_out_of_late_isr_entries(
         "INCONCLUSIVE, not a product failure: subscriber(s) %s got no sniffer batch or "
         "fewer than %d diagnostics snapshots, so the send path was not exercised: %s"
         % (_idle_subscribers(kinds), MIN_DIAGNOSTICS, kinds))
+    ws_baseline["survived"]()
+
+LOAD_SECONDS = 30
+LOAD_THREADS = 3
+READ_BURST = 2
+BURST_JOIN_S = 25.0
+FRAMES_FLOOR = 100
+REST_CALLS_FLOOR = 400
+LOUD = "debug"
+LOG_CHANNEL_ONLY = ["logs"]
+ATTR_READ_GROUPS = ["runtime_status", "common_102", "dt8_color", "groups", "scenes"]
+ACCEPTED_READ = (200, 202)
+WAITED_OUT = "waited out its queued send"
+SOCKETS_FULL = "sockets open"
+DROP_NOTICE = "DropNotice"
+
+
+def _read_the_gear(api, short, tally, lock):
+    try:
+        status, body = api.raw_request(
+            "POST", "adapters/%d/physical-devices/%d/attribute-reads" % (api.adapter, short),
+            {"attribute_groups": ATTR_READ_GROUPS, "memory_banks": "none"})
+    except Exception as exc:
+        with lock:
+            tally["reads_refused"].append((short, type(exc).__name__))
+        return
+    with lock:
+        if status in ACCEPTED_READ:
+            tally["reads_accepted"] += 1
+        else:
+            tally["reads_refused"].append((short, status, str(body)[:80]))
+
+
+def _burst(api, shorts, tally, lock):
+    readers = [threading.Thread(target=_read_the_gear, args=(api, short, tally, lock))
+               for short in shorts]
+    for reader in readers:
+        reader.start()
+    for reader in readers:
+        reader.join(timeout=BURST_JOIN_S)
+
+
+def _under_load(api, hil_config, shorts, load, tally):
+    lock = threading.Lock()
+    hammer = restload.BenchLanLoad(hil_config, LOAD_SECONDS, LOAD_THREADS)
+    try:
+        end = time.monotonic() + LOAD_SECONDS
+        while time.monotonic() < end and not (load.errors or load.closes):
+            for first in range(0, len(shorts), READ_BURST):
+                if time.monotonic() >= end:
+                    break
+                _burst(api, shorts[first:first + READ_BURST], tally, lock)
+        return hammer.report()
+    finally:
+        hammer.stop()
+
+
+@pytest.mark.hil_id("HIL-WS-09")
+@pytest.mark.serial
+def test_a_subscriber_on_every_channel_loses_nothing_under_rest_load(
+        api, hil_config, serial_log, ws_baseline, test_artifacts):
+    shorts = api.addrs()
+    if not shorts:
+        pytest.skip("the filtered inventory holds no gear whose attributes a read can stream")
+    before = api.diagnostics()["websocket"]
+    tally = {"reads_accepted": 0, "reads_refused": []}
+    with serial_log.window() as serial:
+        ws = wsclient.connect(hil_config.base)
+        hello = ws.wait_for_op("hello", deadline_s=ACK_BUDGET_S)
+        assert hello is not None, "no hello frame after the upgrade"
+        channels = hello.get("channels") or []
+        assert channels, hello
+        load = wsclient.Subscribers(hil_config.base, 1, channels=channels,
+                                    opener=lambda _base: ws)
+        ws.subscribe(LOG_CHANNEL_ONLY, log_level=LOUD)
+        try:
+            rest = _under_load(api, hil_config, shorts, load, tally)
+        except restload.RestLoadUnavailable as exc:
+            pytest.skip("no REST load from the bench LAN (%s): a client a wide-area hop away "
+                        "cannot hold the one httpd task busy, so a clean counter here would "
+                        "prove nothing" % exc)
+        finally:
+            load.close()
+        lines = serial.lines()
+    after = api.diagnostics()["websocket"]
+    kinds = dict(load.kinds[0])
+    frames = sum(kinds.values())
+    grew = {key: after[key] - before[key] for key in before if isinstance(before[key], int)}
+    waited_out = [line for line in lines if WAITED_OUT in line]
+    test_artifacts.attach_json("load", {
+        "gear_read": shorts, "seconds": LOAD_SECONDS, "load_threads": LOAD_THREADS,
+        "rest_from_the_lan": rest, "tally": tally, "frames_by_kind": kinds, "grew": grew,
+        "load_errors": load.errors, "closes": load.closes, "websocket_before": before,
+        "websocket_after": after, "clients_before": ws_baseline["clients"],
+        "waited_out": waited_out,
+        "sockets_full": [line for line in lines if SOCKETS_FULL in line]})
+
+
+    assert tally["reads_accepted"] >= len(shorts), (
+        "the event source never ran: %d attribute reads of %d gear were accepted, refused %r"
+        % (tally["reads_accepted"], len(shorts), tally["reads_refused"][:5]))
+    assert rest.get("served", 0) >= REST_CALLS_FLOOR, (
+        "the load was too thin to occupy the httpd task: %r in %d s" % (rest, LOAD_SECONDS))
+    assert frames >= FRAMES_FLOOR and grew["events_sent_total"] >= FRAMES_FLOOR, (
+        "nothing was streamed, so a clean counter proves nothing: %d frames reached the "
+        "client, the hub sent %d" % (frames, grew["events_sent_total"]))
+    assert grew["events_coalesced_total"] > 0, (
+        "no frame ever waited in a client queue (nothing coalesced onto one), so the load "
+        "never pressed the send path and a clean drop counter proves nothing: %r" % grew)
+
+    pool_full = [line for line in lines if SOCKETS_FULL in line]
+    if (load.errors or load.closes) and pool_full:
+        pytest.skip("INCONCLUSIVE: the httpd socket pool ran out %d time(s) and the purge "
+                    "closes the least recently used socket, so this subscriber's close says "
+                    "nothing about the send path — thin the load or the other clients: %r"
+                    % (len(pool_full), load.errors or load.closes))
+    assert not load.errors and not load.closes, (
+        "the subscriber was dropped during the load: %r %r" % (load.errors, load.closes))
+    assert not kinds.get(DROP_NOTICE), (
+        "the client was told events were dropped: %r" % kinds)
+    assert grew["events_dropped_total"] == 0, (
+        "websocket.events_dropped_total grew by %d under the load (hub-wide: %d client(s) "
+        "were connected before this one)"
+        % (grew["events_dropped_total"], ws_baseline["clients"]))
+    assert grew["upgrades_rejected_total"] == 0, (
+        "websocket.upgrades_rejected_total grew by %d: a connection was refused, which an "
+        "empty sender-slot pool looks like" % grew["upgrades_rejected_total"])
+    assert not waited_out, (
+        "the sender waited out its queued send, so ESP-IDF lost a work item: %r" % waited_out)
+
     ws_baseline["survived"]()
