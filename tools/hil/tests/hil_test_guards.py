@@ -2,6 +2,7 @@ import datetime
 import os
 import subprocess
 import time
+from dataclasses import dataclass
 
 import pytest
 from requests import RequestException
@@ -22,6 +23,46 @@ ONLINE = "online"
 
 
 RULES_SOURCE_LIMIT_BYTES = 12_240
+
+
+VL_OF_LABEL = 1
+PARK_WHERE = "the emulated park"
+ROSTER_WHERE = "the calibrated roster"
+
+
+@dataclass
+class Drivable:
+    shorts: list
+    vl_of_short: dict
+    where: str
+
+    def vl(self, short):
+        return self.vl_of_short[short]
+
+    def first(self):
+        return self.shorts[0]
+
+    def two(self, what):
+        if len(self.shorts) < 2:
+            pytest.skip("%s needs two gear to drive; %s holds SA%s"
+                        % (what, self.where, spell(self.shorts)))
+        return self.shorts[0], self.shorts[1]
+
+
+def drivable_of(session, roster):
+    if session is not None:
+        park = list(session.park)
+        return Drivable(park, {short: session.vl(short) for short in park}, PARK_WHERE)
+    by_label = {label: roster.by_label[label] for label in roster.labels()}
+    return Drivable([by_label[label] for label in sorted(by_label)],
+                    {by_label[label]: label - VL_OF_LABEL for label in by_label},
+                    ROSTER_WHERE)
+
+
+@pytest.fixture()
+def drivable(request, virtual_gear_session):
+    roster = None if virtual_gear_session is not None else request.getfixturevalue("lamps")
+    return drivable_of(virtual_gear_session, roster)
 
 
 @pytest.fixture()

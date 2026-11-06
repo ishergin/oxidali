@@ -92,6 +92,18 @@ def test_a_light_test_is_selected_only_when_the_run_may_drive_lamps():
                                    names_peer=False)
 
 
+def test_the_fence_stands_in_for_the_lamp_gate_only_on_the_tier_and_only_when_marked():
+    fenced, bare = _Item({"light", "virtual_gear"}), _Item({"light"})
+    assert not hil_session.ungated(fenced, drives_lamps=False, commits_rules=True,
+                                   names_peer=True, fenced_tier=True)
+    assert hil_session.ungated(fenced, drives_lamps=False, commits_rules=True,
+                               names_peer=True, fenced_tier=False)
+    assert hil_session.ungated(bare, drives_lamps=False, commits_rules=True,
+                               names_peer=True, fenced_tier=True)
+    assert not hil_session.ungated(_Item({"virtual_gear"}), drives_lamps=False,
+                                   commits_rules=True, names_peer=True, fenced_tier=True)
+
+
 def test_a_rule_committing_test_is_selected_only_with_its_flag():
     rules = _Item(set(), fixturenames=["api", "rules_guard"])
     assert hil_session.ungated(rules, drives_lamps=True, commits_rules=False, names_peer=True)

@@ -14,13 +14,13 @@ def _dapc_on_wire(short, level):
 
 
 @pytest.mark.hil_id("HIL-FAN-01")
+@pytest.mark.virtual_gear
 def test_foreign_dapc_projects_with_sniffer_source(api, foreign,
-                                                   fanout_supported, lamps,
+                                                   fanout_supported, drivable,
                                                    sniffer, wait_state,
                                                    state_snapshot,
                                                    test_artifacts):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     with sniffer.window() as win:
         foreign.dapc(short, LEVEL_A)
         win.expect_monitor(_dapc_on_wire(short, LEVEL_A), direction="tx", ours=True)
@@ -33,11 +33,11 @@ def test_foreign_dapc_projects_with_sniffer_source(api, foreign,
 
 
 @pytest.mark.hil_id("HIL-FAN-02")
-def test_own_then_foreign_source_flip(api, foreign, fanout_supported, lamps,
+@pytest.mark.virtual_gear
+def test_own_then_foreign_source_flip(api, foreign, fanout_supported, drivable,
                                       wait_state, state_snapshot,
                                       test_artifacts):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     api.ts(short, {"power": "on", "level": 100})
     own = wait_state(short, lambda s: s.get("level") == 100)
     test_artifacts.attach_json("own", own)
@@ -154,11 +154,11 @@ def test_foreign_scene_recall_projects(api, foreign, fanout_supported,
 
 
 @pytest.mark.hil_id("HIL-FAN-07")
+@pytest.mark.virtual_gear
 def test_foreign_dapc_keeps_runtime_status(api, foreign, fanout_supported,
-                                           lamps, sniffer, wait_state,
+                                           drivable, sniffer, wait_state,
                                            state_snapshot, test_artifacts):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     api.ts(short, {"power": "on", "level": 100})
     wait_state(short, lambda s: s.get("level") == 100)
     api.attr_read_checked(short, groups="runtime_status")

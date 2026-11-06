@@ -450,7 +450,8 @@ run-validity report read the pin.
 
 `HIL_VIRTUAL_GEAR=1 .venv/bin/python3 -m pytest --no-camera` runs the tests marked
 `virtual_gear` — and only those — on the gear the peer emulates, on the installation's wire.
-Its rules are STRATEGY §4.8; the mechanics:
+Its rules are STRATEGY §4.8; gear comes from `drivable`; the mechanics:
+
 
 1. **Before any config loads**, the plugin (`tests/hil_virtual.py`) reads the reserve and
    sets `HIL_LAMP_SHORTS`, `HIL_GEAR_SHORTS` and `HIL_OPTICAL_SHORTS` to the park, so every
