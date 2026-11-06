@@ -1,12 +1,12 @@
 import pytest
 
-
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-01")
-def test_binding_and_derived_state(api, vl_bindings, lamps, wait_state,
+@pytest.mark.virtual_gear
+def test_binding_and_derived_state(api, vl_bindings, drivable, wait_state,
                                    state_snapshot):
-    label = lamps.labels()[0]
-    lid, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    lid = drivable.vl(short)
     dto = api.vlamps.get(lid)
     assert (dto.get("binding") or {}).get("physical_short_address") == short
     api.ts(short, {"power": "on", "level": 137})
@@ -19,11 +19,12 @@ def test_binding_and_derived_state(api, vl_bindings, lamps, wait_state,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-02")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_vl_target_state_reaches_wire(api, vl_bindings, lamps, sniffer, paced,
+def test_vl_target_state_reaches_wire(api, vl_bindings, drivable, sniffer, paced,
                                       wait_state, state_snapshot):
-    label = lamps.labels()[0]
-    lid, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    lid = drivable.vl(short)
     setpoint = {"power": "on", "level": 200}
     with sniffer.window() as win:
         paced(1.0)
@@ -39,11 +40,12 @@ def test_vl_target_state_reaches_wire(api, vl_bindings, lamps, sniffer, paced,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-03")
-def test_unbound_target_state_is_noop(api, vl_bindings, binding_guard, lamps,
+@pytest.mark.virtual_gear
+def test_unbound_target_state_is_noop(api, vl_bindings, binding_guard, drivable,
                                       wait_state, state_snapshot,
                                       test_artifacts):
-    label = lamps.labels()[0]
-    lid, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    lid = drivable.vl(short)
     api.ts(short, {"power": "on", "level": 90})
     assert wait_state(short, lambda s: s.get("level") == 90).get("level") == 90
 
@@ -63,9 +65,8 @@ def test_unbound_target_state_is_noop(api, vl_bindings, binding_guard, lamps,
 
 
 @pytest.mark.hil_id("HIL-VL-04")
-def test_vl_patch_metadata_roundtrip(api, vl_bindings, lamps):
-    label = lamps.labels()[0]
-    lid = label - 1
+def test_vl_patch_metadata_roundtrip(api, vl_bindings, drivable):
+    lid = drivable.vl(drivable.first())
     before = api.vlamps.get(lid)
     restore_name = before["name"] or None
     try:

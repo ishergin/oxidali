@@ -2,7 +2,7 @@ import pytest
 
 from hil.wait import wait_until
 
-pytestmark = pytest.mark.light
+pytestmark = [pytest.mark.light, pytest.mark.virtual_gear]
 
 SCENE_ID = 9
 AUDIT_LEVEL = 90

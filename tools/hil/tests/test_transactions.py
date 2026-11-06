@@ -5,7 +5,7 @@ import pytest
 
 from hil_test_guards import drive_allowed
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.virtual_gear]
 
 QUERY_STATUS = 0x90
 

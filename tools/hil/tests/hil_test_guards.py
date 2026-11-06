@@ -35,9 +35,14 @@ class Drivable:
     shorts: list
     vl_of_short: dict
     where: str
+    bench: object = None
 
     def vl(self, short):
         return self.vl_of_short[short]
+
+    def kind_first(self, kind):
+        gear = self.bench.of_kind(kind) if self.bench is not None else []
+        return gear[0] if gear else None
 
     def first(self):
         return self.shorts[0]
@@ -52,7 +57,8 @@ class Drivable:
 def drivable_of(session, roster):
     if session is not None:
         park = list(session.park)
-        return Drivable(park, {short: session.vl(short) for short in park}, PARK_WHERE)
+        return Drivable(park, {short: session.vl(short) for short in park}, PARK_WHERE,
+                        session)
     by_label = {label: roster.by_label[label] for label in roster.labels()}
     return Drivable([by_label[label] for label in sorted(by_label)],
                     {by_label[label]: label - VL_OF_LABEL for label in by_label},
@@ -87,9 +93,19 @@ def scenes_supported(api):
         pytest.skip("scenes surface absent on this firmware (pre-R6 build)")
 
 
-@pytest.fixture(scope="session")
-def vl_bindings(api, lamps, run_dir, hil_config):
+def _canon(run_dir, mapping):
     from hil.results import dumps as _dumps
+    (run_dir / "bench_canon.json").write_text(
+        _dumps({"vl_bindings": mapping}, indent=1, sort_keys=True))
+    return mapping
+
+
+@pytest.fixture(scope="session")
+def vl_bindings(request, api, run_dir, hil_config, virtual_gear_session):
+    if virtual_gear_session is not None:
+        return _canon(run_dir, {virtual_gear_session.vl(short): short
+                                for short in virtual_gear_session.park})
+    lamps = request.getfixturevalue("lamps")
     registry = os.environ.get("HIL_LAMP_ROSTER") == "registry"
     if registry:
         everyone = {d["short_address"] for d in api.devices_unfiltered()["physical_devices"]}
@@ -112,9 +128,7 @@ def vl_bindings(api, lamps, run_dir, hil_config):
         if have != short:
             api.vlamps.bind(lid, short)
         mapping[lid] = short
-    (run_dir / "bench_canon.json").write_text(
-        _dumps({"vl_bindings": mapping}, indent=1, sort_keys=True))
-    return mapping
+    return _canon(run_dir, mapping)
 
 
 def _teardown_write(api, what, fn):
@@ -421,7 +435,11 @@ def free_group_of(api):
 
 
 @pytest.fixture()
-def free_group(api, capabilities):
+def free_group(api, capabilities, virtual_gear_session):
+    if virtual_gear_session is not None:
+        if not virtual_gear_session.groups:
+            pytest.skip("the virtual-gear session reserved no free group")
+        return virtual_gear_session.groups[-1]
     for d in api.devices()["physical_devices"]:
         capabilities.ensure(d["short_address"], "groups")
     return free_group_of(api)

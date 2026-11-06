@@ -7,16 +7,14 @@ LEVEL_A, LEVEL_B = 200, 60
 REMOVE_FROM_SCENE = 0x50
 
 
-def _clear_scene(api, lamps):
-    for short in sorted(lamps.by_label.values()):
+def _clear_scene(api, subject):
+    for short in sorted(subject.shorts):
         api.cmd(short, REMOVE_FROM_SCENE + SCENE_ID, repeat=2)
 
 
-def _rows_for(lamps, vl_bindings):
-    labels = lamps.labels()
-    if len(labels) < 2:
-        pytest.skip("scene tests need at least two calibrated lamps")
-    a, b = labels[0] - 1, labels[1] - 1
+def _rows_for(subject, vl_bindings):
+    first, second = subject.two("the scene tests")
+    a, b = subject.vl(first), subject.vl(second)
     return [
         {"virtual_lamp_id": a,
          "desired": {"included": True, "power": "on", "level": LEVEL_A}},
@@ -46,12 +44,13 @@ def test_scene_list_and_patch_metadata(api, scenes_supported):
 
 @pytest.mark.hil_id("HIL-SCN-04")
 @pytest.mark.sniffer
+@pytest.mark.virtual_gear
 def test_scene_matrix_patch_stages_without_frames(api, scenes_supported,
-                                                  vl_bindings, lamps,
+                                                  vl_bindings, drivable,
                                                   scene_matrix_guard, sniffer,
                                                   ops_quiesce):
     scene_matrix_guard(SCENE_ID)
-    rows = _rows_for(lamps, vl_bindings)
+    rows = _rows_for(drivable, vl_bindings)
     with sniffer.window() as win:
         api.scenes.matrix_patch(SCENE_ID, rows)
         dto = api.scenes.get(SCENE_ID)
@@ -62,13 +61,14 @@ def test_scene_matrix_patch_stages_without_frames(api, scenes_supported,
 
 @pytest.mark.hil_id("HIL-SCN-01")
 @pytest.mark.sniffer
-def test_scene_apply_programs_gear(api, scenes_supported, vl_bindings, lamps,
+@pytest.mark.virtual_gear
+def test_scene_apply_programs_gear(api, scenes_supported, vl_bindings, drivable,
                                    scene_matrix_guard, sniffer, paced,
                                    ops_quiesce, state_snapshot,
                                    test_artifacts, op_check):
     scene_matrix_guard(SCENE_ID)
-    _clear_scene(api, lamps)
-    rows = _rows_for(lamps, vl_bindings)
+    _clear_scene(api, drivable)
+    rows = _rows_for(drivable, vl_bindings)
     api.scenes.matrix_patch(SCENE_ID, rows)
     with sniffer.window() as win:
         paced(1.0)
@@ -104,14 +104,14 @@ def test_scene_apply_programs_gear(api, scenes_supported, vl_bindings, lamps,
 @pytest.mark.sniffer
 @pytest.mark.optical
 def test_scene_recall_reaches_gear_and_states(api, scenes_supported,
-                                              vl_bindings, lamps,
+                                              vl_bindings, drivable,
                                               scene_matrix_guard, sniffer,
                                               paced, ops_quiesce,
                                               camera_oracle, wait_state,
                                               state_snapshot, test_artifacts):
     scene_matrix_guard(SCENE_ID)
-    _clear_scene(api, lamps)
-    rows = _rows_for(lamps, vl_bindings)
+    _clear_scene(api, drivable)
+    rows = _rows_for(drivable, vl_bindings)
     api.scenes.matrix_patch(SCENE_ID, rows)
     api.wait_op(api.scenes.apply(SCENE_ID), timeout_s=60)
 
@@ -125,7 +125,7 @@ def test_scene_recall_reaches_gear_and_states(api, scenes_supported,
         camera_oracle.assert_on(label_a, window=win, name="scene_member")
     assert not {k for k in set(api.operations()) - before_keys}, \
         "recall must not create an operation"
-    short_a = lamps.by_label[label_a]
+    short_a = drivable.shorts[0]
     last = wait_state(short_a, lambda s: s.get("level") == LEVEL_A)
     test_artifacts.attach_json("member_state", last)
     assert last.get("level") == LEVEL_A, last
@@ -136,15 +136,14 @@ def test_scene_recall_reaches_gear_and_states(api, scenes_supported,
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-SCN-05")
 def test_recall_of_empty_scene_is_noop(api, scenes_supported, vl_bindings,
-                                       lamps, wait_state, state_snapshot,
+                                       drivable, wait_state, state_snapshot,
                                        test_artifacts):
     empty_sid = next(s["scene_id"] for s in api.scenes.list()["scenes"]
                      if s["row_count_included"] == 0)
     resp = api.scenes.apply(empty_sid)
     if "operation_id" in resp:
         api.wait_op(resp, timeout_s=60)
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     api.ts(short, {"power": "on", "level": 111})
     assert wait_state(short, lambda s: s.get("level") == 111).get("level") == 111
     resp = api.scenes.recall(empty_sid)
@@ -161,19 +160,17 @@ def test_recall_of_empty_scene_is_noop(api, scenes_supported, vl_bindings,
 @pytest.mark.sniffer
 @pytest.mark.optical
 def test_group_recall_moves_members_only(api, scenes_supported, vl_bindings,
-                                         lamps, scene_matrix_guard,
+                                         drivable, scene_matrix_guard,
                                          group_matrix_guard, free_group,
                                          hcl_guard, sniffer, paced,
                                          ops_quiesce, camera_oracle,
                                          wait_state, state_snapshot,
                                          test_artifacts, op_check):
     scene_matrix_guard(SCENE_ID)
-    _clear_scene(api, lamps)
-    rows = _rows_for(lamps, vl_bindings)
-    member_vl = rows[0]["virtual_lamp_id"]
-    outsider_vl = rows[1]["virtual_lamp_id"]
-    member_short = lamps.by_label[member_vl + 1]
-    outsider_short = lamps.by_label[outsider_vl + 1]
+    _clear_scene(api, drivable)
+    rows = _rows_for(drivable, vl_bindings)
+    member_short, outsider_short = drivable.two("a group scene recall")
+    member_vl, outsider_vl = drivable.vl(member_short), drivable.vl(outsider_short)
     api.scenes.matrix_patch(SCENE_ID, rows)
     api.wait_op(api.scenes.apply(SCENE_ID), timeout_s=60)
 

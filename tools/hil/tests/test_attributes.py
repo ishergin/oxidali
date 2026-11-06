@@ -37,11 +37,11 @@ def _accepted_ms(requested_ms):
 
 
 @pytest.mark.hil_id("HIL-ATTR-01")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_attribute_read_sweep_plausible(api, lamps, sniffer, paced, op_check,
+def test_attribute_read_sweep_plausible(api, drivable, sniffer, paced, op_check,
                                         state_snapshot, test_artifacts):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     with sniffer.window() as win:
         paced(1.0)
         op = api.attr_read(short, groups=ALL_GROUPS, banks="identity")
@@ -71,42 +71,43 @@ def test_attribute_read_sweep_plausible(api, lamps, sniffer, paced, op_check,
 
 
 @pytest.mark.hil_id("HIL-ATTR-05")
+@pytest.mark.virtual_gear
 @pytest.mark.needs_capability("cct")
-def test_gear_features_match_the_standards_own_checks(api, lamps, capabilities,
+def test_gear_features_match_the_standards_own_checks(api, drivable, capabilities,
                                                       paced, test_artifacts):
     checked = 0
-    for label in lamps.labels():
-        short = lamps.by_label[label]
+    for short in drivable.shorts:
         if not capabilities.ensure(short, "cct") and not capabilities.ensure(short, "rgb"):
             continue
         paced(0.5)
         api.attr_read_checked(short, groups="runtime_status,dt8_color")
         device = api.attributes(short, ["dt8_color"])
         leaf = _attr_section(device, "dt8_color").get("gear_features") or {}
-        test_artifacts.attach_json("gear_features_%s" % label, leaf)
+        test_artifacts.attach_json("gear_features_SA%d" % short, leaf)
         value = leaf.get("value")
         assert value is not None, (
-            "%s (short %d) did not answer QUERY GEAR FEATURES/STATUS; "
-            "IEC 62386-209 Table 14 makes 247 mandatory on DT8 gear" % (label, short))
+            "SA%d did not answer QUERY GEAR FEATURES/STATUS; "
+            "IEC 62386-209 Table 14 makes 247 mandatory on DT8 gear" % short)
         assert value & 0x3E == 0, (
-            "%s: reserved bits set in GEAR FEATURES/STATUS 0x%02X "
-            "(12.7.1.1 error 7112)" % (label, value))
+            "SA%d: reserved bits set in GEAR FEATURES/STATUS 0x%02X "
+            "(12.7.1.1 error 7112)" % (short, value))
         assert value & 0x01, (
-            "%s: Automatic Activation is clear (0x%02X) — colour writes to this "
+            "SA%d: Automatic Activation is clear (0x%02X) — colour writes to this "
             "fixture will be accepted and do nothing (12.7.1.1 error 7113)"
-            % (label, value))
+            % (short, value))
         checked += 1
     assert checked, "no colour-capable fixture was available to read 247 from"
 
 
 @pytest.mark.hil_id("HIL-ATTR-03")
+@pytest.mark.virtual_gear
 def test_gear_bitmask_covers_applied_matrix(api, vl_bindings, capabilities,
-                                            lamps, test_artifacts):
+                                            drivable, test_artifacts):
     matrix = api.groups.matrix()
     rows = {r["virtual_lamp_id"]: r for r in matrix["rows"]}
     missing, extra, doubled = [], [], []
-    for label in lamps.labels():
-        lid, short = label - 1, lamps.by_label[label]
+    for short in drivable.shorts:
+        lid = drivable.vl(short)
         capabilities.ensure(short, "groups")
         bitmask = (((api.attributes(short, ["groups"]).get("attributes") or {})
                     .get("groups") or {}).get("membership") or {}).get("value")
@@ -131,11 +132,11 @@ def test_gear_bitmask_covers_applied_matrix(api, vl_bindings, capabilities,
 
 
 @pytest.mark.hil_id("HIL-ATTR-02")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_write_fade_time_roundtrip(api, lamps, sniffer, paced, state_snapshot,
+def test_write_fade_time_roundtrip(api, drivable, sniffer, paced, state_snapshot,
                                    test_artifacts, attr_guard):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     before = attr_guard(short, "fade_time_ms")["fade_time_ms"]
     for requested_ms in (500, 100, 2000, 90_500):
         expected_ms = _accepted_ms(requested_ms)
@@ -160,13 +161,14 @@ def test_write_fade_time_roundtrip(api, lamps, sniffer, paced, state_snapshot,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-04")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
-def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities,
+def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities, drivable,
                                                             needs_capability, sniffer,
                                                             paced, state_snapshot,
                                                             test_artifacts):
-    short = capabilities.any_lamp_with("rgb")
+    short = drivable.kind_first("rgb") or capabilities.any_lamp_with("rgb")
     before = api.state(short)
     discovered_cct = bool((before.get("capabilities") or {}).get("cct"))
     _, red = RGB_PRIMARIES[0]
@@ -209,12 +211,12 @@ def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-07")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_min_level_write_confirms_accepted_value(api, lamps, sniffer, paced,
+def test_min_level_write_confirms_accepted_value(api, drivable, sniffer, paced,
                                                  state_snapshot,
                                                  test_artifacts, attr_guard):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     before = attr_guard(short, "min_level")["min_level"]
     sec = ((api.attributes(short, ["common_102"]).get("attributes") or {})
            .get("common_102") or {})
@@ -240,12 +242,12 @@ def test_min_level_write_confirms_accepted_value(api, lamps, sniffer, paced,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-08")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
 def test_min_level_clamp_against_lowered_max_confirms_accepted(
-        api, lamps, sniffer, paced, state_snapshot, test_artifacts,
+        api, drivable, sniffer, paced, state_snapshot, test_artifacts,
         attr_guard):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     snap = attr_guard(short, "max_level", "min_level")
     before_min, before_max = snap["min_level"], snap["max_level"]
     sec = (api.attributes(short, ["common_102"]).get("attributes") or {}).get("common_102") or {}
@@ -340,11 +342,10 @@ def test_a_widening_device_type_override_is_refused(api, op_check):
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-09")
 @pytest.mark.sniffer
-def test_fade_time_actually_lasts_what_it_says(api, lamps, sniffer, paced,
+def test_fade_time_actually_lasts_what_it_says(api, drivable, sniffer, paced,
                                                state_snapshot, test_artifacts,
                                                attr_guard):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     nominal_ms, min_s, max_s = 2000, 1.8, 2.2
     poll_s = 0.12
 
@@ -391,13 +392,14 @@ def test_fade_time_actually_lasts_what_it_says(api, lamps, sniffer, paced,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-10")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
-def test_rgbwaf_control_byte_before_and_after_a_colour_write(api, capabilities,
+def test_rgbwaf_control_byte_before_and_after_a_colour_write(api, capabilities, drivable,
                                                              needs_capability,
                                                              state_snapshot,
                                                              test_artifacts):
-    short = capabilities.any_lamp_with("rgb")
+    short = drivable.kind_first("rgb") or capabilities.any_lamp_with("rgb")
     rgbwaf_control_selector = 15
 
     def read_control():
@@ -436,6 +438,7 @@ def _dimming_curve(api, short):
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-11")
+@pytest.mark.virtual_gear
 @pytest.mark.smoke
 def test_dimming_curve_writes_and_reports_write_confirmed_provenance(
         api, op_check, attr_guard):
@@ -480,10 +483,11 @@ def test_a_reserved_dimming_curve_never_reaches_the_bus(api):
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-ATTR-12")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
 def test_srgb_channels_reach_the_wire_as_linear_dim_levels(
-        api, lamps, capabilities, sniffer, paced, state_snapshot, op_check):
-    short = capabilities.any_lamp_with("rgb")
+        api, drivable, capabilities, sniffer, paced, state_snapshot, op_check):
+    short = drivable.kind_first("rgb") or capabilities.any_lamp_with("rgb")
     if short is None:
         pytest.skip("no rgb-capable fixture on this bench")
     before = api.device_full(short).get("state", {})
@@ -508,10 +512,11 @@ def test_srgb_channels_reach_the_wire_as_linear_dim_levels(
 
 
 @pytest.mark.hil_id("HIL-ATTR-13")
+@pytest.mark.virtual_gear
 def test_a_dt8_colour_read_keeps_its_transactions_inside_the_92_budget(
-        api, lamps, capabilities, state_snapshot, test_artifacts):
+        api, drivable, capabilities, state_snapshot, test_artifacts):
     short = next(
-        (s for s in (lamps.by_label[l] for l in lamps.labels())
+        (s for s in drivable.shorts
          if capabilities.ensure(s, "cct") or capabilities.ensure(s, "rgb")),
         None,
     )

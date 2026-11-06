@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.light
+pytestmark = [pytest.mark.light, pytest.mark.virtual_gear]
 
 FULL_GROUPS = "runtime_status,common_102,dt8_color,dt6_led,extended,groups,scenes"
 PUT_BUDGET_MS = 1000

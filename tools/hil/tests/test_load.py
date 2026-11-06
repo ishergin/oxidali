@@ -13,18 +13,19 @@ RING_LOSS_BUDGET = 8
 @pytest.mark.hil_id("HIL-LOAD-01")
 @pytest.mark.serial
 @pytest.mark.sniffer
-def test_sustained_mixed_load_no_reboot(api, hil_config, lamps, sniffer,
+@pytest.mark.virtual_gear
+def test_sustained_mixed_load_no_reboot(api, hil_config, drivable, sniffer,
                                         serial_log, paced, state_snapshot,
                                         test_artifacts):
     from hil.foreign import ForeignMaster
     foreign = None
     try:
-        foreign = ForeignMaster(hil_config)
+        foreign = ForeignMaster(hil_config, api=api)
         foreign.probe()
     except Exception:
         pass
 
-    shorts = [lamps.by_label[label] for label in lamps.labels()]
+    shorts = list(drivable.shorts)
     uptime_before = api.health().get("uptime_seconds", 0)
     counts = {"ts": 0, "query": 0, "foreign": 0, "reads": 0}
     stalls = []
@@ -81,16 +82,18 @@ def test_sustained_mixed_load_no_reboot(api, hil_config, lamps, sniffer,
             "marker): %s" % stalls)
         assert stats["counter_missed"] <= RING_LOSS_BUDGET, stats
     finally:
-        try:
-            api.off_all()
-        except RequestException:
-            pass
+        for short in shorts:
+            try:
+                api.off(short)
+            except RequestException:
+                pass
 
 
 @pytest.mark.hil_id("HIL-LOAD-02")
-def test_unpaced_burst_yields_honest_backpressure(api, lamps, state_snapshot,
+@pytest.mark.virtual_gear
+def test_unpaced_burst_yields_honest_backpressure(api, drivable, state_snapshot,
                                                   test_artifacts):
-    short = lamps.by_label[lamps.labels()[0]]
+    short = drivable.first()
     results = []
     lock = threading.Lock()
 

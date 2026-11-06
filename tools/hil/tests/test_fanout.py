@@ -7,6 +7,7 @@ from hil.wait import wait_until
 pytestmark = [pytest.mark.foreign, pytest.mark.light]
 
 LEVEL_A, LEVEL_B = 180, 220
+COMMAND_SELECTOR = 0x01
 
 
 def _dapc_on_wire(short, level):
@@ -53,13 +54,14 @@ def test_own_then_foreign_source_flip(api, foreign, fanout_supported, drivable,
 
 
 @pytest.mark.hil_id("HIL-FAN-05")
-def test_own_group_ts_attributes_group_source(api, fanout_supported, lamps,
+@pytest.mark.virtual_gear
+def test_own_group_ts_attributes_group_source(api, fanout_supported, drivable,
                                               vl_bindings, free_group,
                                               group_matrix_guard, ops_quiesce,
                                               wait_state, state_snapshot,
                                               test_artifacts, op_check):
-    label = lamps.labels()[0]
-    lid, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    lid = drivable.vl(short)
     api.groups.join([lid], free_group, check=op_check)
 
     api.group_ts(free_group, {"power": "on", "level": 200})
@@ -72,18 +74,14 @@ def test_own_group_ts_attributes_group_source(api, fanout_supported, lamps,
 
 
 @pytest.mark.hil_id("HIL-FAN-03")
-def test_foreign_group_dapc_fans_out(api, foreign, fanout_supported, lamps,
+@pytest.mark.virtual_gear
+def test_foreign_group_dapc_fans_out(api, foreign, fanout_supported, drivable,
                                      vl_bindings, free_group,
                                      group_matrix_guard, ops_quiesce,
                                      wait_state, state_snapshot,
                                      test_artifacts, op_check):
-    labels = lamps.labels()
-    if len(labels) < 2:
-        pytest.skip("needs two lamps: member + non-member")
-    member_label, other_label = labels[0], labels[1]
-    member_lid = member_label - 1
-    member_short = lamps.by_label[member_label]
-    other_short = lamps.by_label[other_label]
+    member_short, other_short = drivable.two("a group fan-out")
+    member_lid = drivable.vl(member_short)
 
     api.groups.join([member_lid], free_group, check=op_check)
     api.ts(other_short, {"power": "on", "level": 55})
@@ -98,17 +96,19 @@ def test_foreign_group_dapc_fans_out(api, foreign, fanout_supported, lamps,
     assert member.get("last_dapc_source") == "group", member
     untouched = api.state(other_short).get("state") or {}
     assert untouched.get("level") == 55, untouched
-    api.off_all()
+    api.off(member_short)
+    api.off(other_short)
 
 
 @pytest.mark.hil_id("HIL-FAN-04")
-def test_foreign_cct_write_projects_color(api, foreign, fanout_supported,
+@pytest.mark.virtual_gear
+def test_foreign_cct_write_projects_color(api, foreign, fanout_supported, drivable,
                                           capabilities, needs_capability,
                                           wait_state, state_snapshot,
                                           test_artifacts):
-    short = capabilities.any_lamp_with("cct")
+    short = drivable.kind_first("cct") or capabilities.any_lamp_with("cct")
     if short is None:
-        pytest.skip("no cct-capable lamp")
+        pytest.skip("no cct-capable gear in %s" % drivable.where)
     api.ts(short, {"power": "on", "level": 120})
     before = wait_state(short, lambda s: s.get("level") == 120)
 
@@ -128,15 +128,16 @@ def test_foreign_cct_write_projects_color(api, foreign, fanout_supported,
 
 
 @pytest.mark.hil_id("HIL-FAN-06")
+@pytest.mark.virtual_gear
 def test_foreign_scene_recall_projects(api, foreign, fanout_supported,
-                                       scenes_supported, vl_bindings, lamps,
+                                       scenes_supported, vl_bindings, drivable,
                                        scene_matrix_guard, ops_quiesce,
                                        wait_state, state_snapshot,
                                        test_artifacts, op_check):
     scene_id = 12
     scene_matrix_guard(scene_id)
-    label = lamps.labels()[0]
-    lid, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    lid = drivable.vl(short)
     api.scenes.matrix_patch(scene_id, [
         {"virtual_lamp_id": lid,
          "desired": {"included": True, "power": "on", "level": 150}}])
@@ -144,7 +145,7 @@ def test_foreign_scene_recall_projects(api, foreign, fanout_supported,
     if "operation_id" in res:
         op_check(api.wait_op(res, timeout_s=60))
 
-    foreign.goto_scene(scene_id)
+    foreign.goto_scene(scene_id, addr_byte=(short << 1) | COMMAND_SELECTOR)
     last = wait_state(short, lambda s: s.get("level") == 150)
     test_artifacts.attach_json("state", last)
     assert last.get("level") == 150, last
@@ -194,12 +195,13 @@ def _dali_counters(api):
 
 
 @pytest.mark.hil_id("HIL-FAN-08")
+@pytest.mark.virtual_gear
 def test_a_foreign_step_up_moves_the_registry_and_up_does_not(api, foreign,
                                                               fanout_supported,
-                                                              lamps, wait_state,
+                                                              drivable, wait_state,
                                                               state_snapshot,
                                                               test_artifacts):
-    short = lamps.by_label[lamps.labels()[0]]
+    short = drivable.first()
     api.attr_read_checked(short, groups="common_102")
     api.ts(short, {"power": "on", "level": STEP_FROM})
     lit = wait_state(short, lambda s: s.get("level") == STEP_FROM)

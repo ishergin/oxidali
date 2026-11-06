@@ -1,7 +1,6 @@
 import pytest
 
-
-
+pytestmark = pytest.mark.virtual_gear
 
 MASK = {1: 0xFF, 2: 0xFFFF, 3: 0xFFFFFF, 4: 0xFFFFFFFF, 6: 0xFFFFFFFFFFFF}
 TMASK = {width: value - 1 for width, value in MASK.items()}
