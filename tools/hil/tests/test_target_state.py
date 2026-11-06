@@ -13,10 +13,10 @@ pytestmark = pytest.mark.light
 
 @pytest.mark.hil_id("HIL-TS-05")
 @pytest.mark.sniffer
-def test_burst_coalescing_supersede(api, lamps, sniffer, wait_state,
+@pytest.mark.virtual_gear
+def test_burst_coalescing_supersede(api, drivable, sniffer, wait_state,
                                     state_snapshot, test_artifacts):
-    label = lamps.labels()[0]
-    short = lamps.by_label[label]
+    short = drivable.first()
     levels = (60, 120, 180, 240)
     results = {}
 
@@ -63,11 +63,12 @@ def test_off_all_converges_states(api, lamps, wait_state, state_snapshot):
 @pytest.mark.hil_id("HIL-TS-07")
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
-def test_combined_level_and_rgb_single_put(api, capabilities,
+@pytest.mark.virtual_gear
+def test_combined_level_and_rgb_single_put(api, capabilities, drivable,
                                            needs_capability, sniffer, paced,
                                            wait_state, state_snapshot,
                                            test_artifacts):
-    short = capabilities.any_lamp_with("rgb")
+    short = drivable.kind_first("rgb") or capabilities.any_lamp_with("rgb")
     _, red = RGB_PRIMARIES[0]
     setpoint = rgb_setpoint(red)
     with sniffer.window() as win:
@@ -96,7 +97,10 @@ CONTROL_GAP_S = TC_FIXTURE_FADE_MS / MS_PER_S + CONTROL_MARGIN_S
 
 
 @pytest.fixture()
-def tc_fixture(api, hil_config, capabilities):
+def tc_fixture(api, hil_config, capabilities, drivable):
+    park_tc = drivable.kind_first("cct")
+    if park_tc is not None:
+        return park_tc
     present = set(api.present_addrs())
     short = next((s for s in api.lamp_addrs()
                   if s in present and capabilities.ensure(s, "cct")), None)
@@ -137,6 +141,7 @@ def _timed_series(api, short, gap):
 
 
 @pytest.mark.hil_id("HIL-TS-09")
+@pytest.mark.virtual_gear
 def test_a_colour_temperature_series_during_a_fade_leaves_the_fixture_at_the_last_value(
         api, tc_fixture, attr_guard, state_snapshot, test_artifacts):
     short, last = tc_fixture, kelvin_to_mirek(TC_SERIES_KELVIN[-1])

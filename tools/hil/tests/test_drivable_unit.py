@@ -1,5 +1,6 @@
 import pytest
 
+from hil.virtual_gear import PARK_KINDS
 from hil_test_guards import PARK_WHERE, ROSTER_WHERE, drivable_of
 
 PARK = [16, 17, 18]
@@ -14,6 +15,9 @@ class _Session:
 
     def vl(self, short):
         return PARK_VL[str(short)]
+
+    def of_kind(self, kind):
+        return {"dt6": [16], "cct": [17], "rgb": []}[kind]
 
 
 class _Roster:
@@ -50,3 +54,13 @@ def test_one_gear_skips_a_test_that_needs_two_and_says_where_it_looked():
         with pytest.raises(pytest.skip.Exception) as refused:
             subject.two(WHAT)
         assert WHAT in str(refused.value) and where in str(refused.value)
+
+
+def test_a_kind_comes_from_the_park_and_only_the_parks_own_kinds_exist():
+    subject = drivable_of(_Session(PARK), None)
+    assert subject.kind_first("dt6") == 16 and subject.kind_first("cct") == 17
+    assert subject.kind_first("rgb") is None
+    with pytest.raises(KeyError):
+        subject.kind_first("dt8")
+    assert PARK_KINDS == ("dt6", "cct", "rgb")
+    assert drivable_of(None, _Roster(ROSTER)).kind_first("cct") is None

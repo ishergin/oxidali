@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.light
+pytestmark = [pytest.mark.light, pytest.mark.virtual_gear]
 
 QUERY_STATUS = 0x90
 QUERY_ACTUAL_LEVEL = 0xA0

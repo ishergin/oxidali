@@ -4,6 +4,8 @@ import pytest
 
 from hil.wait import wait_until
 
+pytestmark = pytest.mark.virtual_gear
+
 STATUS_ORDER = {"accepted": 0, "running": 1,
                 "succeeded": 2, "failed": 2, "timed_out": 2, "cancelled": 2}
 
@@ -12,11 +14,9 @@ TERMINAL = {"succeeded", "failed", "timed_out", "cancelled"}
 
 
 @pytest.mark.hil_id("HIL-OP-01")
-def test_operations_listed_and_forward_only(api, lamps, state_snapshot,
+def test_operations_listed_and_forward_only(api, drivable, state_snapshot,
                                             test_artifacts):
-    labels = lamps.labels()
-    short_a = lamps.by_label[labels[0]]
-    short_b = lamps.by_label[labels[-1]]
+    short_a, short_b = drivable.two("an operations list")
     attempts = []
     for attempt in (1, 2):
         op_a = api.attr_read(short_a, groups="runtime_status,common_102")
@@ -53,8 +53,8 @@ def test_operations_listed_and_forward_only(api, lamps, state_snapshot,
 
 
 @pytest.mark.hil_id("HIL-OP-02")
-def test_finished_operation_evicted(api, lamps, test_artifacts, op_check):
-    short = lamps.by_label[lamps.labels()[0]]
+def test_finished_operation_evicted(api, drivable, test_artifacts, op_check):
+    short = drivable.first()
     op = api.attr_read(short, groups="runtime_status")
     view = api.wait_op(op)
     view = op_check(view)
@@ -76,8 +76,8 @@ def test_finished_operation_evicted(api, lamps, test_artifacts, op_check):
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-OP-03")
-def test_untracked_commands_create_no_operations(api, lamps, state_snapshot):
-    short = lamps.by_label[lamps.labels()[0]]
+def test_untracked_commands_create_no_operations(api, drivable, state_snapshot):
+    short = drivable.first()
     before = set(api.operations())
     api.ts(short, {"power": "on", "level": 140})
     api.dapc(short, 90)
@@ -88,11 +88,11 @@ def test_untracked_commands_create_no_operations(api, lamps, state_snapshot):
 
 @pytest.mark.hil_id("HIL-OP-04")
 @pytest.mark.sniffer
-def test_group_apply_paced_no_ring_loss(api, vl_bindings, lamps, free_group,
+def test_group_apply_paced_no_ring_loss(api, vl_bindings, drivable, free_group,
                                         group_matrix_guard, sniffer,
                                         ops_quiesce, state_snapshot,
                                         test_artifacts, op_check):
-    api.groups.join([label - 1 for label in lamps.labels()[:4]], free_group,
+    api.groups.join([drivable.vl(short) for short in drivable.shorts[:4]], free_group,
                     apply=False)
     with sniffer.window() as win:
         op = api.groups.apply()

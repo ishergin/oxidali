@@ -32,6 +32,7 @@ def test_group_patch_metadata_roundtrip(api):
 
 
 @pytest.mark.hil_id("HIL-GRP-04")
+@pytest.mark.virtual_gear
 def test_matrix_counts_and_dirty_consistent(api, vl_bindings, test_artifacts):
     matrix = api.groups.matrix()
     groups = api.groups.list()["groups"]
@@ -53,13 +54,13 @@ def test_matrix_counts_and_dirty_consistent(api, vl_bindings, test_artifacts):
 
 
 @pytest.mark.hil_id("HIL-GRP-05")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_matrix_patch_marks_dirty_without_frames(api, vl_bindings, lamps,
+def test_matrix_patch_marks_dirty_without_frames(api, vl_bindings, drivable,
                                                  free_group,
                                                  group_matrix_guard, sniffer,
                                                  ops_quiesce):
-    label = lamps.labels()[0]
-    lid = label - 1
+    lid = drivable.vl(drivable.first())
     row = next(r for r in group_matrix_guard["rows"]
                if r["virtual_lamp_id"] == lid)
     desired = list(row["desired"])
@@ -77,13 +78,14 @@ def test_matrix_patch_marks_dirty_without_frames(api, vl_bindings, lamps,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-02")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
+def test_group_apply_programs_gear(api, vl_bindings, drivable, free_group,
                                    group_matrix_guard, sniffer, paced,
                                    ops_quiesce, capabilities, wait_state,
                                    state_snapshot, test_artifacts, op_check):
-    label = lamps.labels()[0]
-    lid, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    lid = drivable.vl(short)
     api.groups.join([lid], free_group, apply=False)
 
     with sniffer.window() as win:
@@ -148,6 +150,7 @@ def test_group_apply_programs_gear(api, vl_bindings, lamps, free_group,
 
 
 @pytest.mark.hil_id("HIL-GRP-06")
+@pytest.mark.virtual_gear
 def test_apply_empty_diff_returns_matrix(api, vl_bindings, ops_quiesce,
                                          test_artifacts):
     ask_guard(api, "POST", "adapters/%d/groups/apply" % api.adapter)
@@ -174,11 +177,12 @@ def test_apply_empty_diff_returns_matrix(api, vl_bindings, ops_quiesce,
 
 
 @pytest.mark.hil_id("HIL-GRP-07")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
-def test_concurrent_apply_conflicts(api, vl_bindings, lamps, free_group,
+def test_concurrent_apply_conflicts(api, vl_bindings, drivable, free_group,
                                     group_matrix_guard, ops_quiesce,
                                     state_snapshot, test_artifacts, op_check):
-    api.groups.join([label - 1 for label in lamps.labels()[:3]], free_group,
+    api.groups.join([drivable.vl(short) for short in drivable.shorts[:3]], free_group,
                     apply=False)
 
     first = api.groups.apply()
@@ -249,15 +253,16 @@ def group_actions_allowed(api):
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-10")
+@pytest.mark.virtual_gear
 def test_a_stop_fade_rule_leaves_real_members_where_it_caught_them(
-        api, group_actions_allowed, rules_guard, attr_guard, vl_bindings, lamps, free_group,
+        api, group_actions_allowed, rules_guard, attr_guard, vl_bindings, drivable, free_group,
         group_matrix_guard, ops_quiesce, state_snapshot, op_check, test_artifacts):
-    members = [lamps.by_label[label] for label in lamps.labels()]
+    members = list(drivable.shorts)
     for short in members:
         attr_guard(short, "fade_time_ms", verify=True, required=True)
         written = api.wait_op(api.write_attrs(short, {"fade_time_ms": STOP_FADE_FADE_MS}))
         assert written.get("status") == "succeeded", written
-    api.groups.join([label - 1 for label in lamps.labels()], free_group)
+    api.groups.join([drivable.vl(short) for short in members], free_group)
     rules_guard(http_rule(STOP_FADE_RULE, GROUP_TARGET, free_group, STOP_FADE))
     api.group_ts(free_group, {"power": "on", "level": STOP_FADE_LOW})
     assert wait_until(lambda: set(api.actual_levels(members).values()) == {STOP_FADE_LOW},
@@ -277,11 +282,12 @@ STOP_FADE_LAMP_RULE = "hil-grp-11-stop-fade"
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-GRP-11")
+@pytest.mark.virtual_gear
 def test_a_stop_fade_rule_leaves_a_real_lamp_where_it_caught_it(
-        api, rules_guard, attr_guard, vl_bindings, lamps, state_snapshot, op_check,
+        api, rules_guard, attr_guard, vl_bindings, drivable, state_snapshot, op_check,
         test_artifacts):
-    label = lamps.labels()[0]
-    vl, short = label - 1, lamps.by_label[label]
+    short = drivable.first()
+    vl = drivable.vl(short)
     attr_guard(short, "fade_time_ms", verify=True, required=True)
     written = api.wait_op(api.write_attrs(short, {"fade_time_ms": STOP_FADE_FADE_MS}))
     assert written.get("status") == "succeeded", written
