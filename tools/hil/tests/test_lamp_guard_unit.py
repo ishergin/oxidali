@@ -1,5 +1,6 @@
 import dataclasses
 import re
+import types
 
 import pytest
 
@@ -589,6 +590,7 @@ def test_the_client_and_the_wb_master_log_what_they_write(monkeypatch):
 def test_a_read_only_run_never_injects_an_input_event(monkeypatch):
     class _Api:
         adapter = 0
+        guard = types.SimpleNamespace(fence=None)
 
         def _req(self, method, path, body=None):
             return {"rules": {"rules": []}}

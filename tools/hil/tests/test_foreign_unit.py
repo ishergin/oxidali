@@ -11,6 +11,7 @@ from hil.config import load as load_config
 from hil.foreign import (PEER_LOG_STALE_S, ForeignMaster, ForeignMasterSilent, PeerLog,
                          frame_hex, frames_on_wire, interleaving, monitor_verdict, peer_note,
                          sniffed)
+from hil.lamp_guard import LampNotAllowed, VirtualFence
 
 TOPIC = "/wb-dali/wb-dali_19_bus_1/bus_monitor"
 DTR0_114 = {"bits": 16, "bytes": [0xA3, 0x72]}
@@ -149,8 +150,26 @@ def test_a_peer_that_sniffs_nothing_is_named_no_witness(tmp_path):
 class _Api:
     adapter = 0
 
+    def __init__(self, fence=None):
+        self.guard = types.SimpleNamespace(fence=fence)
+
     def segment_shorts(self):
         return []
+
+
+PARK_SHORT, OUTSIDE_SHORT, FOREIGN_LEVEL = 16, 1, 77
+
+
+def test_a_read_only_session_reaches_the_park_only_through_the_fence_it_installed():
+    cfg = dataclasses.replace(load_config(), lamp_shorts="1", lamps_read_only=True)
+    bare = ForeignMaster(cfg, api=_Api())
+    with pytest.raises(LampNotAllowed):
+        bare.guard.check_frame(PARK_SHORT << 1, FOREIGN_LEVEL)
+    fenced = ForeignMaster(cfg, api=_Api(VirtualFence([PARK_SHORT], [], [])))
+    fenced.guard.check_frame(PARK_SHORT << 1, FOREIGN_LEVEL)
+    with pytest.raises(LampNotAllowed):
+        fenced.guard.check_frame(OUTSIDE_SHORT << 1, FOREIGN_LEVEL)
+    assert ForeignMaster(cfg).guard.fence is None
 
 
 def _master(monkeypatch, tmp_path, verdict, peer_sees):

@@ -59,7 +59,7 @@ def drivable_of(session, roster):
                     ROSTER_WHERE)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def drivable(request, virtual_gear_session):
     roster = None if virtual_gear_session is not None else request.getfixturevalue("lamps")
     return drivable_of(virtual_gear_session, roster)

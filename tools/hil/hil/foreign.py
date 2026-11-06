@@ -280,6 +280,7 @@ class ForeignMaster:
         self.retries = collections.Counter()
         self.guard = LampGuard.for_config(
             cfg, segment=api.segment_shorts if api is not None else None)
+        self.guard.fence = api.guard.fence if api is not None else None
 
     def _run_client(self, frames):
         remote = "python3 -c %s %s" % (_shq(remote_client_script(self.line)),
