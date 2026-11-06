@@ -141,7 +141,6 @@ def _timed_series(api, short, gap):
 
 
 @pytest.mark.hil_id("HIL-TS-09")
-@pytest.mark.virtual_gear
 def test_a_colour_temperature_series_during_a_fade_leaves_the_fixture_at_the_last_value(
         api, tc_fixture, attr_guard, state_snapshot, test_artifacts):
     short, last = tc_fixture, kelvin_to_mirek(TC_SERIES_KELVIN[-1])

@@ -83,18 +83,18 @@ def test_gear_features_match_the_standards_own_checks(api, drivable, capabilitie
         api.attr_read_checked(short, groups="runtime_status,dt8_color")
         device = api.attributes(short, ["dt8_color"])
         leaf = _attr_section(device, "dt8_color").get("gear_features") or {}
-        test_artifacts.attach_json("gear_features_%s" % label, leaf)
+        test_artifacts.attach_json("gear_features_SA%d" % short, leaf)
         value = leaf.get("value")
         assert value is not None, (
-            "%s (short %d) did not answer QUERY GEAR FEATURES/STATUS; "
-            "IEC 62386-209 Table 14 makes 247 mandatory on DT8 gear" % (label, short))
+            "SA%d did not answer QUERY GEAR FEATURES/STATUS; "
+            "IEC 62386-209 Table 14 makes 247 mandatory on DT8 gear" % short)
         assert value & 0x3E == 0, (
-            "%s: reserved bits set in GEAR FEATURES/STATUS 0x%02X "
-            "(12.7.1.1 error 7112)" % (label, value))
+            "SA%d: reserved bits set in GEAR FEATURES/STATUS 0x%02X "
+            "(12.7.1.1 error 7112)" % (short, value))
         assert value & 0x01, (
-            "%s: Automatic Activation is clear (0x%02X) — colour writes to this "
+            "SA%d: Automatic Activation is clear (0x%02X) — colour writes to this "
             "fixture will be accepted and do nothing (12.7.1.1 error 7113)"
-            % (label, value))
+            % (short, value))
         checked += 1
     assert checked, "no colour-capable fixture was available to read 247 from"
 
@@ -164,7 +164,7 @@ def test_write_fade_time_roundtrip(api, drivable, sniffer, paced, state_snapshot
 @pytest.mark.virtual_gear
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
-def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities,
+def test_color_mode_override_declares_a_mode_and_erases_none(api, capabilities, drivable,
                                                             needs_capability, sniffer,
                                                             paced, state_snapshot,
                                                             test_artifacts):
@@ -395,7 +395,7 @@ def test_fade_time_actually_lasts_what_it_says(api, drivable, sniffer, paced,
 @pytest.mark.virtual_gear
 @pytest.mark.sniffer
 @pytest.mark.needs_capability("rgb")
-def test_rgbwaf_control_byte_before_and_after_a_colour_write(api, capabilities,
+def test_rgbwaf_control_byte_before_and_after_a_colour_write(api, capabilities, drivable,
                                                              needs_capability,
                                                              state_snapshot,
                                                              test_artifacts):

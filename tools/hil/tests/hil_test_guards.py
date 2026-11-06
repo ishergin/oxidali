@@ -439,7 +439,7 @@ def free_group(api, capabilities, virtual_gear_session):
     if virtual_gear_session is not None:
         if not virtual_gear_session.groups:
             pytest.skip("the virtual-gear session reserved no free group")
-        return virtual_gear_session.groups[0]
+        return virtual_gear_session.groups[-1]
     for d in api.devices()["physical_devices"]:
         capabilities.ensure(d["short_address"], "groups")
     return free_group_of(api)

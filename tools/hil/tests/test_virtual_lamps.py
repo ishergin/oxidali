@@ -1,10 +1,8 @@
 import pytest
 
-pytestmark = pytest.mark.virtual_gear
-
-
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-01")
+@pytest.mark.virtual_gear
 def test_binding_and_derived_state(api, vl_bindings, drivable, wait_state,
                                    state_snapshot):
     short = drivable.first()
@@ -21,6 +19,7 @@ def test_binding_and_derived_state(api, vl_bindings, drivable, wait_state,
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-02")
+@pytest.mark.virtual_gear
 @pytest.mark.sniffer
 def test_vl_target_state_reaches_wire(api, vl_bindings, drivable, sniffer, paced,
                                       wait_state, state_snapshot):
@@ -41,6 +40,7 @@ def test_vl_target_state_reaches_wire(api, vl_bindings, drivable, sniffer, paced
 
 @pytest.mark.light
 @pytest.mark.hil_id("HIL-VL-03")
+@pytest.mark.virtual_gear
 def test_unbound_target_state_is_noop(api, vl_bindings, binding_guard, drivable,
                                       wait_state, state_snapshot,
                                       test_artifacts):
@@ -66,8 +66,7 @@ def test_unbound_target_state_is_noop(api, vl_bindings, binding_guard, drivable,
 
 @pytest.mark.hil_id("HIL-VL-04")
 def test_vl_patch_metadata_roundtrip(api, vl_bindings, drivable):
-    label = lamps.labels()[0]
-    lid = label - 1
+    lid = drivable.vl(drivable.first())
     before = api.vlamps.get(lid)
     restore_name = before["name"] or None
     try:
