@@ -82,19 +82,24 @@ never called from a worker: it begins with an unlocked walk of the session table
 - ISSUE-39's root is gone by construction rather than mitigated: a REST response cannot
   delay a WebSocket frame, because they no longer share a task. ISSUE-210's httpd hold goes
   with it; what is left of that record is the batch's own bound.
-- Leaving LRU purge also keeps load above the socket pool from closing a subscriber, and
-  removes the LRU candidate of ISSUE-55.
+- Leaving LRU purge also keeps load above the socket pool from closing a subscriber. It does
+  not help ISSUE-55: a pool that must still purge now has only REST sessions to choose from,
+  so exempting this socket makes the toolkit's keep-alive session a likelier victim, not a
+  rarer one.
 - The slot pool, the result slot and the deadline that existed only to cross onto the httpd
   task are gone, and with them a queued work item the control socket can silently drop.
 - About 1.2 KB of internal SRAM per live connection for the request copy, held for its life,
   against the one-off ~3 KB of the refused second instance. The reader's own 8 KiB stack costs
   more than either: `StackHome::ExternalOnXip` resolves to internal SRAM whenever the XIP image
   is off or stacks are forced internal, so on such an image the five reader slots are 40 KiB of
-  the scarce pool once a reconnect has used them all. Both numbers land on ISSUE-71.
+  the scarce pool once a reconnect has used them all. The bench image is not such an image —
+  it reports worker and httpd stacks in PSRAM — so there the slots cost the scarce pool
+  nothing. Both numbers land on ISSUE-71.
 - A reader runner per client plus one slot of reconnect headroom, named `ws-reader`, and the
-  client-request parse moves off the 20 KiB httpd stack onto it. Neither its budget nor the
-  sender's holds any more: the lwIP send path now lies on the sender's stack, so `ws-client`'s
-  measured peak described a path that no longer exists. Both are entered unmeasured.
+  client-request parse moves off the 20 KiB httpd stack onto it. The parse is the reader's
+  deepest frame and the reader's budget follows the census. The sender comes out shallower
+  than the path it replaces and still above the gate ISSUE-208 holds for it, so that gate is
+  the one this change does not settle.
 - Leaving the LRU purge also removes the one thing that reclaimed a vanished peer, so the
   socket carries TCP keepalive (30 s idle, 10 s apart, three probes) and a dead peer is
   reclaimed in about a minute. That is a transport probe, not the WebSocket ping the device
@@ -102,5 +107,8 @@ never called from a worker: it begins with an unlocked walk of the session table
   work: lwIP reports the timeout as `EWOULDBLOCK` and the dead peer as something else.
 - The upgrade still answers `101` before the handler (ISSUE-135), so a refusal is a Close
   frame, now written through the same codec.
-- Only the bench can prove it: no host test reaches `esp_http_server`, and the acceptance is
-  `HIL-WS-07` and `HIL-WS-09`.
+- Only the bench can prove it: no host test reaches `esp_http_server`. The codec, the reader,
+  the close handshake and the slot release answer on the installation. The acceptance that
+  would tell this image from the one before it does not: `HIL-WS-09` passes on both, because
+  the event rate never fills a client's queue, and `HIL-WS-07` needs an image whose PHY
+  interrupt sits at level 3. Both gaps sit on ISSUE-39.

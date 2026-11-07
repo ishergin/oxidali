@@ -366,7 +366,6 @@ LOUD = "debug"
 LOG_CHANNEL_ONLY = ["logs"]
 ATTR_READ_GROUPS = ["runtime_status", "common_102", "dt8_color", "groups", "scenes"]
 ACCEPTED_READ = (200, 202)
-WAITED_OUT = "waited out its queued send"
 SOCKETS_FULL = "sockets open"
 DROP_NOTICE = "DropNotice"
 
@@ -442,13 +441,11 @@ def test_a_subscriber_on_every_channel_loses_nothing_under_rest_load(
     kinds = dict(load.kinds[0])
     frames = sum(kinds.values())
     grew = {key: after[key] - before[key] for key in before if isinstance(before[key], int)}
-    waited_out = [line for line in lines if WAITED_OUT in line]
     test_artifacts.attach_json("load", {
         "gear_read": shorts, "seconds": LOAD_SECONDS, "load_threads": LOAD_THREADS,
         "rest_from_the_lan": rest, "tally": tally, "frames_by_kind": kinds, "grew": grew,
         "load_errors": load.errors, "closes": load.closes, "websocket_before": before,
         "websocket_after": after, "clients_before": ws_baseline["clients"],
-        "waited_out": waited_out,
         "sockets_full": [line for line in lines if SOCKETS_FULL in line]})
 
 
@@ -481,7 +478,5 @@ def test_a_subscriber_on_every_channel_loses_nothing_under_rest_load(
     assert grew["upgrades_rejected_total"] == 0, (
         "websocket.upgrades_rejected_total grew by %d: a connection was refused, which an "
         "empty sender-slot pool looks like" % grew["upgrades_rejected_total"])
-    assert not waited_out, (
-        "the sender waited out its queued send, so ESP-IDF lost a work item: %r" % waited_out)
 
     ws_baseline["survived"]()
