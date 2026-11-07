@@ -584,7 +584,9 @@ def test_a_crawling_subscriber_costs_neither_its_neighbour_nor_rest(
     assert neighbour_frames >= NEIGHBOUR_FRAMES_FLOOR, (
         "the neighbour got %d frames, under the %d floor, so its clean drop count proves "
         "nothing: %r" % (neighbour_frames, NEIGHBOUR_FRAMES_FLOOR, neighbour_kinds))
-    assert not neighbour_kinds.get(DROP_NOTICE) and not neighbour_lost, (
-        "the crawler cost its neighbour: %r %r" % (neighbour_kinds, neighbour_lost))
+    assert not neighbour_kinds.get(DROP_NOTICE), (
+        "the crawler cost its neighbour events: %r" % neighbour_kinds)
+    assert not neighbour_lost, (
+        "the crawler cost its neighbour the connection: %r" % neighbour_lost)
 
     ws_baseline["survived"]()
