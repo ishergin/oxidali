@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dali2rust_ws_runtime::{
     close_frame, close_code, serve_client_frames, ClientId, Opcode, RegisterRejected, WsConnection,
-    WsHub, WsSink, WsSinkError, MAX_CLIENT_FRAME_BYTES,
+    WsCounters, WsHub, WsSink, WsSinkError, MAX_CLIENT_FRAME_BYTES,
 };
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::http::server::EspHttpServer;
@@ -104,7 +104,7 @@ fn open_session(context: &'static WsContext, req: *mut httpd_req_t, fd: i32) {
         Ok(id) => start_reader(&context.hub, id, conn),
         Err(reason) => {
             log::info!("ws: refused upgrade on fd {fd}: {reason:?}");
-            tell_and_drop(&conn, reason);
+            tell_and_drop(&context.hub, &conn, reason);
         }
     }
 }
@@ -130,14 +130,16 @@ fn start_reader(hub: &Arc<WsHub>, id: ClientId, conn: Connection) {
     });
     if let Err(err) = started {
         log::warn!("ws: no reader for client {id} ({err}); refusing it");
-        tell_and_drop(&conn, RegisterRejected::CapacityExhausted);
+        tell_and_drop(hub, &conn, RegisterRejected::CapacityExhausted);
         hub.unregister(id);
     }
 }
 
-fn tell_and_drop(conn: &Connection, reason: RegisterRejected) {
+fn tell_and_drop(hub: &WsHub, conn: &Connection, reason: RegisterRejected) {
     let payload = close_code(reason).to_be_bytes();
     let _ = conn.send_frame(Opcode::Close, &payload);
+    conn.break_now();
+    WsCounters::bump(&hub.counters().upgrades_rejected_total, 1);
 }
 
 fn refuse_before_handover(server: httpd_handle_t, fd: i32, reason: RegisterRejected) {

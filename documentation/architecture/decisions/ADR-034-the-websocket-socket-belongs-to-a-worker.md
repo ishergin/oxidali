@@ -89,8 +89,8 @@ never called from a worker: it begins with an unlocked walk of the session table
 - About 1.2 KB of internal SRAM per live connection for the request copy, held for its life,
   against the one-off ~3 KB of the refused second instance. The reader's own 8 KiB stack costs
   more than either: `StackHome::ExternalOnXip` resolves to internal SRAM whenever the XIP image
-  is off or stacks are forced internal, so on such an image four readers are 32 KiB of the
-  scarce pool. Both numbers land on ISSUE-71.
+  is off or stacks are forced internal, so on such an image the five reader slots are 40 KiB of
+  the scarce pool once a reconnect has used them all. Both numbers land on ISSUE-71.
 - A reader runner per client plus one slot of reconnect headroom, named `ws-reader`, and the
   client-request parse moves off the 20 KiB httpd stack onto it. Neither its budget nor the
   sender's holds any more: the lwIP send path now lies on the sender's stack, so `ws-client`'s

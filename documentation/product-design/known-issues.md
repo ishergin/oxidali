@@ -262,7 +262,9 @@
   `httpd_req_async_handler_begin`, не сумев выделить `resp_hdrs`, освобождает копию запроса и
   её `aux`, но не скопированный `scratch` — утечка на пути нехватки памяти; (г) ни
   `keep_alive_enable`, ни `session_timeout` esp-idf-svc не выставляет, так что сокет без
-  keepalive не узнаёт об исчезнувшем пире.
+  keepalive не узнаёт об исчезнувшем пире; его выставляет владелец сокета, и это держится на
+  `LWIP_TCP_KEEPALIVE`, который включает порт ESP-IDF, а не сам lwIP — если опция когда-нибудь
+  отпадёт, все три `TCP_KEEP*` вернут `ENOPROTOOPT`, и в журнале останется одна строка `warn`.
 - **Обход:** (а) на XIP-образе стек в PSRAM (`task_caps`); иначе (без XIP или с
   `DALI2RUST_STACKS_INTERNAL=1`) блок под стек резервируется рано в загрузке
   ([07](../architecture/07-memory-and-cores.md) §The httpd stack is a budget); (б) отказ по

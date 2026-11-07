@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dali2rust_ws_runtime::{WireError, WsWire};
 use esp_idf_svc::sys::{
     httpd_req_async_handler_complete, httpd_req_t, lwip_recv, lwip_send, lwip_setsockopt,
-    lwip_shutdown, EAGAIN, ESP_OK, EWOULDBLOCK, IPPROTO_TCP, SHUT_RD, SHUT_RDWR, SOL_SOCKET,
+    lwip_shutdown, ESP_OK, EWOULDBLOCK, IPPROTO_TCP, SHUT_RD, SHUT_RDWR, SOL_SOCKET,
     SO_KEEPALIVE, TCP_KEEPCNT, TCP_KEEPIDLE, TCP_KEEPINTVL,
 };
 
@@ -77,7 +77,7 @@ fn arm_keepalive(fd: i32) {
 fn last_error() -> WireError {
     // SAFETY: `__errno` returns the calling task's own errno slot.
     let errno = unsafe { *esp_idf_svc::sys::__errno() };
-    if errno == EAGAIN as i32 || errno == EWOULDBLOCK as i32 {
+    if errno == EWOULDBLOCK as i32 {
         WireError::Timeout
     } else {
         WireError::Closed

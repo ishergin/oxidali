@@ -204,7 +204,7 @@ pub fn server_header(
     }
     let len = u16::try_from(payload_len).ok()?;
     out[1] = LEN_IS_16_BIT;
-    out[PRELUDE_BYTES..].copy_from_slice(&len.to_be_bytes());
+    out[PRELUDE_BYTES..PRELUDE_BYTES + EXTENDED_LEN_BYTES].copy_from_slice(&len.to_be_bytes());
     Some(MAX_SERVER_HEADER_BYTES)
 }
 

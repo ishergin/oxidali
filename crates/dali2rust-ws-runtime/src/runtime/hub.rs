@@ -508,6 +508,7 @@ fn fill_batch(
     first: Arc<str>,
     batch: &mut Vec<Arc<str>>,
 ) {
+    batch.clear();
     batch.push(first);
     batch.extend(rx.try_iter().take(SENDER_BATCH_FRAMES - 1));
 }

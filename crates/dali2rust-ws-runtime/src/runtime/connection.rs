@@ -72,6 +72,10 @@ impl<W: WsWire> WsConnection<W> {
         self.broken.load(Ordering::Acquire)
     }
 
+    pub fn break_now(&self) {
+        self.broken.store(true, Ordering::Release);
+    }
+
     pub fn read_frame(&self, payload: &mut [u8]) -> Result<ReadOutcome, ReadError> {
         if self.reading.swap(true, Ordering::Acquire) {
             return Err(ReadError::SecondReader);
@@ -170,7 +174,6 @@ mod tests {
         most_inside: AtomicUsize,
         frame_calls: AtomicUsize,
         hold_payloads: AtomicBool,
-        announced: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     }
 
     impl Script {
@@ -211,10 +214,6 @@ mod tests {
         fn hold_for_an_intruder(&self) {
             if !self.0.hold_payloads.load(Ordering::SeqCst) {
                 return;
-            }
-            let waiting = self.0.announced.lock().expect("the announcement").take();
-            if let Some(announced) = waiting {
-                let _ = announced.recv_timeout(ANNOUNCE_DEADLINE);
             }
             let until = Instant::now() + INTRUSION_DEADLINE;
             while Instant::now() < until && self.0.inside.load(Ordering::SeqCst) < 2 {
@@ -449,9 +448,18 @@ mod tests {
 
     #[test]
     fn an_over_reporting_wire_cannot_make_the_reader_see_bytes_it_never_got() {
-        struct Liar;
+        struct Liar {
+            frame: Mutex<Vec<u8>>,
+        }
         impl WsWire for Liar {
-            fn read(&self, _buf: &mut [u8]) -> Result<usize, WireError> {
+            fn read(&self, buf: &mut [u8]) -> Result<usize, WireError> {
+                let mut frame = self.frame.lock().expect("the frame");
+                if frame.is_empty() {
+                    return Err(WireError::Closed);
+                }
+                let take = frame.len().min(buf.len());
+                buf[..take].copy_from_slice(&frame[..take]);
+                frame.drain(..take);
                 Ok(usize::MAX)
             }
             fn write_frame(&self, _header: &[u8], _payload: &[u8]) -> Result<(), WireError> {
@@ -460,12 +468,28 @@ mod tests {
             fn wake_reader(&self) {}
             fn finish(&self) {}
         }
-        let connection = WsConnection::new(Liar);
+
+        let payload = vec![b'z'; 300];
+        let liar = || Liar {
+            frame: Mutex::new(masked_extended(0x1, &payload)),
+        };
+
         let mut body = [0u8; BODY];
-        let outcome = connection.read_frame(&mut body);
-        assert!(
-            matches!(outcome, Ok(ReadOutcome::Frame { .. }) | Err(_)),
-            "a lying wire must not be trusted past the buffer it was given"
+        assert_eq!(
+            WsConnection::new(liar()).read_frame(&mut body),
+            Ok(ReadOutcome::Frame {
+                opcode: Opcode::Text,
+                payload_len: 300
+            }),
+            "a wire claiming more than it gave must not stretch the frame"
+        );
+        assert_eq!(&body[..300], &payload[..]);
+
+        let mut small = [0u8; 4];
+        assert_eq!(
+            WsConnection::new(liar()).read_frame(&mut small),
+            Err(ReadError::Oversize),
+            "the buffer still bounds the frame, whatever the wire claims"
         );
     }
 
@@ -597,14 +621,11 @@ mod tests {
     fn a_second_sender_cannot_enter_while_a_frame_is_half_written() {
         let script = Script::silent();
         script.hold_payloads.store(true, Ordering::SeqCst);
-        let (announce, announced) = std::sync::mpsc::channel();
-        *script.announced.lock().expect("the announcement") = Some(announced);
         let shared = Arc::new(conn(&script));
 
         let intruder = {
             let shared = Arc::clone(&shared);
             std::thread::spawn(move || {
-                let _ = announce.send(());
                 shared.send_frame(Opcode::Text, b"bbb").expect("the frame");
             })
         };
