@@ -69,6 +69,7 @@ pub enum FrameError {
     ReservedOpcode,
     ControlTooLong,
     ControlFragmented,
+    Fragmented,
     LengthUnsupported,
     TailLength,
     TooLarge,
@@ -82,6 +83,7 @@ impl fmt::Display for FrameError {
             Self::ReservedOpcode => "the opcode is reserved",
             Self::ControlTooLong => "a control frame carries more than 125 bytes",
             Self::ControlFragmented => "a control frame is fragmented",
+            Self::Fragmented => "a fragmented data frame is not accepted",
             Self::LengthUnsupported => "a 64-bit length is not accepted",
             Self::TailLength => "the header tail does not match its length marker",
             Self::TooLarge => "the payload is over the frame ceiling",
@@ -153,6 +155,8 @@ fn validate(opcode: Opcode, is_final: bool, payload_len: usize) -> Result<(), Fr
         if !is_final {
             return Err(FrameError::ControlFragmented);
         }
+    } else if !is_final || matches!(opcode, Opcode::Continuation) {
+        return Err(FrameError::Fragmented);
     }
     if payload_len > MAX_CLIENT_FRAME_BYTES {
         return Err(FrameError::TooLarge);
@@ -274,6 +278,41 @@ mod tests {
         assert_eq!(
             parse_header(fragmented, &KEY),
             Err(FrameError::ControlFragmented)
+        );
+    }
+
+    #[test]
+    fn a_non_final_data_frame_is_refused_rather_than_taken_for_a_whole_one() {
+        let started = prelude(OPCODE_TEXT, MASK_BIT | 3);
+        assert_eq!(parse_header(started, &KEY), Err(FrameError::Fragmented));
+        let binary = prelude(OPCODE_BINARY, MASK_BIT | 3);
+        assert_eq!(parse_header(binary, &KEY), Err(FrameError::Fragmented));
+    }
+
+    #[test]
+    fn a_continuation_frame_is_refused_since_no_fragment_is_ever_started() {
+        for first in [OPCODE_CONTINUATION, FIN_BIT | OPCODE_CONTINUATION] {
+            assert_eq!(
+                parse_header(prelude(first, MASK_BIT | 3), &KEY),
+                Err(FrameError::Fragmented),
+                "a continuation frame was accepted with first byte {first:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_final_data_frame_is_still_accepted() {
+        assert_eq!(
+            parse_header(masked_short(OPCODE_TEXT, 3), &KEY)
+                .expect("a final text frame")
+                .opcode,
+            Opcode::Text
+        );
+        assert_eq!(
+            parse_header(masked_short(OPCODE_BINARY, 3), &KEY)
+                .expect("a final binary frame")
+                .opcode,
+            Opcode::Binary
         );
     }
 

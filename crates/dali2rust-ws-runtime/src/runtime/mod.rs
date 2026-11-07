@@ -3,6 +3,7 @@ pub mod connection;
 pub mod frame;
 pub mod handoff;
 pub mod hub;
+pub mod reader;
 pub mod sink;
 pub mod worker;
 
