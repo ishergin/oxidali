@@ -1,29 +1,47 @@
 use std::sync::Arc;
 
-use dali2rust_ws_runtime::{RegisterRejected, WsCounters, WsHub, WsSessions};
-use esp_idf_svc::http::server::ws::EspHttpWsConnection;
-use esp_idf_svc::http::server::EspHttpServer;
+use dali2rust_ws_runtime::{
+    close_frame, close_code, serve_client_frames, ClientId, Opcode, RegisterRejected, WsConnection,
+    WsCounters, WsHub, WsSink, WsSinkError, MAX_CLIENT_FRAME_BYTES,
+};
 use esp_idf_svc::handle::RawHandle;
+use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::sys::{
     esp, esp_err_t, http_method_HTTP_GET, httpd_handle_t, httpd_register_uri_handler,
-    httpd_req_get_hdr_value_len, httpd_req_get_hdr_value_str, httpd_req_t,
-    httpd_sess_trigger_close, httpd_uri_t, httpd_ws_frame_t, httpd_ws_recv_frame, httpd_ws_type_t,
-    httpd_ws_type_t_HTTPD_WS_TYPE_BINARY, httpd_ws_type_t_HTTPD_WS_TYPE_CLOSE,
-    httpd_ws_type_t_HTTPD_WS_TYPE_CONTINUE, httpd_ws_type_t_HTTPD_WS_TYPE_PING,
-    httpd_ws_type_t_HTTPD_WS_TYPE_PONG, httpd_ws_type_t_HTTPD_WS_TYPE_TEXT, EspError,
-    ESP_ERR_INVALID_SIZE, ESP_OK,
+    httpd_req_async_handler_begin, httpd_req_get_hdr_value_len, httpd_req_get_hdr_value_str,
+    httpd_req_t, httpd_req_to_sockfd, httpd_sess_trigger_close, httpd_uri_t, lwip_send, EspError,
+    ESP_OK,
 };
-use esp_idf_svc::ws::FrameType;
+
+use super::esp_ws_wire::EspWire;
 
 const WS_PATH: &str = "/api/v1/ws";
 
-const MAX_CLIENT_FRAME_BYTES: usize = 512;
+const MAX_CLOSE_FRAME_BYTES: usize = 8;
+
+type Connection = Arc<WsConnection<EspWire>>;
 
 struct WsContext {
     hub: Arc<WsHub>,
-    sessions: WsSessions,
     server: httpd_handle_t,
-    slots: super::esp_ws_send::WsSlotPool,
+}
+
+struct ConnSink(Connection);
+
+impl WsSink for ConnSink {
+    fn send_batch(&self, frames: &[Arc<str>]) -> Result<(), WsSinkError> {
+        for frame in frames {
+            self.0
+                .send_frame(Opcode::Text, frame.as_bytes())
+                .map_err(|_| WsSinkError::Closed)?;
+        }
+        Ok(())
+    }
+
+    fn close(&self) {
+        let _ = self.0.send_frame(Opcode::Close, &[]);
+        self.0.wake_reader();
+    }
 }
 
 pub fn register_ws_handler(
@@ -31,18 +49,21 @@ pub fn register_ws_handler(
     hub: Arc<WsHub>,
 ) -> Result<(), EspError> {
     let handle = server.handle();
-    let slots = super::esp_ws_send::slot_pool(hub.sender_slots());
-    let context = Box::new(WsContext {
-        hub,
-        sessions: WsSessions::new(),
-        server: handle,
-        slots,
-    });
     // SAFETY: one leak at boot; esp-idf keeps `user_ctx` for the registration, which is never removed.
-    let context: &'static WsContext = Box::leak(context);
+    let context: &'static WsContext = Box::leak(Box::new(WsContext {
+        hub,
+        server: handle,
+    }));
+    let config = ws_route(context);
+    // SAFETY: `config` lives across the call; the URI is a `'static` C literal and the context is leaked.
+    esp!(unsafe { httpd_register_uri_handler(handle, &config) })?;
+    Ok(())
+}
+
+fn ws_route(context: &'static WsContext) -> httpd_uri_t {
     let uri = c"/api/v1/ws";
     debug_assert_eq!(uri.to_bytes(), WS_PATH.as_bytes());
-    let config = httpd_uri_t {
+    httpd_uri_t {
         uri: uri.as_ptr(),
         method: http_method_HTTP_GET,
         handler: Some(ws_uri_handler),
@@ -50,10 +71,7 @@ pub fn register_ws_handler(
         is_websocket: true,
         handle_ws_control_frames: true,
         ..Default::default()
-    };
-    // SAFETY: `config` lives across the call; the URI is a `'static` C literal and the context is leaked.
-    esp!(unsafe { httpd_register_uri_handler(handle, &config) })?;
-    Ok(())
+    }
 }
 
 extern "C" fn ws_uri_handler(req: *mut httpd_req_t) -> esp_err_t {
@@ -63,63 +81,81 @@ extern "C" fn ws_uri_handler(req: *mut httpd_req_t) -> esp_err_t {
     };
     // SAFETY: as above.
     let method = unsafe { (*req).method };
+    // SAFETY: as above; the request is live for the call.
+    let fd = unsafe { httpd_req_to_sockfd(req) };
     if method == http_method_HTTP_GET as i32 {
-        let mut conn = EspHttpWsConnection::New(context.server, req);
-        open_session(context, &mut conn);
+        open_session(context, req, fd);
     } else {
-        let mut conn = EspHttpWsConnection::Receiving(context.server, req, None);
-        forward_client_frame(&context.hub, &context.sessions, &mut conn);
+        close_socket(context.server, fd);
     }
     ESP_OK
 }
 
-fn open_session(context: &'static WsContext, conn: &mut EspHttpWsConnection) {
-    let (hub, sessions, server) = (&context.hub, &context.sessions, context.server);
-    let fd = conn.session();
-    sessions.close(hub, fd);
-    if let Some(reason) = refuse_reason(conn) {
-        refuse(conn, server, fd, reason);
+fn open_session(context: &'static WsContext, req: *mut httpd_req_t, fd: i32) {
+    if let Some(reason) = refuse_reason(req) {
+        refuse_before_handover(context.server, fd, reason);
         return;
     }
-    let session = match conn.create_detached_sender() {
-        Ok(session) => session,
-        Err(err) => {
-            log::warn!("ws: detached sender for fd {fd} failed: {err:?}");
-            close_socket(server, fd);
-            return;
-        }
-    };
-    let Some(sink) = super::esp_ws_send::DirectWsSink::claim(&context.slots, server, fd, session)
-    else {
-        log::warn!(
-            "ws: no send slot left for fd {fd} ({} lost a queued send); refusing it",
-            context.slots.lost()
-        );
-        WsCounters::bump(&hub.counters().upgrades_rejected_total, 1);
-        refuse(conn, server, fd, RegisterRejected::CapacityExhausted);
+    let Some(conn) = hand_over(req, fd) else {
+        close_socket(context.server, fd);
         return;
     };
-    match hub.register(Box::new(sink)) {
-        Ok(id) => sessions.insert(fd, id),
-        Err(reason) => refuse(conn, server, fd, reason),
+    match context.hub.register(Box::new(ConnSink(Arc::clone(&conn)))) {
+        Ok(id) => start_reader(&context.hub, id, conn),
+        Err(reason) => {
+            log::info!("ws: refused upgrade on fd {fd}: {reason:?}");
+            tell_and_drop(&context.hub, &conn, reason);
+        }
     }
 }
 
-fn refuse(
-    conn: &mut EspHttpWsConnection,
-    server: httpd_handle_t,
-    fd: i32,
-    reason: RegisterRejected,
-) {
+fn hand_over(req: *mut httpd_req_t, fd: i32) -> Option<Connection> {
+    let mut handed: *mut httpd_req_t = core::ptr::null_mut();
+    // SAFETY: the request is live for the call; esp-idf allocates the copy and hands it back.
+    let begun = esp!(unsafe { httpd_req_async_handler_begin(req, &mut handed) });
+    if begun.is_err() || handed.is_null() {
+        log::warn!("ws: fd {fd} could not be handed to a worker");
+        return None;
+    }
+    Some(Arc::new(WsConnection::new(EspWire::claim(fd, handed))))
+}
+
+fn start_reader(hub: &Arc<WsHub>, id: ClientId, conn: Connection) {
+    let reader_hub = Arc::clone(hub);
+    let reader_conn = Arc::clone(&conn);
+    let started = hub.start_reader(move || {
+        let mut buffer = vec![0u8; MAX_CLIENT_FRAME_BYTES];
+        let exit = serve_client_frames(reader_hub.as_ref(), id, reader_conn.as_ref(), &mut buffer);
+        log::info!("ws: client {id} reader ended ({exit:?})");
+    });
+    if let Err(err) = started {
+        log::warn!("ws: no reader for client {id} ({err}); refusing it");
+        tell_and_drop(hub, &conn, RegisterRejected::CapacityExhausted);
+        hub.unregister(id);
+    }
+}
+
+fn tell_and_drop(hub: &WsHub, conn: &Connection, reason: RegisterRejected) {
+    let payload = close_code(reason).to_be_bytes();
+    let _ = conn.send_frame(Opcode::Close, &payload);
+    conn.break_now();
+    WsCounters::bump(&hub.counters().upgrades_rejected_total, 1);
+}
+
+fn refuse_before_handover(server: httpd_handle_t, fd: i32, reason: RegisterRejected) {
     log::info!("ws: refused upgrade on fd {fd}: {reason:?}");
-    let payload = dali2rust_ws_runtime::close_code(reason).to_be_bytes();
-    let _ = conn.send(FrameType::Close, &payload);
+    let payload = close_code(reason).to_be_bytes();
+    let mut frame = [0u8; MAX_CLOSE_FRAME_BYTES];
+    if let Some(len) = close_frame(&payload, &mut frame) {
+        // SAFETY: on the httpd task inside this handler the fd is live; `frame` lives for the call.
+        unsafe { lwip_send(fd, frame.as_ptr().cast(), len, 0) };
+    }
     close_socket(server, fd);
 }
 
-fn refuse_reason(conn: &EspHttpWsConnection) -> Option<RegisterRejected> {
-    let origin = header(conn, c"Origin");
-    let host = header(conn, c"Host");
+fn refuse_reason(req: *mut httpd_req_t) -> Option<RegisterRejected> {
+    let origin = header(req, c"Origin");
+    let host = header(req, c"Host");
     if !dali2rust_ws_runtime::origin_allowed(origin.as_deref(), host.as_deref()) {
         log::warn!("ws: refused upgrade from origin {origin:?} (host {host:?})");
         return Some(RegisterRejected::OriginRejected);
@@ -127,21 +163,16 @@ fn refuse_reason(conn: &EspHttpWsConnection) -> Option<RegisterRejected> {
     None
 }
 
-fn header(conn: &EspHttpWsConnection, name: &core::ffi::CStr) -> Option<String> {
-    let raw_req = match conn {
-        EspHttpWsConnection::New(_, req) => *req,
-        EspHttpWsConnection::Receiving(_, req, _) => *req,
-        EspHttpWsConnection::Closed(_) => return None,
-    };
-    // SAFETY: `raw_req` is esp-idf's request, live for the call; `name` is a NUL-terminated literal.
-    let len = unsafe { httpd_req_get_hdr_value_len(raw_req, name.as_ptr()) };
+fn header(req: *mut httpd_req_t, name: &core::ffi::CStr) -> Option<String> {
+    // SAFETY: the request is live for the call; `name` is a NUL-terminated literal.
+    let len = unsafe { httpd_req_get_hdr_value_len(req, name.as_ptr()) };
     if len == 0 {
         return None;
     }
     let mut buf = vec![0u8; len + 1];
     // SAFETY: as above; `buf` holds `len + 1` bytes, the size passed and the most esp-idf writes.
     let err = unsafe {
-        httpd_req_get_hdr_value_str(raw_req, name.as_ptr(), buf.as_mut_ptr().cast(), buf.len())
+        httpd_req_get_hdr_value_str(req, name.as_ptr(), buf.as_mut_ptr().cast(), buf.len())
     };
     if err != ESP_OK {
         return None;
@@ -151,101 +182,6 @@ fn header(conn: &EspHttpWsConnection, name: &core::ffi::CStr) -> Option<String> 
 }
 
 fn close_socket(server: httpd_handle_t, fd: i32) {
-    // SAFETY: `server` is the handle esp-idf gave this handler and `fd` its socket.
+    // SAFETY: on the httpd task `server` is the handle this handler was given and `fd` its socket.
     unsafe { httpd_sess_trigger_close(server, fd) };
-}
-
-enum ClientFrame {
-    Text,
-    Ignore,
-    Ping,
-    Close,
-    Protocol,
-}
-
-#[allow(non_upper_case_globals, reason = "The opcode constants come from bindgen and are lower-case; matching on them by name is what keeps this table readable against `httpd_ws.c`")]
-fn classify(frame_type: httpd_ws_type_t) -> ClientFrame {
-    match frame_type {
-        httpd_ws_type_t_HTTPD_WS_TYPE_TEXT => ClientFrame::Text,
-        httpd_ws_type_t_HTTPD_WS_TYPE_BINARY
-        | httpd_ws_type_t_HTTPD_WS_TYPE_CONTINUE
-        | httpd_ws_type_t_HTTPD_WS_TYPE_PONG => ClientFrame::Ignore,
-        httpd_ws_type_t_HTTPD_WS_TYPE_PING => ClientFrame::Ping,
-        httpd_ws_type_t_HTTPD_WS_TYPE_CLOSE => ClientFrame::Close,
-        _ => ClientFrame::Protocol,
-    }
-}
-
-fn read_client_frame(
-    raw_req: *mut httpd_req_t,
-    buf: &mut [u8],
-) -> Result<httpd_ws_frame_t, EspError> {
-    let mut frame = httpd_ws_frame_t::default();
-    // SAFETY: `raw_req` is live for the call and `frame` outlives it; `len` 0 selects the header parse.
-    esp!(unsafe { httpd_ws_recv_frame(raw_req, &mut frame, 0) })?;
-    if frame.len == 0 {
-        return Ok(frame);
-    }
-    if frame.len > buf.len() {
-        return Err(EspError::from_infallible::<ESP_ERR_INVALID_SIZE>());
-    }
-    frame.payload = buf.as_mut_ptr();
-    // SAFETY: as above; `payload` points at `buf`, which holds at least `frame.len` bytes.
-    esp!(unsafe { httpd_ws_recv_frame(raw_req, &mut frame, frame.len) })?;
-    Ok(frame)
-}
-
-fn serves_a_client(hub: &Arc<WsHub>, sessions: &WsSessions, fd: i32) -> bool {
-    sessions.lookup(fd).is_some_and(|id| hub.knows(id))
-}
-
-fn forward_client_frame(hub: &Arc<WsHub>, sessions: &WsSessions, conn: &mut EspHttpWsConnection) {
-    let EspHttpWsConnection::Receiving(server, raw_req, _) = conn else {
-        return;
-    };
-    let (server, raw_req) = (*server, *raw_req);
-    let mut buf = [0u8; MAX_CLIENT_FRAME_BYTES];
-    let Ok(frame) = read_client_frame(raw_req, &mut buf) else {
-        fail_connection(hub, sessions, conn, server);
-        return;
-    };
-    if !serves_a_client(hub, sessions, conn.session()) {
-        log::info!("ws: fd {} has no client left; closing it", conn.session());
-        fail_connection(hub, sessions, conn, server);
-        return;
-    }
-    let payload = &buf[..frame.len];
-    match classify(frame.type_) {
-        ClientFrame::Text => {
-            let Some(id) = sessions.lookup(conn.session()) else {
-                return;
-            };
-            if let Ok(text) = core::str::from_utf8(payload) {
-                hub.handle_client_text(id, text);
-            }
-        }
-        ClientFrame::Ignore => {}
-        ClientFrame::Ping => {
-            let _ = conn.send(FrameType::Pong, payload);
-        }
-        ClientFrame::Close => {
-            let _ = conn.send(FrameType::Close, &[]);
-            let fd = conn.session();
-            sessions.close(hub, fd);
-            close_socket(server, fd);
-        }
-        ClientFrame::Protocol => fail_connection(hub, sessions, conn, server),
-    }
-}
-
-fn fail_connection(
-    hub: &Arc<WsHub>,
-    sessions: &WsSessions,
-    conn: &mut EspHttpWsConnection,
-    server: httpd_handle_t,
-) {
-    let _ = conn.send(FrameType::Close, &[]);
-    let fd = conn.session();
-    sessions.close(hub, fd);
-    close_socket(server, fd);
 }

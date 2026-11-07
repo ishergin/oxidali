@@ -15,4 +15,4 @@ pub mod esp_idf;
 pub mod esp_ws;
 
 #[cfg(target_os = "espidf")]
-mod esp_ws_send;
+mod esp_ws_wire;

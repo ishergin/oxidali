@@ -14,10 +14,13 @@ use dali2rust_platform::dali::SnifferTap;
 use dali2rust_platform::logs::LogLevel;
 
 use crate::counters::WsCounters;
+use crate::runtime::reader::ClientFrames;
 use crate::runtime::sink::WsSink;
 
 pub const MAX_WS_CLIENTS: usize = 4;
 const SENDERS_PER_CLIENT_SLOT: usize = 2;
+
+const READER_SLOT_HEADROOM: usize = 1;
 
 const CLIENT_QUEUE_DEPTH: usize = 32;
 
@@ -137,6 +140,7 @@ impl Client {
 pub struct WsHub {
     config: WsHubConfig,
     senders: RunnerPool,
+    readers: RunnerPool,
     clients: Mutex<Vec<Client>>,
     arrived: std::sync::Condvar,
     next_id: AtomicU32,
@@ -156,6 +160,7 @@ impl WsHub {
         Arc::new(Self {
             config,
             senders: sender_pool(config.max_clients),
+            readers: reader_pool(config.max_clients),
             clients: Mutex::new(Vec::new()),
             arrived: std::sync::Condvar::new(),
             next_id: AtomicU32::new(1),
@@ -164,6 +169,13 @@ impl WsHub {
             tap,
             log_ring,
         })
+    }
+
+    pub fn start_reader<F>(&self, job: F) -> Result<(), RunError>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.readers.start(job)
     }
 
     pub fn sender_slots(&self) -> usize {
@@ -404,53 +416,6 @@ impl WsHub {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct WsSessions {
-    rows: Mutex<Vec<(i32, ClientId)>>,
-}
-
-impl WsSessions {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&self, fd: i32, id: ClientId) {
-        self.locked().push((fd, id));
-    }
-
-    pub fn lookup(&self, fd: i32) -> Option<ClientId> {
-        self.locked()
-            .iter()
-            .find_map(|(row_fd, id)| (*row_fd == fd).then_some(*id))
-    }
-
-    pub fn close(&self, hub: &WsHub, fd: i32) {
-        for id in self.forget(fd) {
-            hub.unregister(id);
-        }
-    }
-
-    fn forget(&self, fd: i32) -> Vec<ClientId> {
-        let mut rows = self.locked();
-        let mut ids = Vec::new();
-        rows.retain(|(row_fd, id)| {
-            if *row_fd == fd {
-                ids.push(*id);
-                false
-            } else {
-                true
-            }
-        });
-        ids
-    }
-
-    fn locked(&self) -> std::sync::MutexGuard<'_, Vec<(i32, ClientId)>> {
-        self.rows
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
 enum Delivery {
     Sent,
     Dropped,
@@ -524,6 +489,39 @@ fn notify_channel_loss(client: &mut Client, channel: Channel) -> bool {
     true
 }
 
+impl ClientFrames for WsHub {
+    fn text(&self, id: ClientId, text: &str) {
+        self.handle_client_text(id, text);
+    }
+
+    fn serves(&self, id: ClientId) -> bool {
+        self.knows(id)
+    }
+
+    fn forget(&self, id: ClientId) {
+        self.unregister(id);
+    }
+}
+
+fn fill_batch(
+    rx: &std::sync::mpsc::Receiver<Arc<str>>,
+    first: Arc<str>,
+    batch: &mut Vec<Arc<str>>,
+) {
+    batch.clear();
+    batch.push(first);
+    batch.extend(rx.try_iter().take(SENDER_BATCH_FRAMES - 1));
+}
+
+fn reader_pool(max_clients: usize) -> RunnerPool {
+    RunnerPool::new(
+        c"ws-reader",
+        EVENT_WORKER_STACK,
+        StackHome::ExternalOnXip,
+        max_clients.saturating_add(READER_SLOT_HEADROOM),
+    )
+}
+
 fn sender_pool(max_clients: usize) -> RunnerPool {
     RunnerPool::new(
         c"ws-client",
@@ -564,8 +562,7 @@ impl SenderEnds {
     fn pump(&self) {
         let mut batch: Vec<Arc<str>> = Vec::with_capacity(SENDER_BATCH_FRAMES);
         while let Ok(first) = self.rx.recv() {
-            batch.push(first);
-            batch.extend(self.rx.try_iter());
+            fill_batch(&self.rx, first, &mut batch);
             let sent = self.sink.send_batch(&batch);
             self.release_bytes(&batch);
             if let Err(err) = sent {
@@ -1256,29 +1253,28 @@ mod tests {
         );
     }
 
+
     #[test]
-    fn sweeping_a_reused_fd_releases_the_client_it_named() {
-        let (hub, _tap) = hub();
-        let sessions = WsSessions::new();
-        let mut kept = Vec::new();
-        for fd in 0..MAX_WS_CLIENTS as i32 {
-            let (id, rx) = connect(&hub);
-            sessions.insert(fd, id);
-            kept.push(rx);
+    fn a_batch_never_outgrows_its_own_bound_however_much_is_queued() {
+        const QUEUED: usize = SENDER_BATCH_FRAMES * 6;
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Arc<str>>(QUEUED);
+        for index in 0..QUEUED {
+            tx.send(Arc::from(format!("frame {index}").as_str()))
+                .expect("room for the frame");
         }
-        assert_eq!(hub.client_count(), MAX_WS_CLIENTS);
-
-        const REUSED_FD: i32 = 0;
-        sessions.close(&hub, REUSED_FD);
-        assert_eq!(sessions.lookup(REUSED_FD), None);
+        let first = rx.recv().expect("the first frame");
+        let mut batch: Vec<Arc<str>> = Vec::with_capacity(SENDER_BATCH_FRAMES);
+        fill_batch(&rx, first, &mut batch);
         assert_eq!(
-            hub.client_count(),
-            MAX_WS_CLIENTS - 1,
-            "a swept row must release the slot, not leave a zombie holding it"
+            batch.len(),
+            SENDER_BATCH_FRAMES,
+            "one work item must not grow past the bound the deadline is derived from"
         );
-
-        let (reconnected, _rx) = connect(&hub);
-        sessions.insert(REUSED_FD, reconnected);
-        assert_eq!(sessions.lookup(REUSED_FD), Some(reconnected));
+        assert_eq!(&*batch[0], "frame 0", "the batch must start where the sender left off");
+        assert_eq!(
+            rx.try_iter().count(),
+            QUEUED - SENDER_BATCH_FRAMES,
+            "the rest stays queued for the next turn rather than being dropped"
+        );
     }
 }
