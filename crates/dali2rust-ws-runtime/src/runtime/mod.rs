@@ -1,4 +1,5 @@
 pub(crate) mod coalesce;
+pub mod frame;
 pub mod handoff;
 pub mod hub;
 pub mod sink;
