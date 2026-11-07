@@ -501,6 +501,15 @@ impl ClientFrames for WsHub {
     }
 }
 
+fn fill_batch(
+    rx: &std::sync::mpsc::Receiver<Arc<str>>,
+    first: Arc<str>,
+    batch: &mut Vec<Arc<str>>,
+) {
+    batch.push(first);
+    batch.extend(rx.try_iter().take(SENDER_BATCH_FRAMES - 1));
+}
+
 fn reader_pool(max_clients: usize) -> RunnerPool {
     RunnerPool::new(
         c"ws-reader",
@@ -550,8 +559,7 @@ impl SenderEnds {
     fn pump(&self) {
         let mut batch: Vec<Arc<str>> = Vec::with_capacity(SENDER_BATCH_FRAMES);
         while let Ok(first) = self.rx.recv() {
-            batch.push(first);
-            batch.extend(self.rx.try_iter());
+            fill_batch(&self.rx, first, &mut batch);
             let sent = self.sink.send_batch(&batch);
             self.release_bytes(&batch);
             if let Err(err) = sent {
@@ -1242,4 +1250,28 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn a_batch_never_outgrows_its_own_bound_however_much_is_queued() {
+        const QUEUED: usize = SENDER_BATCH_FRAMES * 6;
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Arc<str>>(QUEUED);
+        for index in 0..QUEUED {
+            tx.send(Arc::from(format!("frame {index}").as_str()))
+                .expect("room for the frame");
+        }
+        let first = rx.recv().expect("the first frame");
+        let mut batch: Vec<Arc<str>> = Vec::with_capacity(SENDER_BATCH_FRAMES);
+        fill_batch(&rx, first, &mut batch);
+        assert_eq!(
+            batch.len(),
+            SENDER_BATCH_FRAMES,
+            "one work item must not grow past the bound the deadline is derived from"
+        );
+        assert_eq!(&*batch[0], "frame 0", "the batch must start where the sender left off");
+        assert_eq!(
+            rx.try_iter().count(),
+            QUEUED - SENDER_BATCH_FRAMES,
+            "the rest stays queued for the next turn rather than being dropped"
+        );
+    }
 }
