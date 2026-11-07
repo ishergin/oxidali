@@ -58,7 +58,8 @@ Detail: [01](documentation/architecture/01-overview.md).
 - `dali2rust-display-runtime` — OLED worker and screens.
 - `dali2rust-hcl-runtime` — HCL scheduler.
 - `dali2rust-poller-runtime` — background re-reads, off by default.
-- `dali2rust-ws-runtime` — WebSocket hub and fan-out; carries JSON, never builds it.
+- `dali2rust-ws-runtime` — WebSocket hub, fan-out, frame codec and the per-connection
+  reader; carries JSON, never builds it.
 - `dali2rust-mqtt-runtime` — Home Assistant bridge; owns
   `HomeAssistantDiscoveryPublishCommand` and `MqttPublishCommand`; the other
   `HomeAssistant*` commands belong to the registry worker.
@@ -185,15 +186,21 @@ Detail: [02](documentation/architecture/02-runtime-and-threading.md),
   `thread::park()` on main; idle back-off ≥ 10 ms, heartbeat ≥ 1 s.
 - The tick is 1 ms and a shorter sleep spins instead of parking: decide with
   `sleep_parks_the_task`, and mark a deliberate spin `// busy-wait-ok:`.
-- One `httpd` task serves every socket, so each millisecond a handler blocks is downtime
-  for all clients. A mutating request waits at most `confirmation_timeout_ms` (2000 ms);
-  a longer job answers `202` + operation id (ADR-012); several frames of one request
-  share one deadline.
+- One `httpd` task serves every HTTP socket, so each millisecond a handler blocks is
+  downtime for all clients. A mutating request waits at most `confirmation_timeout_ms`
+  (2000 ms); a longer job answers `202` + operation id (ADR-012); several frames of one
+  request share one deadline.
 - The httpd stack (20 KiB) is a budget: a response is a resource, not a dump; a container
   serializes its children one at a time; view and DTO size ceilings are tests, and
   raising one is not the fix.
-- WebSocket sends are queued work on that same task. The device never sends a WebSocket
-  ping; client frames are parsed in `esp_ws.rs`, never through `conn.recv()`.
+- A WebSocket socket is not one of them: the upgrade hands it to a worker with
+  `httpd_req_async_handler_begin`, and nothing of that connection runs on the httpd task
+  afterwards (ADR-034). Frames are read, parsed, built and written in
+  `dali2rust-ws-runtime` above a narrow wire trait, never by `httpd_ws_*`; every outgoing
+  frame goes through the one path that holds its header and payload together; fragmentation
+  is refused, not reassembled. The last owner to let the connection go completes the async
+  request, and a worker never calls `httpd_sess_trigger_close`. The device never sends a
+  WebSocket ping.
 - Nothing holds a spinlock for more than about a tick while the wire is live: no task
   state walks and no heap walks at runtime.
 - A log call never blocks: a bounded PSRAM queue and one UART writer; never the VFS UART.

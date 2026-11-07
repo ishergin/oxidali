@@ -24,6 +24,8 @@ confirm-bridge        8192   1536
 dali-sniff            8192   2800
 ip-watch              8192   1712
 ws-client             8192   1340
+# The reader owns the socket since ADR-034; its peak has never been measured.
+ws-reader             8192     -1
 # These two walk registry contents and were measured on an empty registry: tighten from a populated run.
 replication           8192   3000
 rules-worker         12288   7928

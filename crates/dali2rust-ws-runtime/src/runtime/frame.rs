@@ -186,6 +186,18 @@ pub fn server_header(
     Some(4)
 }
 
+pub fn close_frame(payload: &[u8], out: &mut [u8]) -> Option<usize> {
+    let mut header = [0u8; MAX_SERVER_HEADER_BYTES];
+    let header_len = server_header(Opcode::Close, payload.len(), &mut header)?;
+    let total = header_len.checked_add(payload.len())?;
+    if out.len() < total {
+        return None;
+    }
+    out[..header_len].copy_from_slice(&header[..header_len]);
+    out[header_len..total].copy_from_slice(payload);
+    Some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,6 +412,19 @@ mod tests {
             None,
             "a frame needing a 64-bit length must fail, not wrap its header"
         );
+    }
+
+    #[test]
+    fn a_whole_close_frame_is_its_header_and_its_code() {
+        let mut out = [0u8; 8];
+        let len = close_frame(&1008u16.to_be_bytes(), &mut out).expect("a close frame");
+        assert_eq!(&out[..len], &[0x88, 0x02, 0x03, 0xf0]);
+    }
+
+    #[test]
+    fn a_close_frame_that_does_not_fit_is_refused_rather_than_truncated() {
+        let mut out = [0u8; 3];
+        assert_eq!(close_frame(&1008u16.to_be_bytes(), &mut out), None);
     }
 
     #[test]

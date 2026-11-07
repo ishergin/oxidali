@@ -101,53 +101,47 @@ registry locking → [06](06-registry-and-persistence.md).
 - Responses are built on this task's stack, which is a budget
   ([07](07-memory-and-cores.md)).
 
-## WebSocket on the HTTP task
+## WebSocket off the HTTP task
 
-- A send runs on the httpd task (queued there with `httpd_queue_work`, whose callback
-  calls `httpd_ws_send_frame_async`) and occupies the task every socket shares.
-  `esp-idf-svc` fixes the send timeout at 5 s, so the design case is one 5 s stall of
-  every socket.
-- A client's whole backlog travels as **one** work item, not one per frame: the httpd
-  loop takes one control message per turn, so a sender that queued each frame on its own
-  got no more than a frame a turn under REST load. The batch is bounded by the client's
-  queue, so a stalled client holds the task for the sends of one batch — the hold the
-  second-instance decision watches.
-- The queued request lives in the client's send slot, never on the sender's stack,
-  because the control socket may drop the datagram and answer success. The sender's
-  deadline covers only the wait for the httpd task to **take** the request: one being
-  served is waited for however long its sends take, so a slow client is never read as a
-  lost one, and the deadline itself is above the socket timeouts of a whole batch.
-- A request that was never taken drops its client and keeps its slot out of rotation
-  until that request lands, so a datagram the control socket really dropped costs the
-  slot until a reboot; the pool holds one slot per sender, and losing them all refuses
-  upgrades (`websocket.upgrades_rejected_total` in `/api/v1/diagnostics`).
-- Only the httpd task closes a socket: it resolves the session without a lock, so off
-  the task the fd may already serve another session. A socket whose client is gone is
-  closed by the first frame the client sends — the handler finds no client behind the
-  session — or reclaimed by the httpd LRU purge.
-- Bounds that keep it there: sniffer records batched into one frame per 100 ms under a
-  2048-byte payload budget (a byte cap, enforced where the bytes exist; shed records are
-  reported in `dropped_since`); a per-client queue bounded by 32 frames and 16 KiB,
-  whichever comes first, that drops and tells the client to refetch rather than
-  accumulate; a client reaped on its first send error; at most four clients, each
-  holding a socket for its session.
+- The upgrade is the handover. `/api/v1/ws` is registered before the wildcard routes
+  (`esp_http_server` matches URI handlers in registration order, and `/*` would take the
+  upgrade) by `dali2rust-adapters/src/http/esp_ws.rs`; the handler checks the Origin,
+  calls `httpd_req_async_handler_begin` and gives the request copy to a worker. That call
+  raises `for_async_req`, and the server leaves the socket alone from then on: out of the
+  `select` set, skipped by the session loop, exempt from the LRU purge. Nothing of that
+  connection runs on the httpd task afterwards — not a send, not a read, not a
+  subscription change ([ADR-034](decisions/ADR-034-the-websocket-socket-belongs-to-a-worker.md)).
+- Two owners, and the frame is the unit. `LWIP_NETCONN_FULLDUPLEX` grants one reader, one
+  writer and one closer on a socket, not two writers, and a frame is a header write then a
+  payload write. So every outgoing frame — an event batch, a PONG, a CLOSE, a refusal —
+  goes through the one path that holds the lock across the pair. A `ws-reader` runner per
+  connection blocks on the socket; the `ws-client` sender drains the client's queue.
+- The frame codec is ours, in `dali2rust-ws-runtime` above a narrow wire trait, so it is
+  host-testable. `httpd_ws_recv_frame` could not come: it reads the second byte and takes
+  type and FIN from `httpd_req_aux`, assuming the private `httpd_ws_get_frame_type`
+  consumed byte 0; `httpd_req_recv` clamps to `remaining_len`, which an upgrade leaves at
+  0. A client frame must be masked, final and within the frame ceiling; a reserved bit, a
+  reserved opcode, a 64-bit length, an oversized or fragmented control frame, a
+  fragmented data frame, a Continuation frame and a Text frame that is not UTF-8 each
+  close the connection. Fragments are never reassembled.
+- A timeout is idle only before the first byte of a frame. After it the connection fails,
+  because reading a fresh header out of the middle of a frame is a desync.
+- Teardown is once, by the last owner to let the connection go: a full socket shutdown,
+  then `httpd_req_async_handler_complete`. The sender wakes a blocked reader with a read
+  shutdown instead of completing under it, since a completed request hands the descriptor
+  back and lwIP may reuse its number. `complete` is called off the task by design, and the
+  httpd task reaps the session itself; a worker never calls `httpd_sess_trigger_close`,
+  which begins with an unlocked walk of the session table. An uncompleted async request
+  eventually stops the server accepting connections, so that path costs REST and the web
+  UI, not only WebSocket.
+- Bounds: sniffer records batched into one frame per 100 ms under a 2048-byte payload
+  budget (a byte cap, enforced where the bytes exist; shed records are reported in
+  `dropped_since`); a per-client queue bounded by 32 frames and 16 KiB, whichever comes
+  first, that drops and tells the client to refetch rather than accumulate; one batch
+  bounded by that queue's depth; a client reaped on its first send error; at most four
+  clients, each holding a socket for its session.
 - The device never sends a WebSocket ping.
-- On the device a client's frames go out on its `ws-client` sender, which queues each
-  send to the httpd task and waits for it. The pool holds two senders per client slot,
-  each started by the first client that finds no idle one and then kept: a sender still
-  flushes to a gone client while its replacement registers, and a client that finds every
-  sender taken is refused like one over the cap. Code already running on the httpd task
-  (the upgrade handler, a PONG, a CLOSE) sends through the connection itself, never
-  through that path: queued work waiting on its own task never runs.
-- `/api/v1/ws` is registered before the wildcard routes (`esp_http_server` matches URI
-  handlers in registration order, and `/*` would take the upgrade) by
-  `dali2rust-adapters/src/http/esp_ws.rs`, with ESP-IDF's `handle_ws_control_frames`
-  enabled, and every frame is parsed there: the payload read
-  happens only when the frame length is non-zero, the opcode is classified by our code,
-  and anything unparseable closes the socket. Client frames never go back through
-  `esp-idf-svc`'s `conn.recv()`. In exchange the handler answers PING with PONG and CLOSE
-  with CLOSE, and a client slot is released by the CLOSE frame. The external defects this
-  avoids are recorded under the workarounds in
+- The external defects this avoids are recorded under the workarounds in
   [`known-issues.md`](../product-design/known-issues.md).
 
 ## Logging never waits
