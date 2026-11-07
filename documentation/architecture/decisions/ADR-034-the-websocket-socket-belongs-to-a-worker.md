@@ -97,9 +97,9 @@ never called from a worker: it begins with an unlocked walk of the session table
   nothing. Both numbers land on ISSUE-71.
 - A reader runner per client plus one slot of reconnect headroom, named `ws-reader`, and the
   client-request parse moves off the 20 KiB httpd stack onto it. The parse is the reader's
-  deepest frame and the reader's budget follows the census. The sender comes out shallower
-  than the path it replaces and still above the gate ISSUE-208 holds for it, so that gate is
-  the one this change does not settle.
+  deepest frame, and both budgets follow the census. The sender comes out about 88 B shallower
+  than the path it replaces, which retired a gate measured on a composition that had the send
+  on the httpd task.
 - Leaving the LRU purge also removes the one thing that reclaimed a vanished peer, so the
   socket carries TCP keepalive (30 s idle, 10 s apart, three probes) and nothing else stands
   behind it — ISSUE-211. That is a transport probe, not the WebSocket ping the device still

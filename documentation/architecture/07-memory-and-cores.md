@@ -130,6 +130,9 @@ unless named.
   and the bench gates each task against its stack budget
   ([`tools/hil/README.md`](../../tools/hil/README.md) §Run validity).
 - A breach is answered by making the path shallower, not by growing the stack.
+- A mark only grows while its task lives, so a long boot reads deeper than a short one and a
+  budget taken from a run is the deepest seen, never the task's peak: a later breach by tens
+  of bytes is first read as a deeper run, not as a change in the code.
 - `StackLowWater` (`dali2rust-bsp::stack_probe`) names the path the census cannot: the
   registry worker samples once per turn, tagged with the payload kind that just ran.
 - The census line (`task stack hwm (B free…): <task>=<bytes> …`) and the boot-stage lines
