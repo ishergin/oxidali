@@ -418,7 +418,7 @@ fn an_enable_toggle_bumps_the_revision_and_survives_hydration() {
     );
 
     let h2 = harness_on(h.slices.clone());
-    wait_revision(&h2.store, 1);
+    wait_revision(&h2.store, 2);
     assert_eq!(
         h2.store
             .document()
