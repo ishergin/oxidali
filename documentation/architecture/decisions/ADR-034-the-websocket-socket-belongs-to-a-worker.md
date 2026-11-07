@@ -10,14 +10,14 @@ for all clients ([02](../02-runtime-and-threading.md) §The HTTP task). A WebSoc
 was written on that task: the sender thread handed a batch to `httpd_queue_work` and the
 httpd task ran `httpd_ws_send_frame_async` for it. The coupling runs both ways.
 
-Outward, it is ISSUE-39: while the task serves REST responses the queued send waits, and a
-client's queue overflows. Everything cheap has been done — routed delivery
+Outward, the subscriber pays: while the task serves REST responses the queued send waits, and
+a client's queue overflows. Everything cheap has been done — routed delivery
 ([ADR-015](ADR-015-routed-event-delivery.md)), coalescing by projection key
 ([ADR-023](ADR-023-named-subscribers-and-shared-coalescing.md)), a light device summary,
 one work item per batch instead of one per frame — and the bench cannot tell the fixed
 image from the unfixed one, because the event rate never fills the queue.
 
-Inward, it is ISSUE-210: one work item now carries the whole batch, and each frame is two
+Inward, everyone else pays: one work item carries the whole batch, and each frame is two
 blocking `send()` calls under `SO_SNDTIMEO`. A client reading slowly enough holds the task
 that serves every socket for as long as its batch takes.
 
@@ -79,9 +79,9 @@ never called from a worker: it begins with an unlocked walk of the session table
 
 ## Consequences
 
-- ISSUE-39's root is gone by construction rather than mitigated: a REST response cannot
-  delay a WebSocket frame, because they no longer share a task. ISSUE-210's httpd hold goes
-  with it; what is left of that record is the batch's own bound.
+- Both coupled costs are gone by construction rather than mitigated: a REST response cannot
+  delay a WebSocket frame, and a slow reader cannot delay a REST response, because they no
+  longer share a task. The batch keeps its own bound.
 - Leaving LRU purge also keeps load above the socket pool from closing a subscriber. It does
   not help ISSUE-55: a pool that must still purge now has only REST sessions to choose from,
   so exempting this socket makes the toolkit's keep-alive session a likelier victim, not a
@@ -101,14 +101,16 @@ never called from a worker: it begins with an unlocked walk of the session table
   than the path it replaces and still above the gate ISSUE-208 holds for it, so that gate is
   the one this change does not settle.
 - Leaving the LRU purge also removes the one thing that reclaimed a vanished peer, so the
-  socket carries TCP keepalive (30 s idle, 10 s apart, three probes) and a dead peer is
-  reclaimed in about a minute. That is a transport probe, not the WebSocket ping the device
-  still never sends. A receive timeout and a dead peer must stay distinguishable for it to
-  work: lwIP reports the timeout as `EWOULDBLOCK` and the dead peer as something else.
+  socket carries TCP keepalive (30 s idle, 10 s apart, three probes) and nothing else stands
+  behind it — ISSUE-211. That is a transport probe, not the WebSocket ping the device still
+  never sends. A receive timeout and a dead peer must stay distinguishable for it to work:
+  lwIP reports the timeout as `EWOULDBLOCK` and the dead peer as something else.
 - The upgrade still answers `101` before the handler (ISSUE-135), so a refusal is a Close
   frame, now written through the same codec.
-- Only the bench can prove it: no host test reaches `esp_http_server`. The codec, the reader,
-  the close handshake and the slot release answer on the installation. The acceptance that
-  would tell this image from the one before it does not: `HIL-WS-09` passes on both, because
-  the event rate never fills a client's queue, and `HIL-WS-07` needs an image whose PHY
-  interrupt sits at level 3. Both gaps sit on ISSUE-39.
+- Only the bench can prove it: no host test reaches `esp_http_server`. An event rate the
+  bench can raise never fills a client's queue, so the stimulus that tells this image from
+  the one before it is a subscriber that reads a frame a second (`HIL-WS-10`): its own queue
+  overflows either way, but the earlier image spent the block on the httpd task, so REST and
+  the other subscriber paid for it, and here neither does. What the installation still cannot
+  judge is `HIL-WS-07`, which needs an image whose PHY interrupt sits at level 3, and the
+  keepalive reclaim of a vanished peer, which is ISSUE-211.
