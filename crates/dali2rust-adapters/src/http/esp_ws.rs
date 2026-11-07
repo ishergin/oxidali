@@ -49,15 +49,21 @@ pub fn register_ws_handler(
     hub: Arc<WsHub>,
 ) -> Result<(), EspError> {
     let handle = server.handle();
-    let context = Box::new(WsContext {
+    // SAFETY: one leak at boot; esp-idf keeps `user_ctx` for the registration, which is never removed.
+    let context: &'static WsContext = Box::leak(Box::new(WsContext {
         hub,
         server: handle,
-    });
-    // SAFETY: one leak at boot; esp-idf keeps `user_ctx` for the registration, which is never removed.
-    let context: &'static WsContext = Box::leak(context);
+    }));
+    let config = ws_route(context);
+    // SAFETY: `config` lives across the call; the URI is a `'static` C literal and the context is leaked.
+    esp!(unsafe { httpd_register_uri_handler(handle, &config) })?;
+    Ok(())
+}
+
+fn ws_route(context: &'static WsContext) -> httpd_uri_t {
     let uri = c"/api/v1/ws";
     debug_assert_eq!(uri.to_bytes(), WS_PATH.as_bytes());
-    let config = httpd_uri_t {
+    httpd_uri_t {
         uri: uri.as_ptr(),
         method: http_method_HTTP_GET,
         handler: Some(ws_uri_handler),
@@ -65,10 +71,7 @@ pub fn register_ws_handler(
         is_websocket: true,
         handle_ws_control_frames: true,
         ..Default::default()
-    };
-    // SAFETY: `config` lives across the call; the URI is a `'static` C literal and the context is leaked.
-    esp!(unsafe { httpd_register_uri_handler(handle, &config) })?;
-    Ok(())
+    }
 }
 
 extern "C" fn ws_uri_handler(req: *mut httpd_req_t) -> esp_err_t {
@@ -99,7 +102,10 @@ fn open_session(context: &'static WsContext, req: *mut httpd_req_t, fd: i32) {
     };
     match context.hub.register(Box::new(ConnSink(Arc::clone(&conn)))) {
         Ok(id) => start_reader(&context.hub, id, conn),
-        Err(reason) => refuse_after_handover(&conn, fd, reason),
+        Err(reason) => {
+            log::info!("ws: refused upgrade on fd {fd}: {reason:?}");
+            tell_and_drop(&conn, reason);
+        }
     }
 }
 
@@ -111,24 +117,25 @@ fn hand_over(req: *mut httpd_req_t, fd: i32) -> Option<Connection> {
         log::warn!("ws: fd {fd} could not be handed to a worker");
         return None;
     }
-    Some(Arc::new(WsConnection::new(EspWire::new(fd, handed))))
+    Some(Arc::new(WsConnection::new(EspWire::claim(fd, handed))))
 }
 
 fn start_reader(hub: &Arc<WsHub>, id: ClientId, conn: Connection) {
     let reader_hub = Arc::clone(hub);
+    let reader_conn = Arc::clone(&conn);
     let started = hub.start_reader(move || {
         let mut buffer = vec![0u8; MAX_CLIENT_FRAME_BYTES];
-        let exit = serve_client_frames(reader_hub.as_ref(), id, conn.as_ref(), &mut buffer);
+        let exit = serve_client_frames(reader_hub.as_ref(), id, reader_conn.as_ref(), &mut buffer);
         log::info!("ws: client {id} reader ended ({exit:?})");
     });
     if let Err(err) = started {
-        log::warn!("ws: no reader for client {id} ({err}); dropping it");
+        log::warn!("ws: no reader for client {id} ({err}); refusing it");
+        tell_and_drop(&conn, RegisterRejected::CapacityExhausted);
         hub.unregister(id);
     }
 }
 
-fn refuse_after_handover(conn: &Connection, fd: i32, reason: RegisterRejected) {
-    log::info!("ws: refused upgrade on fd {fd}: {reason:?}");
+fn tell_and_drop(conn: &Connection, reason: RegisterRejected) {
     let payload = close_code(reason).to_be_bytes();
     let _ = conn.send_frame(Opcode::Close, &payload);
 }

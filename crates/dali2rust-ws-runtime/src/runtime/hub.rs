@@ -20,6 +20,8 @@ use crate::runtime::sink::WsSink;
 pub const MAX_WS_CLIENTS: usize = 4;
 const SENDERS_PER_CLIENT_SLOT: usize = 2;
 
+const READER_SLOT_HEADROOM: usize = 1;
+
 const CLIENT_QUEUE_DEPTH: usize = 32;
 
 pub const SENDER_BATCH_FRAMES: usize = CLIENT_QUEUE_DEPTH + 1;
@@ -515,7 +517,7 @@ fn reader_pool(max_clients: usize) -> RunnerPool {
         c"ws-reader",
         EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        max_clients,
+        max_clients.saturating_add(READER_SLOT_HEADROOM),
     )
 }
 

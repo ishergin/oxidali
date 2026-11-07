@@ -12,6 +12,7 @@ pub enum ReaderExit {
     Oversize,
     Failed,
     NotServed,
+    SecondReader,
 }
 
 pub trait ClientFrames: Send + Sync {
@@ -98,6 +99,7 @@ fn stop_for<W: WsWire>(conn: &WsConnection<W>, err: ReadError) -> Step {
     match err {
         ReadError::Closed => Step::Stop(ReaderExit::SocketClosed),
         ReadError::Failed => Step::Stop(ReaderExit::Failed),
+        ReadError::SecondReader => Step::Stop(ReaderExit::SecondReader),
         ReadError::Desync => close_then(conn, ReaderExit::Desync),
         ReadError::Oversize => close_then(conn, ReaderExit::Oversize),
         ReadError::Protocol(cause) => close_then(conn, ReaderExit::Protocol(cause)),
@@ -149,8 +151,12 @@ mod tests {
             Ok(take)
         }
 
-        fn write_all(&self, buf: &[u8]) -> Result<(), WireError> {
-            self.writes.lock().expect("the writes").push(buf.to_vec());
+        fn write_frame(&self, header: &[u8], payload: &[u8]) -> Result<(), WireError> {
+            let mut writes = self.writes.lock().expect("the writes");
+            writes.push(header.to_vec());
+            if !payload.is_empty() {
+                writes.push(payload.to_vec());
+            }
             Ok(())
         }
 

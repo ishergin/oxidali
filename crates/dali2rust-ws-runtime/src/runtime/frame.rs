@@ -11,10 +11,12 @@ const LEN_IS_16_BIT: u8 = 126;
 const LEN_IS_64_BIT: u8 = 127;
 const MASK_KEY_BYTES: usize = 4;
 const MAX_CONTROL_PAYLOAD: usize = 125;
+const MAX_SHORT_LEN: usize = 125;
+const EXTENDED_LEN_BYTES: usize = 2;
 
 pub const PRELUDE_BYTES: usize = 2;
-pub const MAX_TAIL_BYTES: usize = 2 + MASK_KEY_BYTES;
-pub const MAX_SERVER_HEADER_BYTES: usize = 4;
+pub const MAX_TAIL_BYTES: usize = EXTENDED_LEN_BYTES + MASK_KEY_BYTES;
+pub const MAX_SERVER_HEADER_BYTES: usize = PRELUDE_BYTES + EXTENDED_LEN_BYTES;
 
 const OPCODE_CONTINUATION: u8 = 0x0;
 const OPCODE_TEXT: u8 = 0x1;
@@ -69,8 +71,10 @@ pub enum FrameError {
     ReservedOpcode,
     ControlTooLong,
     ControlFragmented,
+    CloseTooShort,
     Fragmented,
     LengthUnsupported,
+    LengthNotMinimal,
     TailLength,
     TooLarge,
 }
@@ -83,8 +87,10 @@ impl fmt::Display for FrameError {
             Self::ReservedOpcode => "the opcode is reserved",
             Self::ControlTooLong => "a control frame carries more than 125 bytes",
             Self::ControlFragmented => "a control frame is fragmented",
+            Self::CloseTooShort => "a close frame carries one byte, which is neither empty nor a code",
             Self::Fragmented => "a fragmented data frame is not accepted",
             Self::LengthUnsupported => "a 64-bit length is not accepted",
+            Self::LengthNotMinimal => "an extended length encodes a value that fits the short form",
             Self::TailLength => "the header tail does not match its length marker",
             Self::TooLarge => "the payload is over the frame ceiling",
         })
@@ -111,7 +117,7 @@ pub fn header_tail_len(prelude: [u8; PRELUDE_BYTES]) -> Result<usize, FrameError
     }
     match prelude[1] & LEN7_BITS {
         LEN_IS_64_BIT => Err(FrameError::LengthUnsupported),
-        LEN_IS_16_BIT => Ok(2 + MASK_KEY_BYTES),
+        LEN_IS_16_BIT => Ok(EXTENDED_LEN_BYTES + MASK_KEY_BYTES),
         _ => Ok(MASK_KEY_BYTES),
     }
 }
@@ -124,7 +130,11 @@ pub fn parse_header(
     if tail.len() != tail_len {
         return Err(FrameError::TailLength);
     }
-    let (payload_len, mask) = split_tail(prelude[1] & LEN7_BITS, tail);
+    let len7 = prelude[1] & LEN7_BITS;
+    let (payload_len, mask) = split_tail(len7, tail);
+    if len7 == LEN_IS_16_BIT && payload_len <= MAX_SHORT_LEN {
+        return Err(FrameError::LengthNotMinimal);
+    }
     let opcode = Opcode::from_code(prelude[0] & OPCODE_BITS).ok_or(FrameError::ReservedOpcode)?;
     let is_final = prelude[0] & FIN_BIT != 0;
     validate(opcode, is_final, payload_len)?;
@@ -138,7 +148,10 @@ pub fn parse_header(
 
 fn split_tail(len7: u8, tail: &[u8]) -> (usize, [u8; MASK_KEY_BYTES]) {
     let (payload_len, key) = if len7 == LEN_IS_16_BIT {
-        (usize::from(u16::from_be_bytes([tail[0], tail[1]])), &tail[2..])
+        (
+            usize::from(u16::from_be_bytes([tail[0], tail[1]])),
+            &tail[EXTENDED_LEN_BYTES..],
+        )
     } else {
         (usize::from(len7), tail)
     };
@@ -154,6 +167,9 @@ fn validate(opcode: Opcode, is_final: bool, payload_len: usize) -> Result<(), Fr
         }
         if !is_final {
             return Err(FrameError::ControlFragmented);
+        }
+        if matches!(opcode, Opcode::Close) && payload_len == 1 {
+            return Err(FrameError::CloseTooShort);
         }
     } else if !is_final || matches!(opcode, Opcode::Continuation) {
         return Err(FrameError::Fragmented);
@@ -175,15 +191,21 @@ pub fn server_header(
     payload_len: usize,
     out: &mut [u8; MAX_SERVER_HEADER_BYTES],
 ) -> Option<usize> {
+    if matches!(opcode, Opcode::Continuation) {
+        return None;
+    }
+    if opcode.is_control() && payload_len > MAX_CONTROL_PAYLOAD {
+        return None;
+    }
     out[0] = FIN_BIT | opcode.code();
-    if payload_len <= MAX_CONTROL_PAYLOAD {
+    if payload_len <= MAX_SHORT_LEN {
         out[1] = payload_len as u8;
-        return Some(2);
+        return Some(PRELUDE_BYTES);
     }
     let len = u16::try_from(payload_len).ok()?;
     out[1] = LEN_IS_16_BIT;
-    out[2..4].copy_from_slice(&len.to_be_bytes());
-    Some(4)
+    out[PRELUDE_BYTES..].copy_from_slice(&len.to_be_bytes());
+    Some(MAX_SERVER_HEADER_BYTES)
 }
 
 pub fn close_frame(payload: &[u8], out: &mut [u8]) -> Option<usize> {
@@ -433,5 +455,137 @@ mod tests {
         assert_eq!(server_header(Opcode::Close, 0, &mut out), Some(2));
         assert_eq!(out[0], FIN_BIT | OPCODE_CLOSE);
         assert_eq!(out[1], 0);
+    }
+
+    #[test]
+    fn every_error_says_something_of_its_own() {
+        let all = [
+            FrameError::Unmasked,
+            FrameError::ReservedBits,
+            FrameError::ReservedOpcode,
+            FrameError::ControlTooLong,
+            FrameError::ControlFragmented,
+            FrameError::CloseTooShort,
+            FrameError::Fragmented,
+            FrameError::LengthUnsupported,
+            FrameError::LengthNotMinimal,
+            FrameError::TailLength,
+            FrameError::TooLarge,
+        ];
+        let mut seen: Vec<String> = Vec::new();
+        for error in all {
+            let said = error.to_string();
+            assert!(!said.is_empty(), "{error:?} says nothing");
+            assert!(!seen.contains(&said), "{error:?} repeats another message");
+            seen.push(said);
+        }
+    }
+
+    #[test]
+    fn a_control_frame_of_exactly_125_bytes_is_accepted() {
+        let header = parse_header(masked_short(OPCODE_PING, MAX_CONTROL_PAYLOAD as u8), &KEY)
+            .expect("125 is the control ceiling, not past it");
+        assert_eq!(header.payload_len, MAX_CONTROL_PAYLOAD);
+    }
+
+    #[test]
+    fn every_reserved_bit_is_refused_not_only_the_first() {
+        for bit in [0x10, 0x20, 0x40] {
+            assert_eq!(
+                header_tail_len(prelude(FIN_BIT | bit | OPCODE_TEXT, MASK_BIT | 5)),
+                Err(FrameError::ReservedBits),
+                "reserved bit {bit:#x} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pong_counts_as_a_control_frame() {
+        let tail = [0x00, 0x7e, KEY[0], KEY[1], KEY[2], KEY[3]];
+        assert_eq!(
+            parse_header(masked_short(OPCODE_PONG, LEN_IS_16_BIT), &tail),
+            Err(FrameError::ControlTooLong),
+            "an oversized pong must be refused like any control frame"
+        );
+    }
+
+    #[test]
+    fn a_close_frame_carrying_one_byte_is_refused() {
+        assert_eq!(
+            parse_header(masked_short(OPCODE_CLOSE, 1), &KEY),
+            Err(FrameError::CloseTooShort)
+        );
+        assert!(
+            parse_header(masked_short(OPCODE_CLOSE, 0), &KEY).is_ok(),
+            "an empty close is legal"
+        );
+        assert!(
+            parse_header(masked_short(OPCODE_CLOSE, 2), &KEY).is_ok(),
+            "a close with a code is legal"
+        );
+    }
+
+    #[test]
+    fn an_extended_length_that_fits_the_short_form_is_refused() {
+        for small in [0u16, 5, MAX_SHORT_LEN as u16] {
+            let bytes = small.to_be_bytes();
+            let tail = [bytes[0], bytes[1], KEY[0], KEY[1], KEY[2], KEY[3]];
+            assert_eq!(
+                parse_header(masked_short(OPCODE_TEXT, LEN_IS_16_BIT), &tail),
+                Err(FrameError::LengthNotMinimal),
+                "a 126 marker carrying {small} is not the minimal encoding"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tail_longer_than_its_marker_is_refused_as_well_as_a_shorter_one() {
+        let long = [KEY[0], KEY[1], KEY[2], KEY[3], 0x00];
+        assert_eq!(
+            parse_header(masked_short(OPCODE_TEXT, 4), &long),
+            Err(FrameError::TailLength),
+            "a short frame takes four tail bytes, not five"
+        );
+    }
+
+    #[test]
+    fn the_encoder_spells_each_opcode_it_is_asked_for() {
+        let mut out = [0u8; MAX_SERVER_HEADER_BYTES];
+        for (opcode, code) in [
+            (Opcode::Text, OPCODE_TEXT),
+            (Opcode::Binary, OPCODE_BINARY),
+            (Opcode::Ping, OPCODE_PING),
+            (Opcode::Pong, OPCODE_PONG),
+            (Opcode::Close, OPCODE_CLOSE),
+        ] {
+            assert_eq!(server_header(opcode, 1, &mut out), Some(PRELUDE_BYTES));
+            assert_eq!(
+                out[0],
+                FIN_BIT | code,
+                "{opcode:?} was written as {:#x}",
+                out[0]
+            );
+        }
+    }
+
+    #[test]
+    fn the_encoder_refuses_an_oversized_control_frame_and_a_continuation() {
+        let mut out = [0u8; MAX_SERVER_HEADER_BYTES];
+        for control in [Opcode::Close, Opcode::Ping, Opcode::Pong] {
+            assert_eq!(
+                server_header(control, MAX_CONTROL_PAYLOAD + 1, &mut out),
+                None,
+                "{control:?} may not carry more than 125 bytes"
+            );
+            assert_eq!(
+                server_header(control, MAX_CONTROL_PAYLOAD, &mut out),
+                Some(PRELUDE_BYTES)
+            );
+        }
+        assert_eq!(
+            server_header(Opcode::Continuation, 1, &mut out),
+            None,
+            "nothing here sends fragments, so a continuation must not be encodable"
+        );
     }
 }

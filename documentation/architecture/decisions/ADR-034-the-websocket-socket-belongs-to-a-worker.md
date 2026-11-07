@@ -57,9 +57,12 @@ from `httpd_req_aux`, so it assumes the private `httpd_ws_get_frame_type` consum
 leaves at 0. So the frame is parsed and built in `dali2rust-ws-runtime`, above a narrow
 wire trait, which makes it host-testable for the first time: this path never was.
 
-Fragmentation is refused rather than reassembled. Nothing here joins fragments, so a
-non-final data frame or a Continuation frame is an error — accepting one would hand the hub
-half a request and read the rest as a fresh header.
+Fragmentation is refused rather than reassembled, which is a deliberate deviation from
+RFC 6455 §5.4's "an endpoint MUST be capable of handling fragmented messages". Nothing here
+joins fragments, so a non-final data frame or a Continuation frame is an error — accepting one
+would hand the hub half a request and read the rest as a fresh header. The surface is a
+512-byte command channel that no browser fragments; if one ever does, this is the record that
+says why it is refused.
 
 ### Teardown is once, by the last owner
 
@@ -82,11 +85,21 @@ never called from a worker: it begins with an unlocked walk of the session table
 - Leaving LRU purge also keeps load above the socket pool from closing a subscriber, and
   removes the LRU candidate of ISSUE-55.
 - The slot pool, the result slot and the deadline that existed only to cross onto the httpd
-  task are gone, and with them the work item ISSUE-206 said ESP-IDF can silently lose.
-- About 1.2 KB of internal SRAM per live connection, held for its life, against the one-off
-  ~3 KB of the refused second instance: dearer at four clients, and it lands on ISSUE-71.
-- A reader runner per client, named `ws-reader`, with a stack budget that has never been
-  measured. The client-request parse moves off the 20 KiB httpd stack onto it.
+  task are gone, and with them a queued work item the control socket can silently drop.
+- About 1.2 KB of internal SRAM per live connection for the request copy, held for its life,
+  against the one-off ~3 KB of the refused second instance. The reader's own 8 KiB stack costs
+  more than either: `StackHome::ExternalOnXip` resolves to internal SRAM whenever the XIP image
+  is off or stacks are forced internal, so on such an image four readers are 32 KiB of the
+  scarce pool. Both numbers land on ISSUE-71.
+- A reader runner per client plus one slot of reconnect headroom, named `ws-reader`, and the
+  client-request parse moves off the 20 KiB httpd stack onto it. Neither its budget nor the
+  sender's holds any more: the lwIP send path now lies on the sender's stack, so `ws-client`'s
+  measured peak described a path that no longer exists. Both are entered unmeasured.
+- Leaving the LRU purge also removes the one thing that reclaimed a vanished peer, so the
+  socket carries TCP keepalive (30 s idle, 10 s apart, three probes) and a dead peer is
+  reclaimed in about a minute. That is a transport probe, not the WebSocket ping the device
+  still never sends. A receive timeout and a dead peer must stay distinguishable for it to
+  work: lwIP reports the timeout as `EWOULDBLOCK` and the dead peer as something else.
 - The upgrade still answers `101` before the handler (ISSUE-135), so a refusal is a Close
   frame, now written through the same codec.
 - Only the bench can prove it: no host test reaches `esp_http_server`, and the acceptance is

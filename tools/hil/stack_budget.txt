@@ -23,8 +23,9 @@ confirm-bridge        8192   1536
 # The deep path is a sniff log from the loop's 1 KiB frame.
 dali-sniff            8192   2800
 ip-watch              8192   1712
-ws-client             8192   1340
-# The reader owns the socket since ADR-034; its peak has never been measured.
+# Both own the socket since ADR-034, so the lwIP send path lies on the sender's stack and
+# not on the httpd task's; the old 1340 described the path that is gone. Neither is measured.
+ws-client             8192     -1
 ws-reader             8192     -1
 # These two walk registry contents and were measured on an empty registry: tighten from a populated run.
 replication           8192   3000
