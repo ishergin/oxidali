@@ -1,3 +1,4 @@
+import collections
 import socket
 import struct
 import threading
@@ -478,5 +479,112 @@ def test_a_subscriber_on_every_channel_loses_nothing_under_rest_load(
     assert grew["upgrades_rejected_total"] == 0, (
         "websocket.upgrades_rejected_total grew by %d: a connection was refused, which an "
         "empty sender-slot pool looks like" % grew["upgrades_rejected_total"])
+
+    ws_baseline["survived"]()
+
+
+CRAWL_EVERY_S = 1.0
+CRAWL_CLIENTS = 2
+NEIGHBOUR_FRAMES_FLOOR = 40
+
+
+class Crawler:
+    def __init__(self, base):
+        self.client = wsclient.connect(base)
+        self.hello = self.client.wait_for_op("hello", deadline_s=ACK_BUDGET_S)
+        self.channels = (self.hello or {}).get("channels") or []
+        self.client.subscribe(self.channels)
+        self.kinds = collections.Counter()
+        self.closes = []
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._crawl, daemon=True)
+        self.thread.start()
+
+    def _crawl(self):
+        while not self.stop.is_set():
+            try:
+                opcode, payload = self.client.recv(timeout=wsclient.DRAIN_TIMEOUT_S)
+            except socket.timeout:
+                continue
+            except Exception as exc:
+                if not self.stop.is_set():
+                    self.closes.append(repr(exc))
+                return
+            if opcode == wsclient.OP_CLOSE:
+                self.closes.append(wsclient.close_code(payload))
+                return
+            self.kinds[wsclient.frame_kind(opcode, payload)] += 1
+            self.stop.wait(CRAWL_EVERY_S)
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=wsclient.JOIN_TIMEOUT_S)
+        try:
+            self.client.close()
+        except Exception:
+            pass
+
+
+def _crawler_and_neighbour(api, hil_config, shorts, tally):
+    crawler = Crawler(hil_config.base)
+    try:
+        assert crawler.hello is not None, "no hello frame after the crawler's upgrade"
+        neighbour = wsclient.Subscribers(hil_config.base, 1, channels=crawler.channels)
+        try:
+            rest = _under_load(api, hil_config, shorts, neighbour, tally)
+            return rest, dict(neighbour.kinds[0]), neighbour.errors + neighbour.closes
+        finally:
+            neighbour.close()
+    finally:
+        crawler.close()
+
+
+@pytest.mark.hil_id("HIL-WS-10")
+@pytest.mark.serial
+def test_a_crawling_subscriber_costs_neither_its_neighbour_nor_rest(
+        api, hil_config, serial_log, ws_baseline, test_artifacts):
+    shorts = api.addrs()
+    if not shorts:
+        pytest.skip("the filtered inventory holds no gear whose attributes a read can stream")
+    connected = _clients(api)
+    if connected + CRAWL_CLIENTS > WS_CLIENT_LIMIT:
+        pytest.skip("%d WebSocket clients are connected already (a web UI tab counts), and the "
+                    "controller serves %d: two more would be refused"
+                    % (connected, WS_CLIENT_LIMIT))
+    before = api.diagnostics()["websocket"]
+    tally = {"reads_accepted": 0, "reads_refused": []}
+    with serial_log.window() as serial:
+        try:
+            rest, neighbour_kinds, neighbour_lost = _crawler_and_neighbour(
+                api, hil_config, shorts, tally)
+        except restload.RestLoadUnavailable as exc:
+            pytest.skip("no REST load from the bench LAN (%s): without it a served count says "
+                        "nothing about who held the httpd task" % exc)
+        lines = serial.lines()
+    after = api.diagnostics()["websocket"]
+    grew = {key: after[key] - before[key] for key in before if isinstance(before[key], int)}
+    neighbour_frames = sum(neighbour_kinds.values())
+    test_artifacts.attach_json("crawl", {
+        "gear_read": shorts, "seconds": LOAD_SECONDS, "crawl_every_s": CRAWL_EVERY_S,
+        "rest_from_the_lan": rest, "tally": tally, "neighbour_kinds": neighbour_kinds,
+        "neighbour_lost": neighbour_lost, "grew": grew,
+        "clients_before": ws_baseline["clients"],
+        "sockets_full": [line for line in lines if SOCKETS_FULL in line]})
+
+    assert tally["reads_accepted"] >= len(shorts), (
+        "the event source never ran: %d attribute reads of %d gear were accepted, refused %r"
+        % (tally["reads_accepted"], len(shorts), tally["reads_refused"][:5]))
+    assert grew["events_dropped_total"] > 0, (
+        "INCONCLUSIVE, not a product failure: nothing was ever dropped, so the crawler's queue "
+        "never filled and its send path never blocked — there was no stimulus to isolate: %r"
+        % grew)
+    assert rest.get("served", 0) >= REST_CALLS_FLOOR, (
+        "a crawling subscriber held the httpd task: only %r REST calls were served in %d s, "
+        "against %d when no client crawls" % (rest, LOAD_SECONDS, REST_CALLS_FLOOR))
+    assert neighbour_frames >= NEIGHBOUR_FRAMES_FLOOR, (
+        "the neighbour got %d frames, under the %d floor, so its clean drop count proves "
+        "nothing: %r" % (neighbour_frames, NEIGHBOUR_FRAMES_FLOOR, neighbour_kinds))
+    assert not neighbour_kinds.get(DROP_NOTICE) and not neighbour_lost, (
+        "the crawler cost its neighbour: %r %r" % (neighbour_kinds, neighbour_lost))
 
     ws_baseline["survived"]()
