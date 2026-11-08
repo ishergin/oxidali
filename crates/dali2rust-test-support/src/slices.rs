@@ -45,6 +45,7 @@ pub struct HeldSliceWrite {
     hold: Mutex<Hold>,
     released: Condvar,
     deadline: Duration,
+    writes: Mutex<Vec<SliceKey>>,
 }
 
 impl HeldSliceWrite {
@@ -54,7 +55,12 @@ impl HeldSliceWrite {
             hold: Mutex::new(Hold::Idle),
             released: Condvar::new(),
             deadline,
+            writes: Mutex::new(Vec::new()),
         }
+    }
+
+    pub fn writes(&self) -> Vec<SliceKey> {
+        self.writes.lock().expect("writes lock").clone()
     }
 
     pub fn hold_next_write_of(&self, key: SliceKey) {
@@ -94,6 +100,7 @@ impl SliceStore for HeldSliceWrite {
             *hold = Hold::Idle;
         }
         drop(hold);
+        self.writes.lock().expect("writes lock").push(key);
         self.inner.begin_write(key)
     }
 }
