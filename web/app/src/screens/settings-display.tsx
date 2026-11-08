@@ -120,7 +120,7 @@ export function SettingsDisplay() {
 
         <FieldRow
           label="Screensaver"
-          hint="Off, or 10 s … 24 h. After this long with nothing new to show the panel powers down; a new action other than an HCL step or a background read, an input event, an operation or an alarm row wakes it."
+          hint="Off, or 10 s … 24 h. After this long with nothing new to show the panel powers down; a new action other than an HCL step or a background read, a button or slider, an operation, a failure or a live fault (link down, bus alarm, faulty gear) wakes it."
         >
           <div class="presets">
             {SCREENSAVER_PRESETS.map((p) => (

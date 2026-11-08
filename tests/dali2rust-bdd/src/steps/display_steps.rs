@@ -50,14 +50,11 @@ fn panel_shows(world: &mut DaliWorld, prefix: String) {
 }
 
 // SET-DISP-013
-#[then(expr = "the display panel should not show a row starting with {string} for {int} seconds")]
-fn panel_never_shows(world: &mut DaliWorld, prefix: String, seconds: u64) {
+#[then(expr = "the display panel should keep showing a row starting with {string} for {int} seconds")]
+fn panel_keeps_showing(world: &mut DaliWorld, prefix: String, seconds: u64) {
     let panel = world.display_panel();
-    let seen = probe_within(Duration::from_secs(seconds), || {
-        panel.lock().expect("display panel").shows_row_starting_with(&prefix)
+    let dropped = probe_within(Duration::from_secs(seconds), || {
+        !panel.lock().expect("display panel").shows_row_starting_with(&prefix)
     });
-    assert!(!seen, "panel showed {prefix:?}: {}", panel_state(world));
-    let shown = panel.lock().expect("display panel");
-    let lit = shown.powered && shown.rows.iter().any(|row| !row.is_empty());
-    assert!(lit, "the panel was dark, so the check proves nothing: {shown:?}");
+    assert!(!dropped, "panel stopped showing {prefix:?}: {}", panel_state(world));
 }

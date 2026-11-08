@@ -46,6 +46,8 @@ Feature: Settings — Display
       | {"pages":[]}                      |
       | {"pages":["bus","bus"]}           |
       | {"enabled":"yes"}                 |
+      | {"pages":"bus"}                   |
+      | {"pages":[3]}                     |
 
   @id:SET-DISP-005
   Scenario: PATCH rejects an unknown page
@@ -115,4 +117,4 @@ Feature: Settings — Display
     When I PATCH JSON {"pages":["bus"]} to "/api/v1/settings/display"
     Then the response status should be 200
     And the display panel should eventually show a row starting with "FRAMES "
-    And the display panel should not show a row starting with "GEAR " for 6 seconds
+    And the display panel should keep showing a row starting with "FRAMES " for 6 seconds

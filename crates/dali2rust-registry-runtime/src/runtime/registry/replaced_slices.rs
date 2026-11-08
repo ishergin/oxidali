@@ -11,8 +11,8 @@ use log::warn;
 
 use super::physical_device_banks::{bank_bit, short_bit};
 use super::publish::{
-    adapter_settings_frame, dali_settings_changed, group_changed, group_matrix_changed,
-    hcl_schedule_changed, home_assistant_settings_changed, input_device_changed, policies_changed,
+    adapter_settings_frame, dali_settings_changed, display_settings_changed, group_changed,
+    group_matrix_changed, hcl_schedule_changed, home_assistant_settings_changed, input_device_changed, policies_changed,
     physical_device_changed, poller_settings_changed, redundancy_settings_changed,
     registry_event_frame, scene_changed, scene_matrix_changed, virtual_lamp_changed,
 };
@@ -24,6 +24,7 @@ const DALI_SETTINGS: u8 = 1 << 1;
 const REDUNDANCY_SETTINGS: u8 = 1 << 2;
 const POLICIES: u8 = 1 << 3;
 const HOME_ASSISTANT_SETTINGS: u8 = 1 << 4;
+const DISPLAY_SETTINGS: u8 = 1 << 5;
 const ID_SPACE: u8 = 64;
 const EVERY_DEVICE_BANK: u16 = u16::MAX;
 const PER_RECORD: usize = usize::MAX;
@@ -55,6 +56,7 @@ pub const ANNOUNCED_EVENTS: &[AnnouncedEvent] = &[
     announced("RedundancySettingsChangedEvent", ONE_RECORD),
     announced("PoliciesChangedEvent", ONE_RECORD),
     announced("HomeAssistantSettingsChangedEvent", ONE_RECORD),
+    announced("DisplaySettingsChangedEvent", ONE_RECORD),
 ];
 
 fn bit(id: u8) -> u64 {
@@ -103,12 +105,13 @@ fn each<'a>(
     map.iter().flat_map(move |(adapter_id, mask)| ids(*mask).map(move |id| make(*adapter_id, id)))
 }
 
-const SETTINGS: [(u8, Setting); 5] = [
+const SETTINGS: [(u8, Setting); 6] = [
     (POLLER_SETTINGS, Setting::Poller),
     (DALI_SETTINGS, Setting::Dali),
     (REDUNDANCY_SETTINGS, Setting::Redundancy),
     (POLICIES, Setting::Policies),
     (HOME_ASSISTANT_SETTINGS, Setting::HomeAssistant),
+    (DISPLAY_SETTINGS, Setting::Display),
 ];
 
 fn record_bit(key: SliceKey) -> Option<u8> {
@@ -118,6 +121,7 @@ fn record_bit(key: SliceKey) -> Option<u8> {
         SliceKey::RedundancySettings => Some(REDUNDANCY_SETTINGS),
         SliceKey::Policies => Some(POLICIES),
         SliceKey::HomeAssistantSettings => Some(HOME_ASSISTANT_SETTINGS),
+        SliceKey::DisplaySettings => Some(DISPLAY_SETTINGS),
         _ => None,
     }
 }
@@ -272,6 +276,7 @@ pub(crate) enum Setting {
     Redundancy,
     Policies,
     HomeAssistant,
+    Display,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -358,6 +363,7 @@ fn setting_frame(store: &RegistryStore, target: u16, setting: Setting) -> BusFra
         Setting::HomeAssistant => {
             home_assistant_settings_changed(&inner.home_assistant_settings).into()
         }
+        Setting::Display => display_settings_changed(&inner.display_settings).into(),
     };
     drop(inner);
     registry_event_frame(CORRELATION_NONE, target, payload)

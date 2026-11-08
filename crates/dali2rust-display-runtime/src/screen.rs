@@ -230,8 +230,10 @@ pub fn render_row(state: &ScreenState, row: usize) -> ScreenRow {
     pages::page_row(state, row)
 }
 
-pub fn shows_alarm(state: &ScreenState) -> bool {
-    (0..SCREEN_ROWS).any(|row| summary_row(state, row).invert)
+pub fn has_live_fault(state: &ScreenState) -> bool {
+    state.ip.is_none()
+        || (state.sample.adapter_enabled && state.bus.is_alarm())
+        || state.sample.gear_faulted > 0
 }
 
 fn summary_row(state: &ScreenState, row: usize) -> ScreenRow {
@@ -874,13 +876,31 @@ mod tests {
     }
 
     #[test]
-    fn the_alarm_is_judged_on_the_summary_whatever_page_is_shown() {
+    fn a_live_fault_is_a_lost_link_a_bus_alarm_or_a_faulty_lamp() {
         let mut state = busy_state();
-        state.page = DisplayPage::Activity;
-        assert!(shows_alarm(&state), "seven faulted lamps are an alarm");
-        state.sample.gear_faulted = 0;
         state.bus = BusReading::Clear;
-        assert!(!shows_alarm(&state));
+        state.sample.gear_faulted = 0;
+        assert!(!has_live_fault(&state));
+        assert!(has_live_fault(&ScreenState { ip: None, ..state }));
+        let lamp = ScreenState { sample: DisplaySample { gear_faulted: 1, ..state.sample }, ..state };
+        assert!(has_live_fault(&lamp));
+        state.bus = BusReading::OneFailure;
+        assert!(has_live_fault(&state));
+        state.sample.adapter_enabled = false;
+        assert!(!has_live_fault(&state), "a bus the operator switched off is not a fault");
+    }
+
+    #[test]
+    fn standing_states_are_inverted_but_are_no_live_fault() {
+        let mut state = busy_state();
+        state.bus = BusReading::Clear;
+        state.sample.gear_faulted = 0;
+        state.sample.redundancy_enabled = true;
+        state.sample.controller_active = false;
+        state.sample.persistence_failed = 1;
+        let rows = render(&state);
+        assert!(rows[0].invert && rows[4].invert, "standby and NO SAVE stay on show");
+        assert!(!has_live_fault(&state), "neither keeps the screen saver away");
     }
 
     #[test]

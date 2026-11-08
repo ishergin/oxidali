@@ -261,7 +261,7 @@ mod tests {
         keys
     }
 
-    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 9] = [
+    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 10] = [
         (SliceKey::PhysicalDevices { adapter_id: 0 }, 0, 8),
         (SliceKey::PhysicalDevices { adapter_id: 7 }, 112, 8),
         (SliceKey::Adapters, 128, 1),
@@ -271,10 +271,11 @@ mod tests {
         (SliceKey::Policies, 446, 1),
         (SliceKey::PhysicalDeviceBank { adapter_id: 0, bank: 0 }, 448, 1),
         (SliceKey::PhysicalDeviceBank { adapter_id: 7, bank: 15 }, 702, 1),
+        (SliceKey::DisplaySettings, 704, 1),
     ];
 
-    const INSTALLED_LAYOUT_SECTORS: u32 = 704;
-    const INSTALLED_LAYOUT_DIGEST: u64 = 0x6185_2e12_b198_011d;
+    const INSTALLED_LAYOUT_SECTORS: u32 = 706;
+    const INSTALLED_LAYOUT_DIGEST: u64 = 0x6089_ae22_f75b_9a5e;
     const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     const MOVED: &str = "An installed slot keeps its offset for good, and a new slice gets a \

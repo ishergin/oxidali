@@ -210,10 +210,8 @@ fn parse_pages(obj: &JsonObject) -> Result<Option<u8>, HttpResponse> {
     let names = v.as_array().ok_or_else(|| json_err(422, "invalid_value"))?;
     let mut mask: u8 = 0;
     for name in names {
-        let page = name
-            .as_str()
-            .and_then(DisplayPage::parse)
-            .ok_or_else(|| json_err(422, "invalid_enum"))?;
+        let name = name.as_str().ok_or_else(|| json_err(422, "invalid_value"))?;
+        let page = DisplayPage::parse(name).ok_or_else(|| json_err(422, "invalid_enum"))?;
         if mask & page.mask_bit() != 0 {
             return Err(json_err(422, "invalid_value"));
         }

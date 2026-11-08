@@ -15,6 +15,10 @@ const I2C_TIMEOUT_MS: u32 = 100;
 const ROW_PITCH: u32 = 9;
 const ROW_H: u32 = 9;
 const BAR_W: u32 = 54;
+const BAR_H: u32 = 8;
+const BAR_BORDER: u32 = 1;
+const BAR_INSET: u32 = 2;
+const PERMILLE_FULL: u32 = 1000;
 const SPARK_X: u32 = WIDTH as u32 - SPARK_COLS as u32;
 
 #[derive(Debug)]
@@ -247,12 +251,12 @@ impl<'a> DisplayDriver for Ssd1306Display<'a> {
 impl Ssd1306Display<'static> {
     fn draw_bar(&mut self, y: u32, permille: u16) {
         let x = WIDTH as u32 - BAR_W;
-        let _ = self.fill_region(x, y, BAR_W, 1);
-        let _ = self.fill_region(x, y + 7, BAR_W, 1);
-        let _ = self.fill_region(x, y, 1, 8);
-        let _ = self.fill_region(WIDTH as u32 - 1, y, 1, 8);
-        let filled = u32::from(permille) * (BAR_W - 4) / 1000;
-        let _ = self.fill_region(x + 2, y + 2, filled, 4);
+        let _ = self.fill_region(x, y, BAR_W, BAR_BORDER);
+        let _ = self.fill_region(x, y + BAR_H - BAR_BORDER, BAR_W, BAR_BORDER);
+        let _ = self.fill_region(x, y, BAR_BORDER, BAR_H);
+        let _ = self.fill_region(WIDTH as u32 - BAR_BORDER, y, BAR_BORDER, BAR_H);
+        let filled = u32::from(permille) * (BAR_W - 2 * BAR_INSET) / PERMILLE_FULL;
+        let _ = self.fill_region(x + BAR_INSET, y + BAR_INSET, filled, BAR_H - 2 * BAR_INSET);
     }
 
     fn draw_spark(&mut self, y: u32, spark: &[u8; SPARK_COLS]) {

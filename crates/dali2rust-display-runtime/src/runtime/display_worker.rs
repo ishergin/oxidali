@@ -50,7 +50,7 @@ const POLL_MS: u64 = 1000;
 
 const RATE_GAP_MS: u64 = 2 * POLL_MS;
 
-const IDLE_WAIT: Duration = Duration::from_secs(3600);
+const IDLE_WAIT: Duration = Duration::from_secs(60);
 
 const ERROR_LABEL_COLS: usize = 12;
 
@@ -81,10 +81,10 @@ impl RateWindow {
     }
 
     fn push(&mut self, total: u32) -> u32 {
-        let oldest = if self.filled == RATE_WINDOW {
-            self.samples[self.idx]
-        } else {
-            self.samples[0]
+        let oldest = match self.filled {
+            0 => total,
+            RATE_WINDOW => self.samples[self.idx],
+            _ => self.samples[0],
         };
         self.samples[self.idx] = total;
         self.idx = (self.idx + 1) % RATE_WINDOW;
@@ -183,7 +183,9 @@ fn apply_input(facts: &mut Facts, adapter: u8, body: &DaliInputEventObservedEven
         instance: body.instance_number,
         what: input_label(body),
     });
-    facts.note_activity();
+    if matches!(body.typed, InputEventKind::Button | InputEventKind::Position) {
+        facts.note_activity();
+    }
 }
 
 fn input_label(body: &DaliInputEventObservedEvent) -> EventLabel {
@@ -511,8 +513,7 @@ impl Tick {
             return;
         }
         if since.is_some_and(|gap| gap > Duration::from_millis(RATE_GAP_MS)) {
-            self.frames.clear();
-            self.foreign.clear();
+            self.forget_history();
         }
         self.sampled_at = Some(now);
         self.frames_per_min = self.frames.push(sample.frames_sent_total);
@@ -529,6 +530,13 @@ impl Tick {
 }
 
 impl Tick {
+    fn forget_history(&mut self) {
+        self.frames.clear();
+        self.foreign.clear();
+        self.last_reads_failed = None;
+        self.last_reads_absent = None;
+    }
+
     fn poller_line(&mut self, sample: DisplaySample, now: Instant) -> PollerLine {
         let hold = Duration::from_millis(
             u64::from(sample.poller_interval_ms)
@@ -613,22 +621,19 @@ impl Worker {
 
     fn run(mut self, ev: &BusSubscriberRx) {
         let adapter_id = self.source.sample().adapter_id;
-        let mut live = self.refresh();
-        let mut next_render = Instant::now() + Duration::from_millis(POLL_MS);
+        let mut next_render = Instant::now() + render_gap(self.refresh());
         loop {
-            let wait = if live { next_render.saturating_duration_since(Instant::now()) } else { IDLE_WAIT };
+            let wait = next_render.saturating_duration_since(Instant::now());
             let facts = &mut self.facts;
             if recv_then_drain(ev, wait, |frame| consume(facts, adapter_id, &frame))
                 == WorkerTurn::Disconnected
             {
                 return;
             }
-            let due = live && Instant::now() >= next_render;
-            if !due && !self.facts.settings_changed {
+            if Instant::now() < next_render && !self.facts.settings_changed {
                 continue;
             }
-            live = self.refresh();
-            next_render = Instant::now() + Duration::from_millis(POLL_MS);
+            next_render = Instant::now() + render_gap(self.refresh());
         }
     }
 
@@ -647,8 +652,97 @@ impl Worker {
     }
 }
 
+fn render_gap(live: bool) -> Duration {
+    if live {
+        Duration::from_millis(POLL_MS)
+    } else {
+        IDLE_WAIT
+    }
+}
+
 fn consume(facts: &mut Facts, adapter: u8, frame: &BusFrame) {
     if let BusFrame::Event(arc) = frame {
         dispatch_display_event(&arc.payload, facts, &adapter, arc.meta.correlation_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn action(source: Option<RuntimeSource>, failed: bool) -> ActionLine {
+        ActionLine {
+            target: TargetTag::from_fmt(format_args!("A01")),
+            what: EventLabel::from_fmt(format_args!("ON")),
+            source,
+            failed,
+            age_ms: 0,
+        }
+    }
+
+    fn input(typed: InputEventKind) -> DaliInputEventObservedEvent {
+        DaliInputEventObservedEvent {
+            registry_adapter_id: 0,
+            scheme: 2,
+            short_address: Some(5),
+            device_group: None,
+            instance_group: None,
+            instance_number: Some(2),
+            instance_type: Some(1),
+            event_info: 0,
+            typed,
+            typed_value: 0,
+            observed_at_ms: 0,
+            observed_at_mono_ms: 0,
+        }
+    }
+
+    #[test]
+    fn background_actions_wake_the_screen_only_when_they_fail() {
+        let mut facts = Facts::default();
+        facts.record_action(action(Some(RuntimeSource::Hcl), false));
+        facts.record_action(action(Some(RuntimeSource::Poller), false));
+        assert_eq!(facts.activity_seq, 0);
+        facts.record_action(action(Some(RuntimeSource::Hcl), true));
+        assert_eq!(facts.activity_seq, 1);
+        facts.record_action(action(Some(RuntimeSource::Api), false));
+        facts.record_action(action(None, false));
+        assert_eq!(facts.activity_seq, 3);
+    }
+
+    #[test]
+    fn only_a_hand_on_a_control_wakes_the_screen() {
+        let mut facts = Facts::default();
+        for typed in [InputEventKind::Occupancy, InputEventKind::Illuminance, InputEventKind::Generic] {
+            apply_input(&mut facts, 0, &input(typed));
+        }
+        assert_eq!(facts.activity_seq, 0);
+        assert!(facts.last_input.is_some(), "the row still shows the sensor");
+        apply_input(&mut facts, 0, &input(InputEventKind::Button));
+        apply_input(&mut facts, 0, &input(InputEventKind::Position));
+        assert_eq!(facts.activity_seq, 2);
+    }
+
+    #[test]
+    fn a_cleared_window_counts_from_its_first_sample() {
+        let mut window = RateWindow::new();
+        window.push(0);
+        window.push(500);
+        window.clear();
+        assert_eq!(window.push(9000), 0, "a stale slot is no baseline");
+        assert_eq!(window.push(9060), 60);
+    }
+
+    #[test]
+    fn a_gap_forgets_the_poller_counters() {
+        let mut tick = Tick::new();
+        let mut state = ScreenState::default();
+        let start = Instant::now();
+        let sample = DisplaySample { poller_reads_failed: 1, ..DisplaySample::default() };
+        tick.fill(&mut state, &Facts::default(), sample, start);
+        let later = start + Duration::from_millis(RATE_GAP_MS + POLL_MS);
+        let grown = DisplaySample { poller_reads_failed: 5, ..sample };
+        tick.fill(&mut state, &Facts::default(), grown, later);
+        assert!(!state.poller.failing, "failures from before the gap are no news");
     }
 }

@@ -5,7 +5,9 @@ use dali2rust_contracts::msg::DisplayPage;
 use dali2rust_domain::registry::DisplaySettingsView;
 
 use crate::panel::{DisplayPanel, PanelSetup};
-use crate::screen::{render_row, shows_alarm, ScreenRow, ScreenState, SCREEN_ROWS, SPARK_COLS};
+use crate::screen::{
+    has_live_fault, render_row, ScreenRow, ScreenState, SCREEN_ROWS, SPARK_COLS,
+};
 
 pub const PAGE_DWELL: Duration = Duration::from_secs(5);
 
@@ -26,6 +28,10 @@ impl HardwareDisplay {
         Self::Panel(panel)
     }
 
+    fn is_panel(&self) -> bool {
+        matches!(self, Self::Panel(_))
+    }
+
     fn with_panel(&self, f: impl FnOnce(&mut dyn DisplayPanel) -> bool) -> bool {
         match self {
             Self::None => true,
@@ -36,13 +42,14 @@ impl HardwareDisplay {
 
 pub(crate) struct PanelDriver {
     applied: Option<PanelSetup>,
-    refused: Option<PanelSetup>,
+    logged: Option<(PanelSetup, bool)>,
     powered: Option<bool>,
     drawn: [u64; SCREEN_ROWS],
     page: DisplayPage,
     page_since: Instant,
     settings: Option<DisplaySettingsView>,
     activity_seen: u32,
+    save_failures_seen: u32,
     active_at: Instant,
 }
 
@@ -50,13 +57,14 @@ impl PanelDriver {
     pub(crate) fn new(now: Instant) -> Self {
         Self {
             applied: None,
-            refused: None,
+            logged: None,
             powered: None,
             drawn: [0; SCREEN_ROWS],
             page: DisplayPage::default(),
             page_since: now,
             settings: None,
             activity_seen: 0,
+            save_failures_seen: 0,
             active_at: now,
         }
     }
@@ -88,10 +96,11 @@ impl PanelDriver {
             return;
         }
         let awake = settings.enabled && self.is_awake(state, activity, settings, now);
-        if awake {
-            self.draw(hardware, state);
+        let drawn = !awake || self.draw(hardware, state);
+        if !(drawn && self.power(hardware, awake)) {
+            self.applied = None;
+            self.powered = None;
         }
-        self.power(hardware, awake);
     }
 
     fn note_settings(&mut self, settings: DisplaySettingsView, now: Instant) {
@@ -108,8 +117,7 @@ impl PanelDriver {
         settings: DisplaySettingsView,
         now: Instant,
     ) -> bool {
-        if activity != self.activity_seen || shows_alarm(state) {
-            self.activity_seen = activity;
+        if self.noticed(state, activity) || has_live_fault(state) {
             self.active_at = now;
         }
         let timeout = Duration::from_secs(u64::from(settings.screensaver_timeout_s));
@@ -117,39 +125,68 @@ impl PanelDriver {
             || now.duration_since(self.active_at) < timeout
     }
 
+    fn noticed(&mut self, state: &ScreenState, activity: u32) -> bool {
+        let save_failures = state.sample.persistence_failed;
+        let news = activity != self.activity_seen || save_failures != self.save_failures_seen;
+        self.activity_seen = activity;
+        self.save_failures_seen = save_failures;
+        news
+    }
+
     fn set_up(&mut self, hardware: &HardwareDisplay, setup: PanelSetup) -> bool {
         if self.applied == Some(setup) {
             return true;
         }
-        if hardware.with_panel(|panel| panel.configure(setup)) {
-            self.applied = Some(setup);
-            self.refused = None;
-            self.powered = Some(false);
-            self.drawn = [0; SCREEN_ROWS];
-            return true;
-        }
-        if self.refused != Some(setup) {
-            log::warn!("display: no panel answers at 0x{:02X}", setup.i2c_address);
-            self.refused = Some(setup);
-        }
-        false
+        self.leave_old_address(hardware, setup);
+        let answered = hardware.with_panel(|panel| panel.configure(setup));
+        self.log_set_up(hardware, setup, answered);
+        self.applied = answered.then_some(setup);
+        self.powered = answered.then_some(false);
+        self.drawn = [0; SCREEN_ROWS];
+        answered
     }
 
-    fn power(&mut self, hardware: &HardwareDisplay, on: bool) {
-        if self.powered == Some(on) {
+    fn leave_old_address(&mut self, hardware: &HardwareDisplay, setup: PanelSetup) {
+        let moving = self.applied.is_some_and(|old| old.i2c_address != setup.i2c_address);
+        if moving && self.powered != Some(false) {
+            let _ = hardware.with_panel(|panel| panel.power(false));
+        }
+    }
+
+    fn log_set_up(&mut self, hardware: &HardwareDisplay, setup: PanelSetup, answered: bool) {
+        if !hardware.is_panel() || self.logged == Some((setup, answered)) {
             return;
         }
-        self.powered = hardware.with_panel(|panel| panel.power(on)).then_some(on);
+        self.logged = Some((setup, answered));
+        if answered {
+            log::info!("display: panel set up at 0x{:02X}", setup.i2c_address);
+        } else {
+            log::warn!("display: no panel answers at 0x{:02X}", setup.i2c_address);
+        }
     }
 
-    fn draw(&mut self, hardware: &HardwareDisplay, state: &ScreenState) {
+    fn power(&mut self, hardware: &HardwareDisplay, on: bool) -> bool {
+        if self.powered == Some(on) {
+            return true;
+        }
+        let done = hardware.with_panel(|panel| panel.power(on));
+        self.powered = done.then_some(on);
+        done
+    }
+
+    fn draw(&mut self, hardware: &HardwareDisplay, state: &ScreenState) -> bool {
         for (row, drawn) in self.drawn.iter_mut().enumerate() {
             let line = render_row(state, row);
             let digest = digest_row(&line, &state.spark);
-            if *drawn != digest && hardware.with_panel(|panel| panel.draw_row(row, &line, &state.spark)) {
-                *drawn = digest;
+            if *drawn == digest {
+                continue;
             }
+            if !hardware.with_panel(|panel| panel.draw_row(row, &line, &state.spark)) {
+                return false;
+            }
+            *drawn = digest;
         }
+        true
     }
 }
 
@@ -246,6 +283,33 @@ mod tests {
     }
 
     #[test]
+    fn a_new_save_failure_wakes_the_panel_and_a_standing_one_does_not() {
+        let (panel, hardware) = recorder();
+        let mut state = quiet_state(saver(TIMEOUT_S));
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        let mut driver = PanelDriver::new(start);
+        driver.drive(&hardware, &state, 0, at(0));
+        state.sample.persistence_failed = 1;
+        driver.drive(&hardware, &state, 0, at(u64::from(TIMEOUT_S) * 2));
+        assert!(powered(&panel), "the first failed save is news");
+        driver.drive(&hardware, &state, 0, at(u64::from(TIMEOUT_S) * 4));
+        assert!(!powered(&panel), "the same count again is no news");
+    }
+
+    #[test]
+    fn a_standby_role_lets_the_panel_sleep() {
+        let (panel, hardware) = recorder();
+        let mut state = quiet_state(saver(TIMEOUT_S));
+        state.sample.redundancy_enabled = true;
+        let start = Instant::now();
+        let mut driver = PanelDriver::new(start);
+        driver.drive(&hardware, &state, 0, start);
+        driver.drive(&hardware, &state, 0, start + Duration::from_secs(u64::from(TIMEOUT_S)));
+        assert!(!powered(&panel), "standby is a role, not a fault");
+    }
+
+    #[test]
     fn an_alarm_keeps_the_panel_awake() {
         let (panel, hardware) = recorder();
         let mut state = quiet_state(saver(TIMEOUT_S));
@@ -339,6 +403,85 @@ mod tests {
         let silent = panel.lock().expect("panel");
         assert_eq!(silent.configure_calls, 2, "each refresh tries the set-up again");
         assert_eq!(silent.other_calls, 0, "nothing is drawn or powered on a panel never set up");
+    }
+
+    struct JumperedPanel {
+        answers_at: u8,
+        target: u8,
+        ops: Vec<(&'static str, u8)>,
+    }
+
+    impl JumperedPanel {
+        fn at(address: u8) -> Self {
+            Self { answers_at: address, target: 0, ops: Vec::new() }
+        }
+
+        fn note(&mut self, op: &'static str) -> bool {
+            self.ops.push((op, self.target));
+            self.target == self.answers_at
+        }
+
+        fn position(&self, op: (&'static str, u8)) -> usize {
+            self.ops.iter().position(|seen| *seen == op).expect("op recorded")
+        }
+    }
+
+    impl DisplayPanel for JumperedPanel {
+        fn configure(&mut self, setup: PanelSetup) -> bool {
+            self.target = setup.i2c_address;
+            self.note("configure")
+        }
+
+        fn power(&mut self, on: bool) -> bool {
+            self.note(if on { "on" } else { "off" })
+        }
+
+        fn draw_row(&mut self, _row: usize, _line: &ScreenRow, _spark: &[u8; SPARK_COLS]) -> bool {
+            self.note("draw")
+        }
+    }
+
+    fn at_address(address: u8) -> ScreenState {
+        quiet_state(DisplaySettingsView { i2c_address: address, ..DisplaySettingsView::default() })
+    }
+
+    #[test]
+    fn a_wrong_address_darkens_the_old_one_and_the_right_one_brings_it_back() {
+        let [jumpered, other] = DisplaySettingsView::I2C_ADDRESSES;
+        let panel = Arc::new(Mutex::new(JumperedPanel::at(jumpered)));
+        let hardware = HardwareDisplay::panel(panel.clone());
+        let start = Instant::now();
+        let mut driver = PanelDriver::new(start);
+        for address in [jumpered, other, other, jumpered] {
+            driver.drive(&hardware, &at_address(address), 0, start);
+        }
+        let shown = panel.lock().expect("panel");
+        assert!(shown.position(("off", jumpered)) < shown.position(("configure", other)));
+        let wasted = shown.ops.iter().filter(|(op, at)| *at == other && *op != "configure");
+        assert_eq!(wasted.count(), 0, "nothing but the set-up goes to a silent address");
+        assert_eq!(shown.ops.last(), Some(&("on", jumpered)), "{:?}", shown.ops);
+        let configured = shown.ops.iter().filter(|op| **op == ("configure", jumpered)).count();
+        assert_eq!(configured, 2, "the way back sets the panel up again");
+    }
+
+    #[test]
+    fn a_panel_that_drops_off_is_set_up_again_once_it_answers() {
+        let [address, _] = DisplaySettingsView::I2C_ADDRESSES;
+        let panel = Arc::new(Mutex::new(JumperedPanel::at(address)));
+        let hardware = HardwareDisplay::panel(panel.clone());
+        let start = Instant::now();
+        let mut driver = PanelDriver::new(start);
+        let mut state = at_address(address);
+        driver.drive(&hardware, &state, 0, start);
+        panel.lock().expect("panel").answers_at = 0;
+        state.ip = Some([10, 0, 0, 3]);
+        driver.drive(&hardware, &state, 0, start);
+        panel.lock().expect("panel").answers_at = address;
+        driver.drive(&hardware, &state, 0, start);
+        let shown = panel.lock().expect("panel");
+        let configured = shown.ops.iter().filter(|(op, _)| *op == "configure").count();
+        assert_eq!(configured, 2, "a failed draw forgets the set-up: {:?}", shown.ops);
+        assert_eq!(shown.ops.last(), Some(&("on", address)));
     }
 
     #[test]
