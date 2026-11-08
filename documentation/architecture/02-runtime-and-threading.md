@@ -185,6 +185,9 @@ registry locking → [06](06-registry-and-persistence.md).
   which drops the subscriber senders it owns; every worker's `recv` then reports
   `Disconnected` and the worker exits.
 - A test harness therefore owns its `BusHost` for as long as it publishes.
+- Dropping the composed stack stops the bus first and then joins the registry worker, whose
+  `Disconnected` turn flushes every dirty slice: a stack built next on the same slice
+  store hydrates what the old one confirmed.
 - `dali2rust-adapters/tests/stack_teardown.rs` counts threads across repeated
   build-and-drop cycles.
 

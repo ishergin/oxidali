@@ -3,10 +3,10 @@ use dali2rust_bus::{BusChannel, BusFrame, BusHost, BusPublisher, PublishResult};
 use super::workers::SpawnedWorkers;
 
 pub struct BusStackRuntime {
-    pub(crate) _host: BusHost,
+    host: Option<BusHost>,
     pub(crate) event_publisher: BusPublisher,
     pub(crate) _worker: std::thread::JoinHandle<()>,
-    pub(crate) _registry_worker: std::thread::JoinHandle<()>,
+    registry_worker: Option<std::thread::JoinHandle<()>>,
     pub(crate) _bridge: std::thread::JoinHandle<()>,
     pub(crate) _display: std::thread::JoinHandle<()>,
     pub(crate) _operation_tracker_worker: std::thread::JoinHandle<()>,
@@ -26,10 +26,10 @@ pub struct BusStackRuntime {
 impl BusStackRuntime {
     pub(crate) fn new(host: BusHost, event_publisher: BusPublisher, workers: SpawnedWorkers) -> Self {
         Self {
-            _host: host,
+            host: Some(host),
             event_publisher,
             _worker: workers.dali,
-            _registry_worker: workers.registry,
+            registry_worker: Some(workers.registry),
             _bridge: workers.confirmation_bridge,
             _display: workers.display,
             _operation_tracker_worker: workers.operation_tracker_worker,
@@ -51,6 +51,15 @@ impl BusStackRuntime {
         let ev = dali2rust_contracts::bus::event_envelope(dali2rust_contracts::SOURCE_ID_UNSPECIFIED, 0, 0, Some(dali2rust_contracts::msg::Origin::Internal), dali2rust_contracts::msg::IpAddressAssignedEvent::from_ip_text(ip));
         self.event_publisher
             .try_publish(BusChannel::Events, BusFrame::event(ev))
+    }
+}
+
+impl Drop for BusStackRuntime {
+    fn drop(&mut self) {
+        drop(self.host.take());
+        if let Some(registry) = self.registry_worker.take() {
+            let _ = registry.join();
+        }
     }
 }
 
