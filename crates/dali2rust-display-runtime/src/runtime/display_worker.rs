@@ -513,12 +513,13 @@ impl Tick {
             return;
         }
         if since.is_some_and(|gap| gap > Duration::from_millis(RATE_GAP_MS)) {
-            self.forget_history();
+            self.frames.clear();
+            self.foreign.clear();
         }
         self.sampled_at = Some(now);
         self.frames_per_min = self.frames.push(sample.frames_sent_total);
         self.foreign_per_min = self.foreign.push(sample.foreign_frames_total);
-        self.poller = self.poller_line(sample, now);
+        self.poller = self.poller_line(sample, now, since);
         self.spark_elapsed_s += 1;
         if self.spark_elapsed_s >= SPARK_SAMPLE_S {
             self.spark_elapsed_s = 0;
@@ -530,27 +531,18 @@ impl Tick {
 }
 
 impl Tick {
-    fn forget_history(&mut self) {
-        self.frames.clear();
-        self.foreign.clear();
-        self.last_reads_failed = None;
-        self.last_reads_absent = None;
-    }
-
-    fn poller_line(&mut self, sample: DisplaySample, now: Instant) -> PollerLine {
-        let hold = Duration::from_millis(
-            u64::from(sample.poller_interval_ms)
-                .saturating_mul(POLLER_FLAG_HOLD_INTERVALS)
-                .max(POLLER_FLAG_HOLD_MIN_MS),
-        );
-        if self.last_reads_failed.is_some_and(|prev| sample.poller_reads_failed > prev) {
-            self.failing_until = Some(now + hold);
+    fn poller_line(
+        &mut self,
+        sample: DisplaySample,
+        now: Instant,
+        since: Option<Duration>,
+    ) -> PollerLine {
+        let hold = poller_flag_hold(sample);
+        if since.is_some_and(|gap| gap > hold) {
+            self.last_reads_failed = None;
+            self.last_reads_absent = None;
         }
-        if self.last_reads_absent.is_some_and(|prev| sample.poller_reads_absent > prev) {
-            self.absent_until = Some(now + hold);
-        }
-        self.last_reads_failed = Some(sample.poller_reads_failed);
-        self.last_reads_absent = Some(sample.poller_reads_absent);
+        self.note_poller_counters(sample, now + hold);
         PollerLine {
             enabled: sample.poller_enabled,
             interval_ms: sample.poller_interval_ms,
@@ -558,6 +550,25 @@ impl Tick {
             absent: self.absent_until.is_some_and(|t| now < t),
         }
     }
+
+    fn note_poller_counters(&mut self, sample: DisplaySample, hold_until: Instant) {
+        if self.last_reads_failed.is_some_and(|prev| sample.poller_reads_failed > prev) {
+            self.failing_until = Some(hold_until);
+        }
+        if self.last_reads_absent.is_some_and(|prev| sample.poller_reads_absent > prev) {
+            self.absent_until = Some(hold_until);
+        }
+        self.last_reads_failed = Some(sample.poller_reads_failed);
+        self.last_reads_absent = Some(sample.poller_reads_absent);
+    }
+}
+
+fn poller_flag_hold(sample: DisplaySample) -> Duration {
+    Duration::from_millis(
+        u64::from(sample.poller_interval_ms)
+            .saturating_mul(POLLER_FLAG_HOLD_INTERVALS)
+            .max(POLLER_FLAG_HOLD_MIN_MS),
+    )
 }
 
 fn bus_reading(facts: &Facts, sample: DisplaySample, now: Instant) -> BusReading {
@@ -733,16 +744,32 @@ mod tests {
         assert_eq!(window.push(9060), 60);
     }
 
-    #[test]
-    fn a_gap_forgets_the_poller_counters() {
+    const DOCUMENTED_REREAD: Duration = Duration::from_secs(60);
+
+    fn failing_after(gap_ms: u64) -> bool {
         let mut tick = Tick::new();
         let mut state = ScreenState::default();
         let start = Instant::now();
         let sample = DisplaySample { poller_reads_failed: 1, ..DisplaySample::default() };
         tick.fill(&mut state, &Facts::default(), sample, start);
-        let later = start + Duration::from_millis(RATE_GAP_MS + POLL_MS);
         let grown = DisplaySample { poller_reads_failed: 5, ..sample };
-        tick.fill(&mut state, &Facts::default(), grown, later);
-        assert!(!state.poller.failing, "failures from before the gap are no news");
+        tick.fill(&mut state, &Facts::default(), grown, start + Duration::from_millis(gap_ms));
+        state.poller.failing
+    }
+
+    #[test]
+    fn a_pause_longer_than_the_flag_hold_forgets_the_poller_counters() {
+        assert!(!failing_after(POLLER_FLAG_HOLD_MIN_MS + POLL_MS), "failures of unknown age");
+    }
+
+    #[test]
+    fn a_short_stall_still_flags_the_failures_it_spans() {
+        assert!(failing_after(RATE_GAP_MS + POLL_MS));
+    }
+
+    #[test]
+    fn a_disabled_display_rereads_its_settings_within_a_minute() {
+        assert!(render_gap(false) <= DOCUMENTED_REREAD);
+        assert_eq!(render_gap(true), Duration::from_millis(POLL_MS));
     }
 }

@@ -44,6 +44,7 @@ pub(crate) struct PanelDriver {
     applied: Option<PanelSetup>,
     logged: Option<(PanelSetup, bool)>,
     powered: Option<bool>,
+    lit: Option<u8>,
     drawn: [u64; SCREEN_ROWS],
     page: DisplayPage,
     page_since: Instant,
@@ -59,6 +60,7 @@ impl PanelDriver {
             applied: None,
             logged: None,
             powered: None,
+            lit: None,
             drawn: [0; SCREEN_ROWS],
             page: DisplayPage::default(),
             page_since: now,
@@ -137,19 +139,22 @@ impl PanelDriver {
         if self.applied == Some(setup) {
             return true;
         }
-        self.leave_old_address(hardware, setup);
+        self.leave_lit_address(hardware, setup);
         let answered = hardware.with_panel(|panel| panel.configure(setup));
         self.log_set_up(hardware, setup, answered);
         self.applied = answered.then_some(setup);
         self.powered = answered.then_some(false);
+        if answered {
+            self.lit = None;
+        }
         self.drawn = [0; SCREEN_ROWS];
         answered
     }
 
-    fn leave_old_address(&mut self, hardware: &HardwareDisplay, setup: PanelSetup) {
-        let moving = self.applied.is_some_and(|old| old.i2c_address != setup.i2c_address);
-        if moving && self.powered != Some(false) {
+    fn leave_lit_address(&mut self, hardware: &HardwareDisplay, setup: PanelSetup) {
+        if self.lit.is_some_and(|lit| lit != setup.i2c_address) {
             let _ = hardware.with_panel(|panel| panel.power(false));
+            self.lit = None;
         }
     }
 
@@ -171,6 +176,11 @@ impl PanelDriver {
         }
         let done = hardware.with_panel(|panel| panel.power(on));
         self.powered = done.then_some(on);
+        if on {
+            self.lit = self.applied.map(|setup| setup.i2c_address);
+        } else if done {
+            self.lit = None;
+        }
         done
     }
 
@@ -407,13 +417,18 @@ mod tests {
 
     struct JumperedPanel {
         answers_at: u8,
+        power_answers: bool,
         target: u8,
         ops: Vec<(&'static str, u8)>,
     }
 
     impl JumperedPanel {
         fn at(address: u8) -> Self {
-            Self { answers_at: address, target: 0, ops: Vec::new() }
+            Self { answers_at: address, power_answers: true, target: 0, ops: Vec::new() }
+        }
+
+        fn count(&self, op: (&'static str, u8)) -> usize {
+            self.ops.iter().filter(|seen| **seen == op).count()
         }
 
         fn note(&mut self, op: &'static str) -> bool {
@@ -433,7 +448,7 @@ mod tests {
         }
 
         fn power(&mut self, on: bool) -> bool {
-            self.note(if on { "on" } else { "off" })
+            self.note(if on { "on" } else { "off" }) && self.power_answers
         }
 
         fn draw_row(&mut self, _row: usize, _line: &ScreenRow, _spark: &[u8; SPARK_COLS]) -> bool {
@@ -445,30 +460,72 @@ mod tests {
         quiet_state(DisplaySettingsView { i2c_address: address, ..DisplaySettingsView::default() })
     }
 
-    #[test]
-    fn a_wrong_address_darkens_the_old_one_and_the_right_one_brings_it_back() {
-        let [jumpered, other] = DisplaySettingsView::I2C_ADDRESSES;
-        let panel = Arc::new(Mutex::new(JumperedPanel::at(jumpered)));
+    fn dark_at(address: u8) -> ScreenState {
+        let mut state = at_address(address);
+        state.sample.display.enabled = false;
+        state
+    }
+
+    fn jumpered(address: u8) -> (Arc<Mutex<JumperedPanel>>, HardwareDisplay) {
+        let panel = Arc::new(Mutex::new(JumperedPanel::at(address)));
         let hardware = HardwareDisplay::panel(panel.clone());
+        (panel, hardware)
+    }
+
+    #[test]
+    fn a_failed_power_call_sets_the_panel_up_again() {
+        let [address, _] = DisplaySettingsView::I2C_ADDRESSES;
+        let (panel, hardware) = jumpered(address);
         let start = Instant::now();
         let mut driver = PanelDriver::new(start);
-        for address in [jumpered, other, other, jumpered] {
+        driver.drive(&hardware, &at_address(address), 0, start);
+        panel.lock().expect("panel").power_answers = false;
+        driver.drive(&hardware, &dark_at(address), 0, start);
+        panel.lock().expect("panel").power_answers = true;
+        driver.drive(&hardware, &dark_at(address), 0, start);
+        let shown = panel.lock().expect("panel");
+        assert_eq!(shown.count(("configure", address)), 2, "{:?}", shown.ops);
+        assert_eq!(shown.ops.last(), Some(&("configure", address)), "set-up leaves it dark");
+    }
+
+    #[test]
+    fn a_panel_left_lit_by_a_failed_power_call_is_darkened_before_a_move() {
+        let [jumpered_at, other] = DisplaySettingsView::I2C_ADDRESSES;
+        let (panel, hardware) = jumpered(jumpered_at);
+        let start = Instant::now();
+        let mut driver = PanelDriver::new(start);
+        driver.drive(&hardware, &at_address(jumpered_at), 0, start);
+        panel.lock().expect("panel").power_answers = false;
+        driver.drive(&hardware, &dark_at(jumpered_at), 0, start);
+        panel.lock().expect("panel").power_answers = true;
+        driver.drive(&hardware, &dark_at(other), 0, start);
+        let shown = panel.lock().expect("panel");
+        assert_eq!(shown.count(("off", jumpered_at)), 2, "{:?}", shown.ops);
+        let last_off = shown.ops.iter().rposition(|op| *op == ("off", jumpered_at));
+        assert!(last_off < Some(shown.position(("configure", other))));
+    }
+
+    #[test]
+    fn a_wrong_address_darkens_the_old_one_and_the_right_one_brings_it_back() {
+        let [jumpered_at, other] = DisplaySettingsView::I2C_ADDRESSES;
+        let (panel, hardware) = jumpered(jumpered_at);
+        let start = Instant::now();
+        let mut driver = PanelDriver::new(start);
+        for address in [jumpered_at, other, other, jumpered_at] {
             driver.drive(&hardware, &at_address(address), 0, start);
         }
         let shown = panel.lock().expect("panel");
-        assert!(shown.position(("off", jumpered)) < shown.position(("configure", other)));
+        assert!(shown.position(("off", jumpered_at)) < shown.position(("configure", other)));
         let wasted = shown.ops.iter().filter(|(op, at)| *at == other && *op != "configure");
         assert_eq!(wasted.count(), 0, "nothing but the set-up goes to a silent address");
-        assert_eq!(shown.ops.last(), Some(&("on", jumpered)), "{:?}", shown.ops);
-        let configured = shown.ops.iter().filter(|op| **op == ("configure", jumpered)).count();
-        assert_eq!(configured, 2, "the way back sets the panel up again");
+        assert_eq!(shown.ops.last(), Some(&("on", jumpered_at)), "{:?}", shown.ops);
+        assert_eq!(shown.count(("configure", jumpered_at)), 2, "the way back sets it up again");
     }
 
     #[test]
     fn a_panel_that_drops_off_is_set_up_again_once_it_answers() {
         let [address, _] = DisplaySettingsView::I2C_ADDRESSES;
-        let panel = Arc::new(Mutex::new(JumperedPanel::at(address)));
-        let hardware = HardwareDisplay::panel(panel.clone());
+        let (panel, hardware) = jumpered(address);
         let start = Instant::now();
         let mut driver = PanelDriver::new(start);
         let mut state = at_address(address);

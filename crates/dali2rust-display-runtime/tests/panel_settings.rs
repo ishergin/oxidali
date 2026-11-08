@@ -42,7 +42,7 @@ fn powered(panel: &Arc<Mutex<RecordingPanel>>) -> bool {
 }
 
 #[test]
-fn a_disabled_display_wakes_only_for_the_settings_event() {
+fn a_disabled_display_wakes_at_once_for_the_settings_event() {
     let off = DisplaySettingsView { enabled: false, ..DisplaySettingsView::default() };
     let source = with_display(off);
     let panel = Arc::new(Mutex::new(RecordingPanel::default()));
@@ -51,7 +51,7 @@ fn a_disabled_display_wakes_only_for_the_settings_event() {
     assert!(!powered(&panel), "a disabled display stays dark");
     source.update(|sample| sample.display.enabled = true);
     let woke = try_wait_until(|| powered(&panel), IDLE_PROOF);
-    assert!(!woke, "an idle worker does not poll its settings");
+    assert!(!woke, "an idle worker does not re-read its settings every second");
     announce(&publisher, DisplaySettingsView::default());
     wait_until(|| powered(&panel), REFRESH_WAIT);
     assert!(panel.lock().expect("panel").shows_row_starting_with("GEAR "));

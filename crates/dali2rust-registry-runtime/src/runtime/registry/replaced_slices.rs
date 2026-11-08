@@ -728,6 +728,26 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_of_any_settings_slice_names_its_record() {
+        let store = RegistryStore::with_adapter_count(1);
+        let keys = [
+            SliceKey::PollerSettings,
+            SliceKey::DaliSettings,
+            SliceKey::RedundancySettings,
+            SliceKey::Policies,
+            SliceKey::HomeAssistantSettings,
+            SliceKey::DisplaySettings,
+        ];
+        let mut named = 0;
+        for key in keys {
+            let replaced = store.replaced_entities(store.watch_reload(&[key], 1));
+            assert_eq!(replaced.records.count_ones(), 1, "{key:?} names no record of its own");
+            named |= replaced.records;
+        }
+        assert_eq!(named, SETTINGS.iter().fold(0, |mask, (bit, _)| mask | bit));
+    }
+
+    #[test]
     fn the_announced_events_list_names_every_event_a_reload_announces() {
         let (_host, publisher, events) = observed();
         let store = RegistryStore::with_adapter_count(1);

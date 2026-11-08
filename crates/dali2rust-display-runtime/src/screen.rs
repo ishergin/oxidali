@@ -232,8 +232,7 @@ pub fn render_row(state: &ScreenState, row: usize) -> ScreenRow {
 
 pub fn has_live_fault(state: &ScreenState) -> bool {
     state.ip.is_none()
-        || (state.sample.adapter_enabled && state.bus.is_alarm())
-        || state.sample.gear_faulted > 0
+        || (state.sample.adapter_enabled && (state.bus.is_alarm() || state.sample.gear_faulted > 0))
 }
 
 fn summary_row(state: &ScreenState, row: usize) -> ScreenRow {
@@ -888,6 +887,8 @@ mod tests {
         assert!(has_live_fault(&state));
         state.sample.adapter_enabled = false;
         assert!(!has_live_fault(&state), "a bus the operator switched off is not a fault");
+        state.sample.gear_faulted = 1;
+        assert!(!has_live_fault(&state), "nobody reads the gear of a switched-off bus again");
     }
 
     #[test]
