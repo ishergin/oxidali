@@ -4,7 +4,7 @@ use std::sync::Arc;
 use dali2rust_domain::registry::{
     AdapterApplyWatchPort, DaliSettingsApplyWatchPort, GroupMetadataWatchPort,
     HomeAssistantSettingsApplyWatchPort, PhysicalDeviceApplyWatchPort,
-    PollerSettingsApplyWatchPort, SceneMetadataWatchPort, VirtualLampBindingWatchPort,
+    DisplaySettingsApplyWatchPort, PollerSettingsApplyWatchPort, SceneMetadataWatchPort, VirtualLampBindingWatchPort,
     VirtualLampMetadataWatchPort,
 };
 
@@ -53,6 +53,15 @@ impl DaliSettingsApplyWatchPort for RegistryApplyWatch {
         self.counters
             .command
             .dali_settings_applied
+            .load(Ordering::Acquire)
+    }
+}
+
+impl DisplaySettingsApplyWatchPort for RegistryApplyWatch {
+    fn display_settings_applied_load(&self) -> u32 {
+        self.counters
+            .command
+            .display_settings_applied
             .load(Ordering::Acquire)
     }
 }

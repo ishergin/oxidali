@@ -68,6 +68,7 @@ pub(crate) struct DirtyFlags {
     pub poller_settings: AtomicBool,
     pub dali_settings: AtomicBool,
     pub redundancy_settings: AtomicBool,
+    pub display_settings: AtomicBool,
     pub policies: AtomicBool,
     pub home_assistant_settings: AtomicBool,
     pub input_devices: AtomicBool,
@@ -90,6 +91,7 @@ impl DirtyFlags {
             poller_settings: AtomicBool::new(false),
             dali_settings: AtomicBool::new(false),
             redundancy_settings: AtomicBool::new(false),
+            display_settings: AtomicBool::new(false),
             policies: AtomicBool::new(false),
             home_assistant_settings: AtomicBool::new(false),
             input_devices: AtomicBool::new(false),
@@ -112,6 +114,7 @@ impl DirtyFlags {
             (&self.poller_settings, withheld::POLLER_SETTINGS),
             (&self.dali_settings, withheld::DALI_SETTINGS),
             (&self.redundancy_settings, withheld::REDUNDANCY_SETTINGS),
+            (&self.display_settings, withheld::DISPLAY_SETTINGS),
             (&self.policies, withheld::POLICIES),
             (&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS),
             (&self.input_devices, withheld::INPUT_DEVICES),
@@ -223,6 +226,12 @@ impl DirtyFlags {
         take_redundancy_settings_dirty,
         redundancy_settings,
         withheld::REDUNDANCY_SETTINGS
+    );
+    global_dirty_flag!(
+        mark_display_settings_dirty,
+        take_display_settings_dirty,
+        display_settings,
+        withheld::DISPLAY_SETTINGS
     );
     global_dirty_flag!(mark_policies_dirty, take_policies_dirty, policies, withheld::POLICIES);
     global_dirty_flag!(
@@ -351,6 +360,7 @@ pub(crate) struct Inner {
     pub(crate) poller_settings: super::poller_settings::PollerSettingsRecord,
     pub(crate) dali_settings: super::dali_settings::DaliSettingsRecord,
     pub(crate) redundancy_settings: super::redundancy_settings::RedundancySettingsRecord,
+    pub(crate) display_settings: super::display_settings::DisplaySettingsRecord,
     pub(crate) policies: super::policies::PoliciesRecord,
     pub(crate) home_assistant_settings:
         super::home_assistant_settings::HomeAssistantSettingsRecord,
@@ -461,6 +471,7 @@ impl RegistryStore {
                 .is_some_and(|r| r.enabled),
             redundancy_enabled: g.redundancy_settings.enabled,
             controller_active: g.dali_settings.application_active,
+            display: g.display_settings.0,
         }
     }
 
@@ -510,6 +521,7 @@ pub struct DisplaySampleParts {
     pub adapter_enabled: bool,
     pub redundancy_enabled: bool,
     pub controller_active: bool,
+    pub display: dali2rust_domain::registry::DisplaySettingsView,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

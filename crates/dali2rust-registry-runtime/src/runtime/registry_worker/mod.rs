@@ -14,6 +14,7 @@ mod transfer;
 mod redundancy_settings;
 mod input_devices;
 mod poller_settings;
+mod display_settings;
 mod runtime_apply;
 mod scene;
 mod virtual_lamp;
@@ -162,6 +163,7 @@ pub struct RegistryCommandCounters {
     pub poller_settings_applied: AtomicU32,
     pub dali_settings_applied: AtomicU32,
     pub redundancy_settings_applied: AtomicU32,
+    pub display_settings_applied: AtomicU32,
     pub policies_applied: AtomicU32,
     pub slice_reloads: AtomicU32,
     pub home_assistant_settings_applied: AtomicU32,

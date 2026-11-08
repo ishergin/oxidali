@@ -3,31 +3,23 @@ use dali2rust_platform::display::{DisplayDriver, FontSize};
 use esp_idf_svc::hal::i2c::I2cDriver;
 use esp_idf_svc::sys::EspError;
 
-use crate::display::fonts;
+use crate::display::{fonts, ssd1306};
+use crate::panel::{DisplayPanel, PanelSetup};
+use crate::screen::{ScreenRow, SPARK_COLS, SPARK_H};
 
-const SSD1306_ADDR: u8 = 0x3C;
 const WIDTH: usize = 128;
 const HEIGHT: usize = 64;
 const PAGES: usize = HEIGHT / 8;
 const BUF_SIZE: usize = WIDTH * PAGES;
 const I2C_TIMEOUT_MS: u32 = 100;
-
-const CMD_DISPLAY_OFF: u8 = 0xAE;
-const CMD_DISPLAY_ON: u8 = 0xAF;
-const CMD_SET_DISPLAY_CLOCK_DIV: u8 = 0xD5;
-const CMD_SET_MULTIPLEX: u8 = 0xA8;
-const CMD_SET_DISPLAY_OFFSET: u8 = 0xD3;
-const CMD_SET_START_LINE: u8 = 0x40;
-const CMD_SET_CHARGE_PUMP: u8 = 0x8D;
-const CMD_MEMORY_MODE: u8 = 0x20;
-const CMD_SEG_REMAP: u8 = 0xA1;
-const CMD_COM_SCAN_DEC: u8 = 0xC8;
-const CMD_SET_COM_PINS: u8 = 0xDA;
-const CMD_SET_CONTRAST: u8 = 0x81;
-const CMD_SET_PRECHARGE: u8 = 0xD9;
-const CMD_SET_VCOM_DETECT: u8 = 0xDB;
-const CMD_DISPLAY_ALL_ON_RESUME: u8 = 0xA4;
-const CMD_NORMAL_DISPLAY: u8 = 0xA6;
+const ROW_PITCH: u32 = 9;
+const ROW_H: u32 = 9;
+const BAR_W: u32 = 54;
+const BAR_H: u32 = 8;
+const BAR_BORDER: u32 = 1;
+const BAR_INSET: u32 = 2;
+const PERMILLE_FULL: u32 = 1000;
+const SPARK_X: u32 = WIDTH as u32 - SPARK_COLS as u32;
 
 #[derive(Debug)]
 #[allow(dead_code, reason = "inner error is accessed only via Debug/Display, not directly")]
@@ -41,6 +33,8 @@ impl From<EspError> for DisplayError {
 
 pub struct Ssd1306Display<'a> {
     i2c: I2cDriver<'a>,
+    address: u8,
+    upside_down: bool,
     buffer: [u8; BUF_SIZE],
     page_buf: [u8; 1 + WIDTH],
 }
@@ -49,6 +43,8 @@ impl<'a> Ssd1306Display<'a> {
     pub fn new(i2c: I2cDriver<'a>) -> Self {
         Self {
             i2c,
+            address: dali2rust_domain::registry::DisplaySettingsView::I2C_ADDRESSES[0],
+            upside_down: false,
             buffer: [0u8; BUF_SIZE],
             page_buf: [0x40u8; 1 + WIDTH],
         }
@@ -67,7 +63,7 @@ impl<'a> Ssd1306Display<'a> {
         buf[0] = 0x00;
         buf[1..=cmds.len()].copy_from_slice(cmds);
         self.i2c
-            .write(SSD1306_ADDR, &buf[..=cmds.len()], I2C_TIMEOUT_MS)?;
+            .write(self.address, &buf[..=cmds.len()], I2C_TIMEOUT_MS)?;
         Ok(())
     }
 
@@ -75,7 +71,7 @@ impl<'a> Ssd1306Display<'a> {
         self.send_commands(&[0xB0 | (page as u8), 0x00, 0x10])?;
 
         self.page_buf[1..].copy_from_slice(&self.buffer[page * WIDTH..(page + 1) * WIDTH]);
-        self.i2c.write(SSD1306_ADDR, &self.page_buf, I2C_TIMEOUT_MS)?;
+        self.i2c.write(self.address, &self.page_buf, I2C_TIMEOUT_MS)?;
         Ok(())
     }
 
@@ -143,34 +139,8 @@ impl<'a> DisplayDriver for Ssd1306Display<'a> {
     type Error = DisplayError;
 
     fn init(&mut self) -> Result<(), Self::Error> {
-        self.send_commands(&[
-            CMD_DISPLAY_OFF,
-            CMD_SET_DISPLAY_CLOCK_DIV,
-            0x80,
-            CMD_SET_MULTIPLEX,
-            0x3F,
-            CMD_SET_DISPLAY_OFFSET,
-            0x00,
-            CMD_SET_START_LINE,
-            CMD_SET_CHARGE_PUMP,
-            0x14,
-            CMD_MEMORY_MODE,
-            0x00,
-            CMD_SEG_REMAP,
-            CMD_COM_SCAN_DEC,
-            CMD_SET_COM_PINS,
-            0x12,
-            CMD_SET_CONTRAST,
-            0xCF,
-            CMD_SET_PRECHARGE,
-            0xF1,
-            CMD_SET_VCOM_DETECT,
-            0x40,
-            CMD_DISPLAY_ALL_ON_RESUME,
-            CMD_NORMAL_DISPLAY,
-            CMD_DISPLAY_ON,
-        ])?;
-        Ok(())
+        self.send_commands(&ssd1306::init_sequence(self.upside_down))?;
+        self.send_commands(&[ssd1306::power_command(true)])
     }
 
     fn clear(&mut self) -> Result<(), Self::Error> {
@@ -275,5 +245,57 @@ impl<'a> DisplayDriver for Ssd1306Display<'a> {
 
     fn dimensions(&self) -> (u32, u32) {
         (WIDTH as u32, HEIGHT as u32)
+    }
+}
+
+impl Ssd1306Display<'static> {
+    fn draw_bar(&mut self, y: u32, permille: u16) {
+        let x = WIDTH as u32 - BAR_W;
+        let _ = self.fill_region(x, y, BAR_W, BAR_BORDER);
+        let _ = self.fill_region(x, y + BAR_H - BAR_BORDER, BAR_W, BAR_BORDER);
+        let _ = self.fill_region(x, y, BAR_BORDER, BAR_H);
+        let _ = self.fill_region(WIDTH as u32 - BAR_BORDER, y, BAR_BORDER, BAR_H);
+        let filled = u32::from(permille) * (BAR_W - 2 * BAR_INSET) / PERMILLE_FULL;
+        let _ = self.fill_region(x + BAR_INSET, y + BAR_INSET, filled, BAR_H - 2 * BAR_INSET);
+    }
+
+    fn draw_spark(&mut self, y: u32, spark: &[u8; SPARK_COLS]) {
+        for (i, h) in spark.iter().enumerate() {
+            let h = u32::from(*h);
+            if h == 0 {
+                continue;
+            }
+            let top = y + 1 + u32::from(SPARK_H) - h;
+            let _ = self.fill_region(SPARK_X + i as u32, top, 1, h);
+        }
+    }
+}
+
+impl DisplayPanel for Ssd1306Display<'static> {
+    fn configure(&mut self, setup: PanelSetup) -> bool {
+        self.address = setup.i2c_address;
+        self.upside_down = setup.upside_down;
+        self.buffer.fill(0);
+        self.send_commands(&ssd1306::init_sequence(setup.upside_down)).is_ok() && self.flush().is_ok()
+    }
+
+    fn power(&mut self, on: bool) -> bool {
+        self.send_commands(&[ssd1306::power_command(on)]).is_ok()
+    }
+
+    fn draw_row(&mut self, row: usize, line: &ScreenRow, spark: &[u8; SPARK_COLS]) -> bool {
+        let y = row as u32 * ROW_PITCH;
+        let _ = self.clear_region(0, y, WIDTH as u32, ROW_H);
+        let _ = self.draw_text(0, y, &line.text, FontSize::Small);
+        if let Some(permille) = line.bar {
+            self.draw_bar(y, permille);
+        }
+        if line.spark {
+            self.draw_spark(y, spark);
+        }
+        if line.invert {
+            let _ = self.invert_region(0, y, WIDTH as u32, ROW_H);
+        }
+        self.flush_region(y, ROW_H).is_ok()
     }
 }

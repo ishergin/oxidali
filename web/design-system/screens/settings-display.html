@@ -1,0 +1,310 @@
+<!-- @dsCard group="Screens" name="Settings — Display" subtitle="The OLED status panel: power, the two SSD1306 addresses, upright or upside down, the screensaver and the pages it turns through — as hydrated, edited, and with no page left" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — Display — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 760px; margin: 0 auto; padding: 20px 24px 40px; }
+
+/* Apply sits in the header, as on every settings screen: two short cards
+   never scroll it out of view, and its label counts the changed fields. */
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.head .sub { font-size: 12px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.btn { padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; font-family: var(--font); }
+.btn:hover { background: var(--overlay); }
+.btn.primary { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent-strong); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* A settings screen has one record, not a list — each state below is the
+   whole screen again under its own heading. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  margin-bottom: 14px; }
+.card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 14px; background: var(--raised); border-bottom: 1px solid var(--border); }
+.card > header h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 600; }
+
+/* Settings row: label and the consequence of the choice on the left, the
+   control on the right. A caption names what the operator will see on the
+   panel, not the register it sets. */
+.hint { font-size: 12px; color: var(--text-faint); margin: 0 0 14px; }
+.hint b { color: var(--text-muted); font-weight: 550; }
+.fieldrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 18px;
+  align-items: start; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+.fieldrow:last-child { border-bottom: none; }
+.fieldrow .fl label { font-size: 13px; font-weight: 550; color: var(--text); }
+.fieldrow .fl .hint { margin: 3px 0 0; max-width: 62ch; }
+.fieldrow .fc { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  justify-content: flex-end; }
+@media (max-width: 720px) {
+  .fieldrow { grid-template-columns: 1fr; }
+  .fieldrow .fc { justify-content: flex-start; }
+}
+
+.switch { position: relative; display: inline-block; width: 32px; height: 18px; border-radius: 999px;
+  background: var(--raised); border: 1px solid var(--border-strong); vertical-align: middle; cursor: pointer; flex-shrink: 0; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-faint); transition: left .15s; }
+.switch.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.switch.on .knob { left: 16px; background: var(--accent-strong); }
+
+/* Address and rotation have exactly two legal values each, so they are a
+   pair of chips rather than a field: nothing else can be typed, and the
+   address reads in hex, the way the module's jumper is printed. */
+.presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.fieldrow .fc .presets { justify-content: flex-end; }
+.selchip { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); cursor: pointer; font-family: var(--mono); }
+.selchip.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+
+/* The screensaver keeps a raw field beside its presets for any other time;
+   the field is clamped to the legal range when it loses focus. */
+.num { font-family: var(--mono); font-size: 12px; padding: 5px 8px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: transparent; color: var(--text); width: 96px; text-align: right; }
+.unit { font-size: 11px; color: var(--text-faint); }
+
+/* An empty page set is refused by the server, so the screen says so where
+   the chips are and keeps Apply off rather than waiting for the 422. */
+.req { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
+  padding: 6px 9px; font-size: 11px; color: var(--warn); margin: 6px 0 0; flex-basis: 100%; text-align: right; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="state-label"><span>Default — as hydrated, nothing to apply</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Display</h1>
+    <span class="sub">The OLED status panel on the controller: whether it is lit, how it is wired and mounted, and which pages it turns through.</span>
+    <span class="spacer"></span>
+    <button class="btn" disabled>Discard</button>
+    <button class="btn primary" disabled>Apply</button>
+  </div>
+
+  <div class="card">
+    <header><h3>Panel</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Enabled</label>
+        <p class="hint">On by default. Off powers the panel down and draws nothing; the controller keeps running.</p>
+      </div>
+      <div class="fc"><span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>I2C address</label>
+        <p class="hint">The two SSD1306 addresses; the jumper on the panel module decides which one it answers. The wrong one leaves the panel blank.</p>
+      </div>
+      <div class="fc"><div class="presets"><button class="selchip on">0x3C</button><button class="selchip">0x3D</button></div></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Rotation</label>
+        <p class="hint">180° for a panel mounted upside down on the rail. Portrait is not offered: the 21-column summary does not fit a panel 64 pixels wide.</p>
+      </div>
+      <div class="fc"><div class="presets"><button class="selchip on">0°</button><button class="selchip">180°</button></div></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Screensaver</label>
+        <p class="hint">Off, or 10 s … 24 h. After this long with nothing new to show the panel powers down; a new action other than an HCL step or a background read, a button or slider, an operation, a failure or a live fault (link down, bus alarm, faulty gear) wakes it.</p>
+      </div>
+      <div class="fc">
+        <div class="presets">
+          <button class="selchip on">Off</button><button class="selchip">1 min</button><button class="selchip">5 min</button>
+          <button class="selchip">15 min</button><button class="selchip">1 h</button>
+        </div>
+        <input class="num" value="0" inputmode="numeric"><span class="unit">s</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- The page contents sit in the caption, not behind a tooltip: choosing
+       pages means knowing what each one shows, and the chips stay one word. -->
+  <div class="card">
+    <header><h3>Pages</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Pages</label>
+        <p class="hint">At least one. The panel shows each selected page for 5 s, always in this order; with one page it stays put. <b>Summary</b>: address, devices, bus, HCL, services, last input, live action. <b>Network</b>: IP, role, uptime, time sync, MQTT, WebSocket clients, flash save state. <b>Bus</b>: bus verdict, frames and foreign frames per minute, wire load, poller, gear counts, load histogram. <b>Activity</b>: running operation, last action with its source and age, last input event, HCL.</p>
+      </div>
+      <div class="fc">
+        <div class="presets">
+          <button class="selchip on">Summary</button><button class="selchip">Network</button>
+          <button class="selchip">Bus</button><button class="selchip">Activity</button>
+        </div>
+      </div>
+    </div>
+    <!-- The page time is a firmware constant; showing it as a read-only row
+         answers "how fast does it turn" without offering a knob. -->
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Page time</label>
+        <p class="hint">How long each page holds the panel before the next one. Not configurable.</p>
+      </div>
+      <div class="fc"><span class="unit">5 s</span></div>
+    </div>
+  </div>
+
+  <div class="state-label"><span>Edited — upside down, five-minute screensaver, two pages; Apply counts three fields</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Display</h1>
+    <span class="sub">The OLED status panel on the controller: whether it is lit, how it is wired and mounted, and which pages it turns through.</span>
+    <span class="spacer"></span>
+    <button class="btn">Discard</button>
+    <button class="btn primary">Apply (3)</button>
+  </div>
+
+  <div class="card">
+    <header><h3>Panel</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Enabled</label>
+        <p class="hint">On by default. Off powers the panel down and draws nothing; the controller keeps running.</p>
+      </div>
+      <div class="fc"><span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>I2C address</label>
+        <p class="hint">The two SSD1306 addresses; the jumper on the panel module decides which one it answers. The wrong one leaves the panel blank.</p>
+      </div>
+      <div class="fc"><div class="presets"><button class="selchip on">0x3C</button><button class="selchip">0x3D</button></div></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Rotation</label>
+        <p class="hint">180° for a panel mounted upside down on the rail. Portrait is not offered: the 21-column summary does not fit a panel 64 pixels wide.</p>
+      </div>
+      <div class="fc"><div class="presets"><button class="selchip">0°</button><button class="selchip on">180°</button></div></div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Screensaver</label>
+        <p class="hint">Off, or 10 s … 24 h. After this long with nothing new to show the panel powers down; a new action other than an HCL step or a background read, a button or slider, an operation, a failure or a live fault (link down, bus alarm, faulty gear) wakes it.</p>
+      </div>
+      <div class="fc">
+        <div class="presets">
+          <button class="selchip">Off</button><button class="selchip">1 min</button><button class="selchip on">5 min</button>
+          <button class="selchip">15 min</button><button class="selchip">1 h</button>
+        </div>
+        <input class="num" value="300" inputmode="numeric"><span class="unit">s</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <header><h3>Pages</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Pages</label>
+        <p class="hint">At least one. The panel shows each selected page for 5 s, always in this order; with one page it stays put. <b>Summary</b>: address, devices, bus, HCL, services, last input, live action. <b>Network</b>: IP, role, uptime, time sync, MQTT, WebSocket clients, flash save state. <b>Bus</b>: bus verdict, frames and foreign frames per minute, wire load, poller, gear counts, load histogram. <b>Activity</b>: running operation, last action with its source and age, last input event, HCL.</p>
+      </div>
+      <div class="fc">
+        <div class="presets">
+          <button class="selchip on">Summary</button><button class="selchip">Network</button>
+          <button class="selchip on">Bus</button><button class="selchip">Activity</button>
+        </div>
+      </div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Page time</label>
+        <p class="hint">How long each page holds the panel before the next one. Not configurable.</p>
+      </div>
+      <div class="fc"><span class="unit">5 s</span></div>
+    </div>
+  </div>
+
+  <div class="state-label"><span>Every page switched off — Apply stays off until one is back</span><span class="ln"></span></div>
+  <div class="head">
+    <h1>Display</h1>
+    <span class="sub">The OLED status panel on the controller: whether it is lit, how it is wired and mounted, and which pages it turns through.</span>
+    <span class="spacer"></span>
+    <button class="btn">Discard</button>
+    <button class="btn primary" disabled>Apply (1)</button>
+  </div>
+
+  <div class="card">
+    <header><h3>Pages</h3></header>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Pages</label>
+        <p class="hint">At least one. The panel shows each selected page for 5 s, always in this order; with one page it stays put. <b>Summary</b>: address, devices, bus, HCL, services, last input, live action. <b>Network</b>: IP, role, uptime, time sync, MQTT, WebSocket clients, flash save state. <b>Bus</b>: bus verdict, frames and foreign frames per minute, wire load, poller, gear counts, load histogram. <b>Activity</b>: running operation, last action with its source and age, last input event, HCL.</p>
+      </div>
+      <div class="fc">
+        <div class="presets">
+          <button class="selchip">Summary</button><button class="selchip">Network</button>
+          <button class="selchip">Bus</button><button class="selchip">Activity</button>
+        </div>
+        <p class="req">Pick at least one page.</p>
+      </div>
+    </div>
+    <div class="fieldrow">
+      <div class="fl">
+        <label>Page time</label>
+        <p class="hint">How long each page holds the panel before the next one. Not configurable.</p>
+      </div>
+      <div class="fc"><span class="unit">5 s</span></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

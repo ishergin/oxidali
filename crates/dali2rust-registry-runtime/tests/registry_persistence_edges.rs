@@ -44,7 +44,7 @@ fn hydrate_at_four_adapters_fits_the_slice_list() {
     let slices = temp_slice_store("four-adapters");
     let store = RegistryStore::with_adapter_count(4);
     let r = store.hydrate_from_store(&slices, 4);
-    assert_eq!(r.default_slices.iter().count(), 1 + 4 * 35 + 4 + 6);
+    assert_eq!(r.default_slices.iter().count(), 1 + 4 * 35 + 4 + 7);
     assert_eq!(r.errors.iter().count(), 0);
 }
 
@@ -86,6 +86,7 @@ fn hydrate_empty_fs_uses_defaults_without_errors() {
     expected.push(PersistenceSliceKind::RedundancySettings);
     expected.push(PersistenceSliceKind::Policies);
     expected.push(PersistenceSliceKind::HomeAssistantSettings);
+    expected.push(PersistenceSliceKind::DisplaySettings);
     let expected_defaults = slice_list(&expected);
     assert!(r.loaded_slices.is_empty(), "loaded={:?}", r.loaded_slices);
     assert_eq!(r.default_slices, expected_defaults);

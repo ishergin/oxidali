@@ -15,6 +15,7 @@ pub enum SliceKey {
     RedundancySettings,
     Policies,
     PhysicalDeviceBank { adapter_id: u8, bank: u8 },
+    DisplaySettings,
 }
 
 impl SliceKey {
@@ -51,6 +52,7 @@ impl SliceKey {
                 SliceKey::DaliSettings,
                 SliceKey::RedundancySettings,
                 SliceKey::Policies,
+                SliceKey::DisplaySettings,
             ])
     }
 
@@ -82,6 +84,7 @@ impl SliceKey {
             SliceKey::DaliSettings => "dali_settings".to_string(),
             SliceKey::RedundancySettings => "redundancy_settings".to_string(),
             SliceKey::Policies => "policies".to_string(),
+            SliceKey::DisplaySettings => "display_settings".to_string(),
             SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
                 format!("a{adapter_id}/physical_devices_b{bank}")
             }
@@ -184,6 +187,7 @@ mod tests {
             | SliceKey::DaliSettings
             | SliceKey::RedundancySettings
             | SliceKey::Policies
+            | SliceKey::DisplaySettings
             | SliceKey::PhysicalDeviceBank { .. } => keys.contains(&key),
         };
         for key in [
@@ -203,11 +207,12 @@ mod tests {
             SliceKey::DaliSettings,
             SliceKey::RedundancySettings,
             SliceKey::Policies,
+            SliceKey::DisplaySettings,
         ] {
             assert!(witness(key), "{key:?} is not enumerated");
         }
-        assert_eq!(keys.len(), 86);
-        assert_eq!(SliceKey::every(2).count(), 86);
+        assert_eq!(keys.len(), 87);
+        assert_eq!(SliceKey::every(2).count(), 87);
         assert!(!keys.contains(&SliceKey::Scene { adapter_id: 2, scene_id: 0 }));
     }
 

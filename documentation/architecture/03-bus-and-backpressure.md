@@ -63,7 +63,7 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 | Apply orchestrator: commands / events | 4 / 64 |
 | Confirmation bridge | 32 |
 | State-fanout projector events | 64 |
-| Display events | 32 |
+| Display events | 64 |
 | HCL scheduler: funnel / confirmations | 64 / 32 |
 | Poller: events / confirmations | 64 / 32 |
 | Home Assistant bridge funnel | 64 |

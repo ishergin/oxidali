@@ -53,6 +53,7 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
 | [Operations](resources/operations.md) | `/operations[/{id}]` |
 | [Settings — Poller](resources/settings-poller.md) | `/settings/poller` |
 | [Settings — DALI](resources/settings-dali.md) | `/settings/dali` |
+| [Settings — Display](resources/settings-display.md) | `/settings/display` |
 | [Settings — Home Assistant](resources/settings-home-assistant.md) | `/settings/home-assistant[/discovery-publish]` |
 | [Settings — Redundancy](resources/settings-redundancy.md) | `/settings/redundancy` |
 | [Redundancy](resources/redundancy.md) | `/redundancy[/switchover\|/config-changed]` |

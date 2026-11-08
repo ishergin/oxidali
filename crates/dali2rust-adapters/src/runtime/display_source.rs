@@ -44,6 +44,7 @@ impl DisplaySource for ControllerDisplaySource {
             mqtt_connected: self.mqtt.connected.load(Ordering::Relaxed) != 0,
             ws_clients: self.ws.clients.load(Ordering::Relaxed),
             persistence_failed: self.persistence_failed(),
+            display: parts.display,
         }
     }
 }

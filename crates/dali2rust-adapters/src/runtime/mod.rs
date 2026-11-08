@@ -661,6 +661,7 @@ pub struct HttpTestPorts {
     pub mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
     pub network_link: Option<Arc<dyn dali2rust_platform::net::NetworkLink>>,
     pub poller_config: dali2rust_poller_runtime::PollerConfig,
+    pub display_panel: Option<Arc<Mutex<dyn dali2rust_display_runtime::DisplayPanel>>>,
 }
 
 pub fn build_http_test_stack(
@@ -675,7 +676,7 @@ pub fn build_http_test_stack(
     build_router_with_bus_and_transport(
         version,
         mock,
-        HardwareDisplay::none(),
+        ports.display_panel.map_or_else(HardwareDisplay::none, HardwareDisplay::panel),
         StackOptions {
             bus_config: config,
             runtime_config,

@@ -19,8 +19,8 @@ use super::state::{
 };
 use super::wire::DaliEventPayload;
 
-pub const MAX_PERSISTENCE_SLICES: usize = 151;
-pub const MAX_PERSISTENCE_ERRORS: usize = 149;
+pub const MAX_PERSISTENCE_SLICES: usize = 152;
+pub const MAX_PERSISTENCE_ERRORS: usize = 150;
 
 pub const MQTT_RULE_PAYLOAD_BYTES: usize = 48;
 
@@ -42,6 +42,7 @@ pub enum PersistenceSliceKind {
     RedundancySettings,
     Policies,
     PhysicalDeviceBank { adapter_id: u8, bank: u8 },
+    DisplaySettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -924,6 +925,21 @@ declare_bus_payloads! {
         source: ManualConfigSource::DeviceFeature { feature_type: u8::MAX, variable_bit: u8::MAX },
         observed_at_ms: u64::MAX,
         observed_at_mono_ms: u32::MAX,
+    };
+
+    pub struct DisplaySettingsChangedEvent {
+        pub enabled: bool,
+        pub i2c_address: u8,
+        pub upside_down: bool,
+        pub screensaver_timeout_s: u32,
+        pub pages_mask: u8,
+    }
+    budget = DisplaySettingsChangedEvent {
+        enabled: true,
+        i2c_address: u8::MAX,
+        upside_down: true,
+        screensaver_timeout_s: u32::MAX,
+        pages_mask: u8::MAX,
     };
 
 }

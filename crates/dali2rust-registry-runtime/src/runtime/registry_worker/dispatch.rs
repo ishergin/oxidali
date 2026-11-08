@@ -26,6 +26,7 @@ use super::policies::handle_policies_update;
 use super::transfer::handle_slice_reload;
 use super::redundancy_settings::handle_redundancy_settings_update;
 use super::poller_settings::handle_poller_settings_update;
+use super::display_settings::handle_display_settings_update;
 use super::runtime_apply::{handle_level_transition, handle_runtime_update};
 use super::scene::SceneMatrix;
 use super::virtual_lamp::{
@@ -118,6 +119,8 @@ dali2rust_contracts::dispatch_bus_commands! {
         handle_redundancy_settings_update(ctx, body),
     PoliciesUpdateCommand(body) =>
         handle_policies_update(ctx, body),
+    DisplaySettingsUpdateCommand(body) =>
+        handle_display_settings_update(ctx, body),
     RegistrySliceReloadCommand(body) =>
         handle_slice_reload(ctx, reload, body),
     HomeAssistantSettingsUpdateCommand(body) =>

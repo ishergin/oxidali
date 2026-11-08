@@ -32,6 +32,7 @@ allowed_top_level = {
     "scenes",
     "settings_home_assistant",
     "settings_dali",
+    "settings_display",
     "settings_poller",
     "stats",
     "system",

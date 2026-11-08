@@ -30,8 +30,11 @@ const SMALL_BANK_BYTES: u32 = SMALL_BANK_SECTORS * SECTOR_BYTES;
 
 const LARGE_REGION_BYTES: u32 = LARGE_SLOT_COUNT * 2 * LARGE_BANK_BYTES;
 
-pub const LAYOUT_BYTES: u32 =
+const TAIL_SLOT_COUNT: u32 = 1;
+const TAIL_REGION_OFFSET: u32 =
     LARGE_REGION_BYTES + SMALL_SLOT_COUNT * 2 * SMALL_BANK_BYTES + PD_BANK_REGION_BYTES;
+
+pub const LAYOUT_BYTES: u32 = TAIL_REGION_OFFSET + TAIL_SLOT_COUNT * 2 * SMALL_BANK_BYTES;
 
 pub const BANK_HEADER_BYTES: u32 = 16;
 
@@ -71,10 +74,21 @@ pub fn slot_geometry(key: SliceKey) -> Option<SlotGeometry> {
                 }
             })
         }
+        SliceKey::DisplaySettings => tail_slot_index(key).map(|index| SlotGeometry {
+            offset: TAIL_REGION_OFFSET + index * 2 * SMALL_BANK_BYTES,
+            bank_bytes: SMALL_BANK_BYTES,
+        }),
         _ => small_slot_index(key).map(|index| SlotGeometry {
             offset: LARGE_REGION_BYTES + index * 2 * SMALL_BANK_BYTES,
             bank_bytes: SMALL_BANK_BYTES,
         }),
+    }
+}
+
+fn tail_slot_index(key: SliceKey) -> Option<u32> {
+    match key {
+        SliceKey::DisplaySettings => Some(0),
+        _ => None,
     }
 }
 
@@ -93,7 +107,8 @@ pub fn choose_bank(proved: Option<u8>, newest_header: Option<u8>) -> BankChoice 
 }
 
 pub const PD_BANK_SLOT_COUNT: u32 = MAX_ADAPTERS * PD_BANKS_PER_ADAPTER;
-pub const TOTAL_SLOT_COUNT: u32 = LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT;
+pub const TOTAL_SLOT_COUNT: u32 =
+    LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + TAIL_SLOT_COUNT;
 
 pub fn slot_index(key: SliceKey) -> Option<u32> {
     match key {
@@ -108,6 +123,8 @@ pub fn slot_index(key: SliceKey) -> Option<u32> {
                 LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + adapter * PD_BANKS_PER_ADAPTER + bank
             })
         }
+        SliceKey::DisplaySettings => tail_slot_index(key)
+            .map(|index| LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + index),
         _ => small_slot_index(key).map(|index| LARGE_SLOT_COUNT + index),
     }
 }
@@ -195,6 +212,7 @@ mod tests {
             | SliceKey::DaliSettings
             | SliceKey::RedundancySettings
             | SliceKey::Policies
+            | SliceKey::DisplaySettings
             | SliceKey::InputDevices { .. }
             | SliceKey::Rules { .. }
             | SliceKey::VirtualLamps { .. }
@@ -216,6 +234,7 @@ mod tests {
             SliceKey::DaliSettings,
             SliceKey::RedundancySettings,
             SliceKey::Policies,
+            SliceKey::DisplaySettings,
             SliceKey::InputDevices { bank: 0 },
             SliceKey::InputDevices { bank: 1 },
             SliceKey::InputDevices { bank: 2 },
@@ -242,7 +261,7 @@ mod tests {
         keys
     }
 
-    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 9] = [
+    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 10] = [
         (SliceKey::PhysicalDevices { adapter_id: 0 }, 0, 8),
         (SliceKey::PhysicalDevices { adapter_id: 7 }, 112, 8),
         (SliceKey::Adapters, 128, 1),
@@ -252,10 +271,11 @@ mod tests {
         (SliceKey::Policies, 446, 1),
         (SliceKey::PhysicalDeviceBank { adapter_id: 0, bank: 0 }, 448, 1),
         (SliceKey::PhysicalDeviceBank { adapter_id: 7, bank: 15 }, 702, 1),
+        (SliceKey::DisplaySettings, 704, 1),
     ];
 
-    const INSTALLED_LAYOUT_SECTORS: u32 = 704;
-    const INSTALLED_LAYOUT_DIGEST: u64 = 0x6185_2e12_b198_011d;
+    const INSTALLED_LAYOUT_SECTORS: u32 = 706;
+    const INSTALLED_LAYOUT_DIGEST: u64 = 0x6089_ae22_f75b_9a5e;
     const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     const MOVED: &str = "An installed slot keeps its offset for good, and a new slice gets a \

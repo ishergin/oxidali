@@ -38,7 +38,7 @@
 | Семейство | Виды | Владелец | Кто публикует | Дисциплина |
 |---|---|---|---|---|
 | Конфигурация реестра | адаптер; виртуальная лампа (метаданные, bind/rebind/unbind, удаление записи); физическое устройство (override, notes, удаление); устройство ввода (метаданные, notes); метаданные группы и сцены | registry worker | HTTP | подтверждение + apply-watch |
-| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id` + `HomeAssistantSettingsCommitCommand`), отказоустойчивость, политики | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
+| Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id` + `HomeAssistantSettingsCommitCommand`), отказоустойчивость, политики, дисплей | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
 | Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
 | Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
 | Runtime реестра | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` | registry worker | только проектор state-fanout | подтверждение (short/VL) или внутренний факт |

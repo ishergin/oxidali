@@ -1238,6 +1238,16 @@ export interface PollerSettings {
   power_cycle_watch: boolean
 }
 
+export type DisplayPage = 'summary' | 'network' | 'bus' | 'activity'
+
+export interface DisplaySettings {
+  enabled: boolean
+  i2c_address: number
+  rotation_deg: number
+  screensaver_timeout_s: number
+  pages: DisplayPage[]
+}
+
 export interface ControllerTime {
   synced: boolean
   unix_ms: number | null

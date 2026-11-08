@@ -57,7 +57,7 @@ const fn event_inbox(
 }
 
 const REGISTRY: EventInbox = event_inbox("registry", REGISTRY_EVENTS_HANDLED_EVENTS, 64);
-const DISPLAY: EventInbox = event_inbox("display", DISPLAY_WORKER_HANDLED_EVENTS, 32);
+const DISPLAY: EventInbox = event_inbox("display", DISPLAY_WORKER_HANDLED_EVENTS, 64);
 const OPERATION_TRACKER: EventInbox =
     event_inbox("operation_tracker", OPERATION_TRACKER_HANDLED_EVENTS, 64);
 const APPLY_ORCHESTRATOR: EventInbox =

@@ -25,6 +25,7 @@ pub mod redundancy;
 pub mod settings_dali;
 pub mod settings_redundancy;
 pub mod settings_poller;
+pub mod settings_display;
 pub mod static_assets;
 pub mod stats;
 pub mod time;

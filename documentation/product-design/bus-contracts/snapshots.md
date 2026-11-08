@@ -40,6 +40,7 @@ REST DTO — проекции поверх реестра ([`../rest-api/README.
 | `DaliSettings` | политика DT8, `applicationActive`, собственный адрес контроллера как control device |
 | `RedundancySettings` | роль, период зонда, порог захвата, адрес пира |
 | `Policies` | `systemFailureLevel` / `powerOnLevel` установки, применение к новому гиру |
+| `DisplaySettings` | включение, адрес I2C, поворот, таймаут хранителя, набор страниц |
 
 ## Что не персистится
 

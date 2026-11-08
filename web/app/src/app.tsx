@@ -25,6 +25,7 @@ import { SettingsDali } from './screens/settings-dali'
 import { SettingsTime } from './screens/settings-time'
 import { SettingsRedundancy } from './screens/settings-redundancy'
 import { SettingsPoller } from './screens/settings-poller'
+import { SettingsDisplay } from './screens/settings-display'
 import { Logs } from './screens/logs'
 import { Sniffer } from './screens/sniffer'
 import { StatsScreen } from './screens/stats'
@@ -68,6 +69,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Settings',
     items: [
       { href: '#/settings/poller', icon: '⟳', label: 'Poller', match: ['settings-poller'] },
+      { href: '#/settings/display', icon: '▭', label: 'Display', match: ['settings-display'] },
       { href: '#/settings/dali', icon: '◈', label: 'DALI', match: ['settings-dali'] },
       { href: '#/settings/time', icon: '◷', label: 'Time', match: ['settings-time'] },
       { href: '#/settings/home-assistant', icon: '⌂', label: 'Home Assistant', match: ['settings-home-assistant'] },
@@ -199,6 +201,8 @@ function Screen() {
       return <SettingsTime />
     case 'settings-poller':
       return <SettingsPoller />
+    case 'settings-display':
+      return <SettingsDisplay />
     case 'settings-home-assistant':
       return <SettingsHomeAssistant />
     case 'settings-redundancy':

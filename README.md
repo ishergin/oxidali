@@ -59,8 +59,9 @@ Inside the code the project keeps its working name, `dali2rust`: in crate names,
   351) and replicate configuration over HTTP.
 - Firmware updates over Ethernet: the controller pulls the image from a URL and rolls
   back if the new image does not prove itself healthy.
-- A status screen on an SSD1306 OLED, and runtime counters (DALI, bus, network,
-  memory, MQTT, WebSocket) at `/api/v1/stats`.
+- A status screen on an SSD1306 OLED with four pages, rotation and a screen saver,
+  set at runtime, and runtime counters (DALI, bus, network, memory, MQTT, WebSocket)
+  at `/api/v1/stats`.
 
 **Engineering**
 - The whole product stack runs on a desktop against a simulated DALI line, through the
@@ -319,7 +320,6 @@ decoder.
 Open work, stage by stage, is in
 [`roadmap.md`](documentation/product-design/roadmap.md) (in Russian).
 
-- **Display settings**: rotation, a screen saver and the pages shown, changed at runtime.
 - **Cluster.** Several controllers act as one system: permitted group commands and
   scene recalls are forwarded between controllers over MQTT, with loop suppression
   ([design](documentation/product-design/runtime-modules/cluster/README.md), in Russian).

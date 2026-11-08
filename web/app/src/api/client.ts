@@ -43,6 +43,7 @@ import type {
   FirmwareState,
   PollerSettings,
   DaliSettings,
+  DisplaySettings,
   RulePatched,
   RulesDocument,
   RulesDocumentJson,
@@ -347,6 +348,10 @@ export const api = {
     post<OperationAccepted>('/settings/home-assistant/discovery-publish', {}),
   patchPollerSettings: (body: Partial<PollerSettings>) =>
     patch<PollerSettings>('/settings/poller', body),
+
+  displaySettings: () => get<DisplaySettings>('/settings/display'),
+  patchDisplaySettings: (body: Partial<DisplaySettings>) =>
+    patch<DisplaySettings>('/settings/display', body),
 
   rules: () => get<RulesDocument>('/rules'),
   rulesJson: () => get<RulesDocumentJson>('/rules?format=json'),

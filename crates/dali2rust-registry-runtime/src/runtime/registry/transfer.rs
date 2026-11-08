@@ -234,11 +234,12 @@ mod tests {
     }
 
     #[test]
-    fn the_three_per_unit_slices_are_never_transferred() {
+    fn the_per_unit_slices_are_never_transferred() {
         let keys = transferable_slices(1);
         assert!(!keys.contains(&SliceKey::DaliSettings));
         assert!(!keys.contains(&SliceKey::RedundancySettings));
         assert!(!keys.contains(&SliceKey::Adapters));
+        assert!(!keys.contains(&SliceKey::DisplaySettings));
         assert_eq!(keys.first(), Some(&SliceKey::ControllerSettings));
         assert!(keys.contains(&SliceKey::HomeAssistantSettings));
     }
@@ -276,6 +277,7 @@ mod tests {
     #[test]
     fn a_name_outside_the_transferable_set_resolves_to_nothing() {
         assert_eq!(slice_key_from_name("dali_settings", 1), None);
+        assert_eq!(slice_key_from_name("display_settings", 1), None);
         assert_eq!(slice_key_from_name("nonsense", 1), None);
     }
 

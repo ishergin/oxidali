@@ -68,6 +68,8 @@ pub enum RouteKey {
     HclOverrideDelete,
     SettingsPollerGet,
     SettingsPollerPatch,
+    SettingsDisplayGet,
+    SettingsDisplayPatch,
     SettingsDaliGet,
     SettingsDaliPatch,
     SettingsRedundancyGet,
@@ -354,6 +356,16 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
         "/api/v1/settings/poller",
     ),
     (
+        RouteKey::SettingsDisplayGet,
+        HttpMethod::Get,
+        "/api/v1/settings/display",
+    ),
+    (
+        RouteKey::SettingsDisplayPatch,
+        HttpMethod::Patch,
+        "/api/v1/settings/display",
+    ),
+    (
         RouteKey::SettingsDaliGet,
         HttpMethod::Get,
         "/api/v1/settings/dali",
@@ -573,7 +585,7 @@ mod route_table_tests {
 
     #[test]
     fn route_table_is_complete_and_unique() {
-        assert_eq!(ROUTE_TABLE.len(), 94, "route table row count");
+        assert_eq!(ROUTE_TABLE.len(), 96, "route table row count");
         let mut keys = HashSet::new();
         let mut routes = HashSet::new();
         for (key, method, path) in ROUTE_TABLE {

@@ -8,8 +8,6 @@ use dali2rust_platform::slice_store::SliceStore;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use dali2rust_platform::display::DisplayDriver;
-
 use dali2rust_platform::net::{ipv4_text, NetworkLink};
 
 const PROJECT_LOG_TARGETS: &[&str] = &[
@@ -305,23 +303,7 @@ where
         }
     };
     scan_i2c_bus(&mut i2c);
-
-    let mut display = Ssd1306Display::new(i2c);
-
-    match display.init() {
-        Ok(()) => log::info!("Display: initialized"),
-        Err(e) => {
-            log::error!("Display init failed: {e:?}");
-            return HardwareDisplay::none();
-        }
-    }
-    let _ = display.clear();
-    if let Err(e) = display.flush() {
-        log::error!("Display flush failed: {e:?}");
-        return HardwareDisplay::none();
-    }
-
-    HardwareDisplay::EspOled(Arc::new(Mutex::new(display)))
+    HardwareDisplay::panel(Arc::new(Mutex::new(Ssd1306Display::new(i2c))))
 }
 
 pub fn mount_http(router: Arc<Router>, ws_hub: Arc<dali2rust_adapters::WsHub>) {

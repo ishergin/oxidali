@@ -1,8 +1,10 @@
 use core::fmt::Write as _;
 
-use dali2rust_contracts::msg::{BusHealthVerdict, RuntimeSource};
+use dali2rust_contracts::msg::{BusHealthVerdict, DisplayPage, RuntimeSource};
 
 use crate::source::DisplaySample;
+
+mod pages;
 
 pub const SCREEN_COLS: usize = 21;
 const MS_PER_SECOND: u32 = 1000;
@@ -221,9 +223,19 @@ pub struct ScreenState {
     pub last_input: Option<InputLine>,
     pub last_action: Option<ActionLine>,
     pub operation: Option<OperationLine>,
+    pub page: DisplayPage,
 }
 
 pub fn render_row(state: &ScreenState, row: usize) -> ScreenRow {
+    pages::page_row(state, row)
+}
+
+pub fn has_live_fault(state: &ScreenState) -> bool {
+    state.ip.is_none()
+        || (state.sample.adapter_enabled && (state.bus.is_alarm() || state.sample.gear_faulted > 0))
+}
+
+fn summary_row(state: &ScreenState, row: usize) -> ScreenRow {
     match row {
         0 => row_address(state),
         1 => row_devices(state),
@@ -324,20 +336,23 @@ fn row_hcl(state: &ScreenState) -> ScreenRow {
     ScreenRow::text(spread(&point, &overrides))
 }
 
-fn row_services(state: &ScreenState) -> ScreenRow {
-    let poll = if state.poller.enabled {
-        let secs = state.poller.interval_ms.div_ceil(MS_PER_SECOND);
-        let verdict = if state.poller.failing {
-            "ER"
-        } else if state.poller.absent {
-            "NA"
-        } else {
-            "OK"
-        };
-        RowText::from_fmt(format_args!("POLL {secs}S {verdict}"))
+fn poll_text(poller: &PollerLine) -> RowText {
+    if !poller.enabled {
+        return RowText::from_fmt(format_args!("POLL OFF"));
+    }
+    let secs = poller.interval_ms.div_ceil(MS_PER_SECOND);
+    let verdict = if poller.failing {
+        "ER"
+    } else if poller.absent {
+        "NA"
     } else {
-        RowText::from_fmt(format_args!("POLL OFF"))
+        "OK"
     };
+    RowText::from_fmt(format_args!("POLL {secs}S {verdict}"))
+}
+
+fn row_services(state: &ScreenState) -> ScreenRow {
+    let poll = poll_text(&state.poller);
     if state.sample.persistence_failed > 0 {
         return ScreenRow {
             text: spread(&poll, "NO SAVE"),
@@ -354,15 +369,19 @@ fn row_services(state: &ScreenState) -> ScreenRow {
     ScreenRow::text(spread(&poll, &bridges))
 }
 
+fn input_who(last: &InputLine) -> TargetTag {
+    match (last.short_address, last.instance) {
+        (None, _) => TargetTag::from_fmt(format_args!("SCH0")),
+        (Some(a), None) => TargetTag::from_fmt(format_args!("A{a:02}")),
+        (Some(a), Some(i)) => TargetTag::from_fmt(format_args!("A{a:02}.{i}")),
+    }
+}
+
 fn row_input(state: &ScreenState) -> ScreenRow {
     let Some(ref last) = state.last_input else {
         return ScreenRow::text(clip("IN   --"));
     };
-    let who = match (last.short_address, last.instance) {
-        (None, _) => TargetTag::from_fmt(format_args!("SCH0")),
-        (Some(a), None) => TargetTag::from_fmt(format_args!("A{a:02}")),
-        (Some(a), Some(i)) => TargetTag::from_fmt(format_args!("A{a:02}.{i}")),
-    };
+    let who = input_who(last);
     ScreenRow::text(RowText::from_fmt(format_args!("IN   {who} {}", last.what)))
 }
 
@@ -537,6 +556,7 @@ mod tests {
                 age_ms: 99_000,
             }),
             operation: None,
+            page: DisplayPage::Summary,
         }
     }
 
@@ -767,6 +787,121 @@ mod tests {
         let rows = render(&state);
         assert_eq!(rows[6].text, "! A03 VERIFY FAIL 2M");
         assert!(rows[6].invert);
+    }
+
+    fn page_rows(state: &ScreenState, page: DisplayPage) -> ScreenLines {
+        render(&ScreenState { page, ..*state })
+    }
+
+    #[test]
+    fn no_page_row_exceeds_the_column_budget() {
+        let mut state = busy_state();
+        state.sample.redundancy_enabled = true;
+        state.sample.persistence_failed = 3;
+        state.sample.wire_load_permille = 1000;
+        for page in DisplayPage::ALL {
+            for (i, row) in page_rows(&state, page).iter().enumerate() {
+                let budget = if row.spark { COLS_WITH_SPARK } else { SCREEN_COLS };
+                let cols = row.text.chars().count();
+                assert!(cols <= budget, "{page:?} row {i} is {cols} of {budget}: {:?}", row.text);
+            }
+        }
+    }
+
+    #[test]
+    fn the_network_page_names_each_link() {
+        let rows = page_rows(&busy_state(), DisplayPage::Network);
+        assert_eq!(rows[0].text, "NET  192.168.1.42");
+        assert!(rows[1].text.starts_with("ROLE ") && rows[1].text.ends_with(" SINGLE"));
+        assert!(rows[2].text.ends_with(" 3D04H"));
+        assert!(rows[3].text.ends_with(" SYNCED") && !rows[3].text.contains("NOT"));
+        assert!(rows[4].text.ends_with(" CONNECTED"));
+        assert!(rows[5].text.starts_with("WS CLIENTS ") && rows[5].text.ends_with(" 4"));
+        assert!(rows[6].text.ends_with(" OK") && !rows[6].invert);
+    }
+
+    #[test]
+    fn the_network_page_inverts_what_needs_a_look() {
+        let mut state = busy_state();
+        state.ip = None;
+        state.sample.redundancy_enabled = true;
+        state.sample.controller_active = false;
+        state.sample.persistence_failed = 1;
+        let rows = page_rows(&state, DisplayPage::Network);
+        assert_eq!(rows[0].text, "NET  NO IP LINK DOWN");
+        assert!(rows[1].text.ends_with(" STANDBY"));
+        assert!(rows[6].text.ends_with(" NO SAVE"));
+        assert!(rows[0].invert && rows[1].invert && rows[6].invert);
+    }
+
+    #[test]
+    fn the_bus_page_spells_out_the_traffic() {
+        let mut state = busy_state();
+        state.sample.wire_load_permille = 455;
+        state.frames_per_min = 120;
+        state.foreign_per_min = 3;
+        let rows = page_rows(&state, DisplayPage::Bus);
+        assert_eq!(rows[0].text, "BUS  LAMP FAIL 2+");
+        assert!(rows[0].invert);
+        assert!(rows[1].text.starts_with("FRAMES ") && rows[1].text.ends_with(" 120/MIN"));
+        assert!(rows[2].text.starts_with("FOREIGN ") && rows[2].text.ends_with(" 3/MIN"));
+        assert_eq!(rows[3].text, "LOAD 45%");
+        assert!(rows[3].spark && rows.iter().filter(|row| row.spark).count() == 1);
+        assert!(rows[4].text.starts_with("POLL 999S ER"));
+        assert_eq!(rows[5].text, "ANSWER 55/64  FAULT 7");
+        assert!(rows[5].invert);
+        assert!(rows[6].text.starts_with("INPUTS ") && rows[6].text.ends_with(" 11/12"));
+    }
+
+    #[test]
+    fn the_activity_page_tells_who_did_what() {
+        let rows = page_rows(&busy_state(), DisplayPage::Activity);
+        assert_eq!(rows[0].text, "OP   IDLE");
+        assert_eq!(rows[1].text, "LAST A63 ->254");
+        assert!(rows[2].text.starts_with("BY   PRX") && rows[2].text.ends_with(" 99S AGO"));
+        assert_eq!(rows[3].text, "INPUT A63.31");
+        assert_eq!(rows[4].text, "EVENT LONG END");
+        assert!(rows[5].text.starts_with("HCL  6500K"));
+        assert!(rows[6].text.is_empty());
+    }
+
+    #[test]
+    fn an_empty_activity_page_says_nothing_happened() {
+        let state = ScreenState { page: DisplayPage::Activity, ..ScreenState::default() };
+        let rows = render(&state);
+        assert_eq!(rows[1].text, "LAST --");
+        assert_eq!(rows[3].text, "INPUT --");
+        assert!(rows[2].text.is_empty() && rows[4].text.is_empty());
+    }
+
+    #[test]
+    fn a_live_fault_is_a_lost_link_a_bus_alarm_or_a_faulty_lamp() {
+        let mut state = busy_state();
+        state.bus = BusReading::Clear;
+        state.sample.gear_faulted = 0;
+        assert!(!has_live_fault(&state));
+        assert!(has_live_fault(&ScreenState { ip: None, ..state }));
+        let lamp = ScreenState { sample: DisplaySample { gear_faulted: 1, ..state.sample }, ..state };
+        assert!(has_live_fault(&lamp));
+        state.bus = BusReading::OneFailure;
+        assert!(has_live_fault(&state));
+        state.sample.adapter_enabled = false;
+        assert!(!has_live_fault(&state), "a bus the operator switched off is not a fault");
+        state.sample.gear_faulted = 1;
+        assert!(!has_live_fault(&state), "nobody reads the gear of a switched-off bus again");
+    }
+
+    #[test]
+    fn standing_states_are_inverted_but_are_no_live_fault() {
+        let mut state = busy_state();
+        state.bus = BusReading::Clear;
+        state.sample.gear_faulted = 0;
+        state.sample.redundancy_enabled = true;
+        state.sample.controller_active = false;
+        state.sample.persistence_failed = 1;
+        let rows = render(&state);
+        assert!(rows[0].invert && rows[4].invert, "standby and NO SAVE stay on show");
+        assert!(!has_live_fault(&state), "neither keeps the screen saver away");
     }
 
     #[test]
