@@ -86,6 +86,7 @@ SAMPLE_LOG = """\
 2026-09-16T00:00:04.000 I (4) x: task stack hwm (B free, 35 tasks): dali-sniff=5564
 2026-09-16T00:00:05.000 W (5) x: boot heap [composition_start]: internal free=396000 largest=1
 2026-09-16T00:00:06.000 I (6) x: nothing interesting here at all
+2026-09-16T00:00:06.500 W (6) x: boot heap census [after hydrate]: used=1/32 free=1/64 ref=1/1 us=410/380 off=0/0 sum=1/32
 2026-09-16T00:00:07.000 W (7) x: DALI line held: 31 run
 2026-09-16T00:00:08.000 I (8) x: DALI sniff: bad capture=[aa bb]
 """
@@ -103,7 +104,7 @@ def test_every_class_is_found_and_uninteresting_lines_are_dropped(tmp_path):
 
     classes = report["classes"]
     assert set(classes) == {"captures", "sniff_timing", "arbitration",
-                            "stack_census", "boot_heap", "line_held"}
+                            "stack_census", "boot_heap", "heap_census", "line_held"}
     assert classes["captures"]["seen_in_window"] == 2
     assert report["truncated"] is False
     assert (out / "wire" / "captures.log").read_text().count("capture=[") == 2

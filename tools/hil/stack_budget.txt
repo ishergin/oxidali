@@ -34,3 +34,5 @@ rules-worker         12288   7928
 # The depth during a firmware update.
 ota-worker            3072   2000
 log-uart              4096   2344
+# The heartbeat thread; it also spells the boot heap census, a few lines per tick.
+census                3072   1976

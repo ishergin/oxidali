@@ -442,17 +442,18 @@ def test_the_report_shows_used_against_the_stack(tmp_path):
     assert "unmeasured" not in body or "dali_worker" not in body
 
 
-CENSUS_0_1_1101 = (
-    "2026-09-24T14:08:22.418 I (185064) dali2rust_firmware::composition: task stack "
-    "hwm (B free, 34 tasks): log-uart=1984 dali-sniff=5548 bus_task=6196 "
-    "dali_worker=5840 registry_worker=7620 mqtt_worker=4760 ota-worker=1836 "
-    "arb-supervisor=1524 operation_tracker_worker=6668 apply_orchestrator=6648 "
-    "fanout_projector_worker=5620 sniffer_translator_worker=6800 hcl-scheduler=5416 "
-    "poller=5992 rules-worker=8064 arbitration=2364 replication=6536 "
-    "confirm-bridge=7088 display_worker=4544 ws_worker=5916 ip-watch=6616 "
-    "census=1504 ws-client=6932 ws-client=6988 IDLE0=3620 IDLE1=3668 ipc0=668 ipc1=660 esp_timer=3660 "
-    "Tmr Svc=1652 tiT=2564 sys_evt=2860 | observed: "
-    "httpd=14324@0x4ff5b22c@522:fresh mqtt_task=2980@0x4ff278b0@4129:fresh "
+CENSUS_0_1_1167 = (
+    "2026-11-08T05:52:05.000 I (55804817) dali2rust_firmware::composition: task stack "
+    "hwm (B free, 38 tasks): log-uart=1912 dali-sniff=5620 bus_task=6156 "
+    "dali_worker=6704 registry_worker=7572 mqtt_worker=5120 ota-worker=1740 "
+    "arb-supervisor=1432 operation_tracker_worker=6640 apply_orchestrator=6544 "
+    "fanout_projector_worker=6036 sniffer_translator_worker=6400 hcl-scheduler=5608 "
+    "poller=5784 rules-worker=8192 arbitration=2380 replication=6344 "
+    "confirm-bridge=6868 display_worker=4464 ws_worker=5564 ip-watch=7060 "
+    "census=1340 ws-client=6800 ws-reader=6016 ws-client=6792 ws-reader=5912 "
+    "ws-client=6812 ws-reader=6012 IDLE0=3588 IDLE1=3660 ipc0=604 ipc1=596 "
+    "esp_timer=3596 Tmr Svc=1588 tiT=2508 sys_evt=2788 | observed: "
+    "httpd=15644@0x4ff5d164@5914:fresh mqtt_task=2876@0x4ff284a8@7437:fresh "
 )
 
 
@@ -503,9 +504,9 @@ def test_a_run_with_no_census_names_no_orphan(tmp_path):
 
 def test_every_shipped_budget_line_is_spelled_as_the_census_prints_it():
     budget = validity.load_stack_budget()
-    min_free = validity.stack_min_free([CENSUS_0_1_1101])
+    min_free = validity.stack_min_free([CENSUS_0_1_1167])
     assert validity.stack_budget_orphans(min_free, budget) == []
-    no_client = re.sub(r" ws-client=\d+", "", CENSUS_0_1_1101)
+    no_client = re.sub(r" ws-client=\d+", "", CENSUS_0_1_1167)
     min_free = validity.stack_min_free([no_client])
     assert validity.stack_budget_orphans(min_free, budget) == ["ws-client"]
     assert validity.stack_budget_dead_lines(min_free, budget) == []

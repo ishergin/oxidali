@@ -1,8 +1,11 @@
 pub mod alloc_probe;
 pub mod esp_thread;
 pub mod fs;
+pub mod heap_census;
 #[cfg(target_os = "espidf")]
 pub mod heap_stats;
+#[cfg(target_os = "espidf")]
+pub mod heap_walk;
 pub mod log_ring;
 #[cfg(target_os = "espidf")]
 pub mod i2c;

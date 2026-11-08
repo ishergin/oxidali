@@ -66,6 +66,7 @@ pub(crate) fn log_internal_free(stage: &str) {
         h.internal_free_bytes,
         h.internal_largest_block_bytes
     );
+    dali2rust_bsp::heap_walk::record_boot_census(stage);
 }
 
 #[cfg(not(target_os = "espidf"))]
