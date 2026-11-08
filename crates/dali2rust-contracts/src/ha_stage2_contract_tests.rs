@@ -5,7 +5,7 @@ use crate::msg::{
     RuntimeRegistryUpdateEntry, RuntimeSource, SceneRow, StatusFlags,
 };
 
-const FROZEN_COMMAND_ORDER: [&str; 78] = [
+const FROZEN_COMMAND_ORDER: [&str; 79] = [
     "DaliCommandPayload",
     "AdapterSettingsUpdateCommand",
     "GroupMetadataUpdateCommand",
@@ -84,6 +84,7 @@ const FROZEN_COMMAND_ORDER: [&str; 78] = [
     "DaliRecallLevelPresetCommand",
     "DaliDimCommand",
     "HomeAssistantSettingsCommitCommand",
+    "DisplaySettingsUpdateCommand",
 ];
 
 #[test]
@@ -96,7 +97,7 @@ fn bus_command_payload_variant_order_is_frozen() {
     );
 }
 
-const FROZEN_EVENT_ORDER: [&str; 60] = [
+const FROZEN_EVENT_ORDER: [&str; 61] = [
     "DaliEventPayload",
     "IpAddressAssignedEvent",
     "RuntimeStateChangedEvent",
@@ -157,6 +158,7 @@ const FROZEN_EVENT_ORDER: [&str; 60] = [
     "BusUnitQuiescenceObservedEvent",
     "DaliLevelTransitionAppliedEvent",
     "DaliInputManualConfigEvent",
+    "DisplaySettingsChangedEvent",
 ];
 
 #[test]

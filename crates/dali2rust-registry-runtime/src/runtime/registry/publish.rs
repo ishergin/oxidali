@@ -321,6 +321,29 @@ pub(crate) fn poller_settings_changed(
     }
 }
 
+pub(crate) fn publish_display_settings_changed(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    target_adapter_id: u16,
+    applied: &super::display_settings::DisplaySettingsRecord,
+) -> PublishResult {
+    let payload = display_settings_changed(applied);
+    publish_registry_event(publisher, correlation_id, target_adapter_id, payload)
+}
+
+pub(crate) fn display_settings_changed(
+    applied: &super::display_settings::DisplaySettingsRecord,
+) -> dali2rust_contracts::msg::DisplaySettingsChangedEvent {
+    let row = applied.0;
+    dali2rust_contracts::msg::DisplaySettingsChangedEvent {
+        enabled: row.enabled,
+        i2c_address: row.i2c_address,
+        upside_down: row.upside_down,
+        screensaver_timeout_s: row.screensaver_timeout_s,
+        pages_mask: row.pages_mask,
+    }
+}
+
 pub(crate) fn publish_adapter_settings_changed(
     publisher: &BusPublisher,
     adapter_id: u8,

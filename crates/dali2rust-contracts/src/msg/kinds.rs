@@ -169,6 +169,43 @@ impl DaliAttributeGroup {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
+pub enum DisplayPage {
+    #[default]
+    Summary = 0,
+    Network = 1,
+    Bus = 2,
+    Activity = 3,
+}
+
+impl DisplayPage {
+    pub const ALL: [Self; 4] = [Self::Summary, Self::Network, Self::Bus, Self::Activity];
+
+    pub const ALL_MASK: u8 = (1 << Self::ALL.len()) - 1;
+
+    pub const fn mask_bit(self) -> u8 {
+        1 << (self as u8)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Network => "network",
+            Self::Bus => "bus",
+            Self::Activity => "activity",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+
+    pub fn in_mask(mask: u8) -> impl Iterator<Item = Self> {
+        Self::ALL.into_iter().filter(move |p| mask & p.mask_bit() != 0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum MemoryBankReadPreset {
     #[default]
     None = 0,

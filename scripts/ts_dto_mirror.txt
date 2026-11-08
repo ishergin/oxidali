@@ -20,6 +20,7 @@ DaliSettingsDto DaliSettings
 DaliWireDto DaliWireCounters
 DaliWorkerDto DaliWorkerCounters
 DiagnosticsDto Diagnostics
+DisplaySettingsDto DisplaySettings
 Dt6LedAttributesDto AttributeSection
 Dt8ColorAttributesDto AttributeSection
 EnergyBankDto EnergyBank

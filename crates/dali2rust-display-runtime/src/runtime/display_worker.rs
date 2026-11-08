@@ -8,31 +8,21 @@ use dali2rust_bus::{recv_then_drain, BusFrame, BusSubscriberRx, WorkerTurn};
 use dali2rust_contracts::msg::{
     BusEventPayload, DaliBusHealthProbedEvent, DaliDiscoveryProgressEvent,
     DaliInputEventObservedEvent, DaliSceneRecalledEvent, DaliTargetScope,
-    DaliTargetStateAppliedEvent, DaliTargetStateFailedEvent, ErrorCode, FixedText32,
-    HclScheduleChangedEvent, InputEventKind, DaliObservedFrameEvent, IpAddressAssignedEvent,
-    LevelTransition, ObservedKind, OperationStatus, OperationStatusChangedEvent, OperationType,
-    RuntimeSource, ARC_POWER_OFF,
+    DaliTargetStateAppliedEvent, DaliTargetStateFailedEvent, DisplaySettingsChangedEvent,
+    ErrorCode, FixedText32, HclScheduleChangedEvent, InputEventKind, DaliObservedFrameEvent,
+    IpAddressAssignedEvent, LevelTransition, ObservedKind, OperationStatus,
+    OperationStatusChangedEvent, OperationType, RuntimeSource, ARC_POWER_OFF,
 };
 use dali2rust_domain::dali::dev103::ButtonEvent;
 
+pub use super::panel_driver::{HardwareDisplay, PAGE_DWELL};
+use super::panel_driver::PanelDriver;
 use crate::screen::{
-    render, render_row, ActionLine, BusReading, EventLabel, InputLine, OperationLine, PollerLine,
-    ScreenLines, ScreenState, TargetTag, SCREEN_ROWS,
+    render, ActionLine, BusReading, EventLabel, InputLine, OperationLine, PollerLine,
+    ScreenLines, ScreenState, TargetTag,
 };
 use crate::screen::{spark_heights_into, SPARK_COLS};
 use crate::source::{DisplaySample, DisplaySource};
-
-pub enum HardwareDisplay {
-    None,
-    #[cfg(target_os = "espidf")]
-    EspOled(Arc<Mutex<crate::display::esp_idf::Ssd1306Display<'static>>>),
-}
-
-impl HardwareDisplay {
-    pub fn none() -> Self {
-        Self::None
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct DisplayView {
@@ -58,6 +48,10 @@ impl DisplayView {
 
 const POLL_MS: u64 = 1000;
 
+const RATE_GAP_MS: u64 = 2 * POLL_MS;
+
+const IDLE_WAIT: Duration = Duration::from_secs(3600);
+
 const ERROR_LABEL_COLS: usize = 12;
 
 const RATE_WINDOW: usize = 60;
@@ -79,6 +73,11 @@ struct RateWindow {
 impl RateWindow {
     fn new() -> Self {
         Self { samples: [0; RATE_WINDOW], idx: 0, filled: 0 }
+    }
+
+    fn clear(&mut self) {
+        self.idx = 0;
+        self.filled = 0;
     }
 
     fn push(&mut self, total: u32) -> u32 {
@@ -106,6 +105,26 @@ struct Facts {
     operation: Option<OperationLine>,
     operation_key: Option<FixedText32>,
     scan_found: u16,
+    activity_seq: u32,
+    settings_changed: bool,
+}
+
+impl Facts {
+    fn record_action(&mut self, line: ActionLine) {
+        if line.failed || line.source.is_none_or(wakes_the_screen) {
+            self.activity_seq = self.activity_seq.wrapping_add(1);
+        }
+        self.last_action = Some(line);
+        self.action_at = Some(Instant::now());
+    }
+
+    fn note_activity(&mut self) {
+        self.activity_seq = self.activity_seq.wrapping_add(1);
+    }
+}
+
+fn wakes_the_screen(source: RuntimeSource) -> bool {
+    !matches!(source, RuntimeSource::Hcl | RuntimeSource::Poller | RuntimeSource::Readback)
 }
 
 dali2rust_contracts::dispatch_bus_events! {
@@ -128,6 +147,11 @@ dali2rust_contracts::dispatch_bus_events! {
     DaliSceneRecalledEvent(body) => apply_scene(facts, *adapter, body),
     DaliObservedFrameEvent(body) => apply_observed(facts, *adapter, body),
     HclScheduleChangedEvent(body) => apply_hcl_changed(facts, body),
+    DisplaySettingsChangedEvent(body) => apply_display_settings(facts, body),
+}
+
+fn apply_display_settings(facts: &mut Facts, _body: &DisplaySettingsChangedEvent) {
+    facts.settings_changed = true;
 }
 
 fn apply_ip(facts: &mut Facts, body: &IpAddressAssignedEvent) {
@@ -159,6 +183,7 @@ fn apply_input(facts: &mut Facts, adapter: u8, body: &DaliInputEventObservedEven
         instance: body.instance_number,
         what: input_label(body),
     });
+    facts.note_activity();
 }
 
 fn input_label(body: &DaliInputEventObservedEvent) -> EventLabel {
@@ -195,41 +220,41 @@ fn button_label(code: u16) -> EventLabel {
 
 fn apply_operation(facts: &mut Facts, body: &OperationStatusChangedEvent) {
     match body.status {
-        OperationStatus::Accepted | OperationStatus::Running => {
-            if facts.operation.is_none() {
-                facts.operation = Some(OperationLine {
-                    name: EventLabel::from_fmt(format_args!(
-                        "{}",
-                        operation_tag(body.operation_type)
-                    )),
-                    done: 0,
-                    total: 0,
-                });
-                facts.operation_key = Some(body.operation_key.clone());
-                facts.scan_found = 0;
-            }
-        }
-        _ => {
-            if facts.operation_key.as_ref().is_none_or(|k| *k == body.operation_key) {
-                facts.operation = None;
-                facts.operation_key = None;
-            }
-            let code = body.error.as_ref().map(|e| e.code);
-            if body.status != OperationStatus::Succeeded && !is_benign_end(body.status, code) {
-                facts.last_action = Some(ActionLine {
-                    target: TargetTag::from_fmt(format_args!(
-                        "{}",
-                        operation_tag(body.operation_type)
-                    )),
-                    what: error_label(code),
-                    source: None,
-                    failed: true,
-                    age_ms: 0,
-                });
-                facts.action_at = Some(Instant::now());
-            }
-        }
+        OperationStatus::Accepted | OperationStatus::Running => start_operation(facts, body),
+        _ => end_operation(facts, body),
     }
+}
+
+fn start_operation(facts: &mut Facts, body: &OperationStatusChangedEvent) {
+    if facts.operation.is_some() {
+        return;
+    }
+    facts.operation = Some(OperationLine {
+        name: EventLabel::from_fmt(format_args!("{}", operation_tag(body.operation_type))),
+        done: 0,
+        total: 0,
+    });
+    facts.operation_key = Some(body.operation_key.clone());
+    facts.scan_found = 0;
+    facts.note_activity();
+}
+
+fn end_operation(facts: &mut Facts, body: &OperationStatusChangedEvent) {
+    if facts.operation_key.as_ref().is_none_or(|k| *k == body.operation_key) {
+        facts.operation = None;
+        facts.operation_key = None;
+    }
+    let code = body.error.as_ref().map(|e| e.code);
+    if body.status == OperationStatus::Succeeded || is_benign_end(body.status, code) {
+        return;
+    }
+    facts.record_action(ActionLine {
+        target: TargetTag::from_fmt(format_args!("{}", operation_tag(body.operation_type))),
+        what: error_label(code),
+        source: None,
+        failed: true,
+        age_ms: 0,
+    });
 }
 
 fn is_benign_end(status: OperationStatus, code: Option<ErrorCode>) -> bool {
@@ -277,6 +302,7 @@ fn apply_discovery(facts: &mut Facts, adapter: u8, body: &DaliDiscoveryProgressE
         done: 0,
         total: 0,
     });
+    facts.note_activity();
 }
 
 fn apply_applied(facts: &mut Facts, adapter: u8, body: &DaliTargetStateAppliedEvent) {
@@ -290,28 +316,26 @@ fn apply_applied(facts: &mut Facts, adapter: u8, body: &DaliTargetStateAppliedEv
             }
         }
     }
-    facts.last_action = Some(ActionLine {
+    facts.record_action(ActionLine {
         target: target_label(body.scope, body.short_address, body.group_id, body.virtual_lamp_id),
         what: setpoint_label(body),
         source: Some(body.source),
         failed: false,
         age_ms: 0,
     });
-    facts.action_at = Some(Instant::now());
 }
 
 fn apply_failed(facts: &mut Facts, adapter: u8, body: &DaliTargetStateFailedEvent) {
     if !speaks_for(adapter, body.adapter_id) {
         return;
     }
-    facts.last_action = Some(ActionLine {
+    facts.record_action(ActionLine {
         target: target_label(body.scope, Some(body.short_address), body.group_id, body.virtual_lamp_id),
         what: error_label(Some(body.error.code)),
         source: None,
         failed: true,
         age_ms: 0,
     });
-    facts.action_at = Some(Instant::now());
 }
 
 fn transition_label(verb: LevelTransition) -> &'static str {
@@ -343,14 +367,13 @@ fn apply_observed(facts: &mut Facts, adapter: u8, body: &DaliObservedFrameEvent)
             None => return,
         },
     };
-    facts.last_action = Some(ActionLine {
+    facts.record_action(ActionLine {
         target: target_label(body.scope, body.short_address, body.group_id, None),
         what,
         source: Some(RuntimeSource::Sniffer),
         failed: false,
         age_ms: 0,
     });
-    facts.action_at = Some(Instant::now());
 }
 
 fn observed_label(setpoint: &dali2rust_contracts::msg::LightSetpoint) -> EventLabel {
@@ -383,7 +406,7 @@ fn apply_scene(facts: &mut Facts, adapter: u8, body: &DaliSceneRecalledEvent) {
         Some(_) => DaliTargetScope::VirtualLamp,
         None => body.scope,
     };
-    facts.last_action = Some(ActionLine {
+    facts.record_action(ActionLine {
         target: target_label(
             scope,
             Some(body.short_address),
@@ -395,7 +418,6 @@ fn apply_scene(facts: &mut Facts, adapter: u8, body: &DaliSceneRecalledEvent) {
         failed: body.error.is_some(),
         age_ms: 0,
     });
-    facts.action_at = Some(Instant::now());
 }
 
 fn target_label(
@@ -446,7 +468,6 @@ struct Tick {
     foreign_per_min: u32,
     spark_elapsed_s: u32,
     poller: PollerLine,
-    drawn: [u64; SCREEN_ROWS],
 }
 
 impl Tick {
@@ -464,30 +485,13 @@ impl Tick {
             foreign_per_min: 0,
             spark_elapsed_s: SPARK_SAMPLE_S,
             poller: PollerLine::default(),
-            drawn: [0; SCREEN_ROWS],
         }
     }
 
-    fn fill(&mut self, dst: &mut ScreenState, facts: &Facts, sample: DisplaySample) {
-        let now = Instant::now();
+    fn fill(&mut self, dst: &mut ScreenState, facts: &Facts, sample: DisplaySample, now: Instant) {
         dst.ip = facts.ip;
         dst.uptime_s = now.duration_since(self.boot).as_secs().min(u64::from(u32::MAX)) as u32;
-        if self
-            .sampled_at
-            .is_none_or(|t| now.duration_since(t) >= Duration::from_millis(POLL_MS))
-        {
-            self.sampled_at = Some(now);
-            self.frames_per_min = self.frames.push(sample.frames_sent_total);
-            self.foreign_per_min = self.foreign.push(sample.foreign_frames_total);
-            self.poller = self.poller_line(sample, now);
-            self.spark_elapsed_s += 1;
-            if self.spark_elapsed_s >= SPARK_SAMPLE_S {
-                self.spark_elapsed_s = 0;
-                dst.load_history.rotate_left(1);
-                dst.load_history[SPARK_COLS - 1] = sample.wire_load_permille;
-                spark_heights_into(&dst.load_history, &mut dst.spark);
-            }
-        }
+        self.sample_rates(dst, sample, now);
         dst.frames_per_min = self.frames_per_min;
         dst.foreign_per_min = self.foreign_per_min;
         dst.poller = self.poller;
@@ -499,6 +503,28 @@ impl Tick {
             l.age_ms = ms;
         });
         dst.operation = facts.operation;
+    }
+
+    fn sample_rates(&mut self, dst: &mut ScreenState, sample: DisplaySample, now: Instant) {
+        let since = self.sampled_at.map(|t| now.duration_since(t));
+        if since.is_some_and(|gap| gap < Duration::from_millis(POLL_MS)) {
+            return;
+        }
+        if since.is_some_and(|gap| gap > Duration::from_millis(RATE_GAP_MS)) {
+            self.frames.clear();
+            self.foreign.clear();
+        }
+        self.sampled_at = Some(now);
+        self.frames_per_min = self.frames.push(sample.frames_sent_total);
+        self.foreign_per_min = self.foreign.push(sample.foreign_frames_total);
+        self.poller = self.poller_line(sample, now);
+        self.spark_elapsed_s += 1;
+        if self.spark_elapsed_s >= SPARK_SAMPLE_S {
+            self.spark_elapsed_s = 0;
+            dst.load_history.rotate_left(1);
+            dst.load_history[SPARK_COLS - 1] = sample.wire_load_permille;
+            spark_heights_into(&dst.load_history, &mut dst.spark);
+        }
     }
 }
 
@@ -560,153 +586,69 @@ pub fn spawn_display_worker(
         c"display_worker",
         std_thread_stack::DISPLAY_WORKER,
         esp_thread::StackHome::ExternalOnXip,
-        move || {
-            let mut facts = Box::new(Facts::default());
-            let mut tick = Box::new(Tick::new());
-            let adapter_id = source.sample().adapter_id;
-            refresh(&mut tick, &facts, &source, &view, &hardware);
-            let mut next_render = Instant::now() + Duration::from_millis(POLL_MS);
-            loop {
-                let wait = next_render.saturating_duration_since(Instant::now());
-                let turn = recv_then_drain(&ev, wait, |frame| {
-                    consume(&mut facts, adapter_id, &frame);
-                });
-                if turn == WorkerTurn::Disconnected {
-                    return;
-                }
-                if Instant::now() < next_render {
-                    continue;
-                }
-                refresh(&mut tick, &facts, &source, &view, &hardware);
-                next_render = Instant::now() + Duration::from_millis(POLL_MS);
-            }
-        },
+        move || Worker::new(source, view, hardware).run(&ev),
     )
 }
 
-fn refresh(
-    tick: &mut Tick,
-    facts: &Facts,
-    source: &Arc<dyn DisplaySource>,
-    view: &Arc<DisplayView>,
-    hardware: &HardwareDisplay,
-) {
-    let sample = source.sample();
-    view.with_state(|state| {
-        tick.fill(state, facts, sample);
-        for row in 0..SCREEN_ROWS {
-            let line = render_row(state, row);
-            let digest = digest_row(&line, &state.spark);
-            if tick.drawn[row] == digest {
-                continue;
-            }
-            if draw_row(hardware, row, &line, &state.spark) {
-                tick.drawn[row] = digest;
-            }
-        }
-    });
+struct Worker {
+    facts: Box<Facts>,
+    tick: Box<Tick>,
+    panel: Box<PanelDriver>,
+    source: Arc<dyn DisplaySource>,
+    view: Arc<DisplayView>,
+    hardware: HardwareDisplay,
 }
 
-fn digest_row(line: &crate::screen::ScreenRow, spark: &[u8; SPARK_COLS]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in line.text.as_bytes() {
-        h = (h ^ u64::from(*byte)).wrapping_mul(0x1000_0000_01b3);
-    }
-    h = (h ^ u64::from(line.invert)).wrapping_mul(0x1000_0000_01b3);
-    h = (h ^ u64::from(line.bar.unwrap_or(u16::MAX))).wrapping_mul(0x1000_0000_01b3);
-    if line.spark {
-        for column in spark {
-            h = (h ^ u64::from(*column)).wrapping_mul(0x1000_0000_01b3);
+impl Worker {
+    fn new(source: Arc<dyn DisplaySource>, view: Arc<DisplayView>, hardware: HardwareDisplay) -> Self {
+        Self {
+            facts: Box::new(Facts::default()),
+            tick: Box::new(Tick::new()),
+            panel: Box::new(PanelDriver::new(Instant::now())),
+            source,
+            view,
+            hardware,
         }
     }
-    h
+
+    fn run(mut self, ev: &BusSubscriberRx) {
+        let adapter_id = self.source.sample().adapter_id;
+        let mut live = self.refresh();
+        let mut next_render = Instant::now() + Duration::from_millis(POLL_MS);
+        loop {
+            let wait = if live { next_render.saturating_duration_since(Instant::now()) } else { IDLE_WAIT };
+            let facts = &mut self.facts;
+            if recv_then_drain(ev, wait, |frame| consume(facts, adapter_id, &frame))
+                == WorkerTurn::Disconnected
+            {
+                return;
+            }
+            let due = live && Instant::now() >= next_render;
+            if !due && !self.facts.settings_changed {
+                continue;
+            }
+            live = self.refresh();
+            next_render = Instant::now() + Duration::from_millis(POLL_MS);
+        }
+    }
+
+    fn refresh(&mut self) -> bool {
+        self.facts.settings_changed = false;
+        let sample = self.source.sample();
+        let now = Instant::now();
+        let (tick, facts, panel, hardware) =
+            (&mut self.tick, &self.facts, &mut self.panel, &self.hardware);
+        self.view.with_state(|state| {
+            tick.fill(state, facts, sample, now);
+            state.page = panel.turn_page(sample.display.pages_mask, now);
+            panel.drive(hardware, state, facts.activity_seq, now);
+        });
+        sample.display.enabled
+    }
 }
 
 fn consume(facts: &mut Facts, adapter: u8, frame: &BusFrame) {
     if let BusFrame::Event(arc) = frame {
         dispatch_display_event(&arc.payload, facts, &adapter, arc.meta.correlation_id);
-    }
-}
-
-#[cfg(target_os = "espidf")]
-fn draw_row(
-    hardware: &HardwareDisplay,
-    row: usize,
-    line: &crate::screen::ScreenRow,
-    spark: &[u8; SPARK_COLS],
-) -> bool {
-    let HardwareDisplay::EspOled(display) = hardware else {
-        return true;
-    };
-    match display.lock() {
-        Ok(mut d) => render::draw_row(&mut d, row, line, spark),
-        Err(_) => false,
-    }
-}
-
-#[cfg(not(target_os = "espidf"))]
-fn draw_row(
-    _hardware: &HardwareDisplay,
-    _row: usize,
-    _line: &crate::screen::ScreenRow,
-    _spark: &[u8; SPARK_COLS],
-) -> bool {
-    true
-}
-
-#[cfg(target_os = "espidf")]
-mod render {
-    use dali2rust_platform::display::{DisplayDriver, FontSize};
-
-    use crate::display::esp_idf::Ssd1306Display;
-    use crate::screen::{ScreenRow, SPARK_COLS, SPARK_H};
-
-    const ROW_PITCH: u32 = 9;
-    const ROW_H: u32 = 9;
-    const DISP_W: u32 = 128;
-    const BAR_W: u32 = 54;
-    const SPARK_X: u32 = DISP_W - SPARK_COLS as u32;
-
-    pub fn draw_row(
-        display: &mut Ssd1306Display<'static>,
-        row: usize,
-        line: &ScreenRow,
-        spark: &[u8; SPARK_COLS],
-    ) -> bool {
-        let y = row as u32 * ROW_PITCH;
-        let _ = display.clear_region(0, y, DISP_W, ROW_H);
-        let _ = display.draw_text(0, y, &line.text, FontSize::Small);
-        if let Some(permille) = line.bar {
-            draw_bar(display, y, permille);
-        }
-        if line.spark {
-            draw_spark(display, y, spark);
-        }
-        if line.invert {
-            let _ = display.invert_region(0, y, DISP_W, ROW_H);
-        }
-        display.flush_region(y, ROW_H).is_ok()
-    }
-
-    fn draw_bar(display: &mut Ssd1306Display<'static>, y: u32, permille: u16) {
-        let x = DISP_W - BAR_W;
-        let _ = display.fill_region(x, y, BAR_W, 1);
-        let _ = display.fill_region(x, y + 7, BAR_W, 1);
-        let _ = display.fill_region(x, y, 1, 8);
-        let _ = display.fill_region(DISP_W - 1, y, 1, 8);
-        let filled = u32::from(permille) * (BAR_W - 4) / 1000;
-        let _ = display.fill_region(x + 2, y + 2, filled, 4);
-    }
-
-    #[inline(always)]
-    fn draw_spark(display: &mut Ssd1306Display<'static>, y: u32, spark: &[u8; SPARK_COLS]) {
-        for (i, h) in spark.iter().enumerate() {
-            let h = u32::from(*h);
-            if h == 0 {
-                continue;
-            }
-            let top = y + 1 + u32::from(SPARK_H) - h;
-            let _ = display.fill_region(SPARK_X + i as u32, top, 1, h);
-        }
     }
 }

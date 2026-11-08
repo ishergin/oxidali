@@ -23,7 +23,7 @@ pub use events::{
     RulesActivationEvent, RulesChangedEvent,BusEventPayload, DaliAttributeReadChunk, EVENT_VARIANT_NAMES};
 pub use observation_order::{observation_supersedes, OBSERVATION_ORDER_WINDOW_MS};
 pub use kinds::{
-    AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup,
+    AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup, DisplayPage,
     DaliTargetScope,
     BusUnitNvmRow, DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
     DimDirection, LevelPreset, LevelTransition,
@@ -112,6 +112,7 @@ pub use commands::{
     LuminaireTextWrite,
 };
 pub use commands::PollerSettingsUpdateCommand;
+pub use commands::DisplaySettingsUpdateCommand;
 pub use events::DaliSettingsChangedEvent;
 pub use events::{
     Dali103ArbitrationProbedEvent, PoliciesChangedEvent, Dali103HandoverSentEvent, RegistrySliceReloadedEvent, APPLICATION_ACTIVE_UNMOVED, APPLICATION_ACTIVE_MOVED_BY_COMMAND, APPLICATION_ACTIVE_MOVED_BY_WIRE, RedundancySettingsChangedEvent,
@@ -128,6 +129,7 @@ pub use events::{
     DaliInputManualConfigEvent, InputDeviceChangedEvent,
 };
 pub use events::PollerSettingsChangedEvent;
+pub use events::DisplaySettingsChangedEvent;
 pub use commands::{
     HomeAssistantControllerIdUpdateCommand, HomeAssistantCredentialsUpdateCommand,
     HomeAssistantSettingsCommitCommand, HomeAssistantSettingsUpdateCommand,

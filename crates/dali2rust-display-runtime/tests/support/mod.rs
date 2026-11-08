@@ -1,11 +1,11 @@
-#![allow(dead_code, reason = "Each test binary compiles this module separately and uses the part it needs: `sampled_deltas` wants the moving source, the others the static one, and neither is dead code from the crate's point of view")]
+#![allow(dead_code, reason = "Each test binary compiles this module separately and uses the part it needs: `sampled_deltas` wants the moving source, `panel_settings` the recorded panel, the others the static one, and none is dead code from the crate's point of view")]
 
 use std::sync::{Arc, Mutex};
 
 use dali2rust_bus::{BusConfig, BusHost, BusPublisher};
 use dali2rust_display_runtime::{
-    spawn_display_worker, DisplaySample, DisplaySource, DisplayView, HardwareDisplay,
-    StaticDisplaySource, DISPLAY_WORKER_HANDLED_EVENTS,
+    spawn_display_worker, DisplayPanel, DisplaySample, DisplaySource, DisplayView,
+    HardwareDisplay, StaticDisplaySource, DISPLAY_WORKER_HANDLED_EVENTS,
 };
 
 pub fn spawn_display_worker_on_bus(
@@ -64,6 +64,19 @@ pub fn spawn_display_worker_on_moving_source(
     });
     let view = Arc::new(DisplayView::default());
     let worker = spawn_display_worker(ev_rx, source, Arc::clone(&view), HardwareDisplay::none());
+    (host, publisher, view, worker)
+}
+
+pub fn spawn_display_worker_on_panel(
+    source: Arc<MovingDisplaySource>,
+    panel: Arc<Mutex<dyn DisplayPanel>>,
+) -> (BusHost, BusPublisher, Arc<DisplayView>, std::thread::JoinHandle<()>) {
+    let (host, publisher, ev_rx) = BusHost::spawn(BusConfig::default(), |reg| {
+        reg.subscribe_events(32, DISPLAY_WORKER_HANDLED_EVENTS)
+    });
+    let view = Arc::new(DisplayView::default());
+    let worker =
+        spawn_display_worker(ev_rx, source, Arc::clone(&view), HardwareDisplay::panel(panel));
     (host, publisher, view, worker)
 }
 

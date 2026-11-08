@@ -19,6 +19,7 @@ pub(crate) mod policies;
 pub(crate) mod redundancy_settings;
 pub mod transfer;
 pub(crate) mod poller_settings;
+pub(crate) mod display_settings;
 pub mod publish;
 pub(crate) mod replaced_slices;
 mod resolve;

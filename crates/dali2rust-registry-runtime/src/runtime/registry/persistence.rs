@@ -19,7 +19,8 @@ use super::persistence_slices::{
     PersistableAdapterSlice, PersistableGroupsSlice, PersistableHclSchedulesSlice,
     PersistableHomeAssistantSettingsSlice, PersistablePhysicalDevicesSlice,
     PersistableDaliSettingsSlice, PersistablePollerSettingsSlice,
-    PersistablePoliciesSlice, PersistableRedundancySettingsSlice, PersistableSceneSlice,
+    PersistableDisplaySettingsSlice, PersistablePoliciesSlice, PersistableRedundancySettingsSlice,
+    PersistableSceneSlice,
     PersistableVirtualLampsSlice,
     PersistenceEnvelope, decode_versioned_slice, ADAPTERS_SLICE_VERSION, GROUPS_SLICE_VERSION,
     HCL_SCHEDULES_SLICE_VERSION, HOME_ASSISTANT_SETTINGS_SLICE_VERSION,
@@ -27,6 +28,7 @@ use super::persistence_slices::{
     POLLER_SETTINGS_SLICE_VERSION,
     POLICIES_SLICE_VERSION,
     REDUNDANCY_SETTINGS_SLICE_VERSION,
+    DISPLAY_SETTINGS_SLICE_VERSION,
     SCENES_SLICE_VERSION,
     VIRTUAL_LAMPS_SLICE_VERSION,
 };
@@ -335,6 +337,7 @@ impl crate::runtime::registry::store::RegistryStore {
         self.flush_poller_settings_if_dirty(slices);
         self.flush_dali_settings_if_dirty(slices);
         self.flush_redundancy_settings_if_dirty(slices);
+        self.flush_display_settings_if_dirty(slices);
         self.flush_policies_if_dirty(slices);
         self.flush_home_assistant_settings_if_dirty(slices);
         self.flush_input_devices_if_dirty(slices);
@@ -514,6 +517,13 @@ impl crate::runtime::registry::store::RegistryStore {
             REDUNDANCY_SETTINGS_SLICE_VERSION,
             "redundancy_settings",
             crate::runtime::registry::redundancy_settings::persistable_snapshot;
+        flush_display_settings_if_dirty =>
+            take_display_settings_dirty,
+            mark_display_settings_dirty,
+            SliceKey::DisplaySettings,
+            DISPLAY_SETTINGS_SLICE_VERSION,
+            "display_settings",
+            crate::runtime::registry::display_settings::persistable_snapshot;
         flush_policies_if_dirty =>
             take_policies_dirty,
             mark_policies_dirty,
@@ -681,6 +691,7 @@ fn registry_kind(key: SliceKey) -> Option<PersistenceSliceKind> {
         SliceKey::DaliSettings => PersistenceSliceKind::DaliSettings,
         SliceKey::RedundancySettings => PersistenceSliceKind::RedundancySettings,
         SliceKey::Policies => PersistenceSliceKind::Policies,
+        SliceKey::DisplaySettings => PersistenceSliceKind::DisplaySettings,
         SliceKey::InputDevices { bank } => PersistenceSliceKind::InputDevices { bank },
         SliceKey::ControllerSettings | SliceKey::Rules { .. } => return None,
     })
@@ -713,6 +724,9 @@ fn validate_kind(kind: &PersistenceSliceKind, bytes: &[u8]) -> Result<(), StoreE
             decodes::<PersistableRedundancySettingsSlice>(bytes, REDUNDANCY_SETTINGS_SLICE_VERSION)
         }
         PersistenceSliceKind::Policies => decodes::<PersistablePoliciesSlice>(bytes, POLICIES_SLICE_VERSION),
+        PersistenceSliceKind::DisplaySettings => {
+            decodes::<PersistableDisplaySettingsSlice>(bytes, DISPLAY_SETTINGS_SLICE_VERSION)
+        }
         PersistenceSliceKind::InputDevices { .. } => {
             decodes::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION)
         }
@@ -817,6 +831,7 @@ fn key_of(kind: &PersistenceSliceKind) -> SliceKey {
         PersistenceSliceKind::DaliSettings => SliceKey::DaliSettings,
         PersistenceSliceKind::RedundancySettings => SliceKey::RedundancySettings,
         PersistenceSliceKind::Policies => SliceKey::Policies,
+        PersistenceSliceKind::DisplaySettings => SliceKey::DisplaySettings,
         PersistenceSliceKind::InputDevices { bank } => SliceKey::InputDevices { bank },
     }
 }
@@ -938,6 +953,7 @@ fn mark_slice_dirty(store: &RegistryStore, kind: &PersistenceSliceKind) {
         PersistenceSliceKind::DaliSettings => store.dirty.mark_dali_settings_dirty(),
         PersistenceSliceKind::RedundancySettings => store.dirty.mark_redundancy_settings_dirty(),
         PersistenceSliceKind::Policies => store.dirty.mark_policies_dirty(),
+        PersistenceSliceKind::DisplaySettings => store.dirty.mark_display_settings_dirty(),
         PersistenceSliceKind::InputDevices { .. } => store.dirty.mark_input_devices_dirty(),
     }
 }
@@ -1025,6 +1041,13 @@ hydrate_wrappers! { global:
         PersistablePoliciesSlice,
         POLICIES_SLICE_VERSION,
         crate::runtime::registry::policies::hydrate_policies_inner;
+    hydrate_display_settings_slice =>
+        PersistenceSliceKind::DisplaySettings,
+        "display settings",
+        "no display settings stored",
+        PersistableDisplaySettingsSlice,
+        DISPLAY_SETTINGS_SLICE_VERSION,
+        crate::runtime::registry::display_settings::hydrate_display_settings_inner;
 }
 
 hydrate_wrappers! { decoded:
@@ -1038,13 +1061,14 @@ hydrate_wrappers! { decoded:
 
 type GlobalHydrate = fn(&RegistryStore, &dyn SliceStore, &mut HydrateSink<'_>);
 
-const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 6] = [
+const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 7] = [
     (SliceKey::HclSchedules, hydrate_hcl_schedules_slice),
     (SliceKey::PollerSettings, hydrate_poller_settings_slice),
     (SliceKey::DaliSettings, hydrate_dali_settings_slice),
     (SliceKey::RedundancySettings, hydrate_redundancy_settings_slice),
     (SliceKey::Policies, hydrate_policies_slice),
     (SliceKey::HomeAssistantSettings, hydrate_home_assistant_settings_slice),
+    (SliceKey::DisplaySettings, hydrate_display_settings_slice),
 ];
 
 hydrate_wrappers! { per_adapter:

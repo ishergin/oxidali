@@ -114,6 +114,7 @@
 | `#/diagnostics` | Сырые счётчики | — |
 | `#/firmware` | Обновление прошивки | [`firmware.md`](firmware.md) |
 | `#/settings/poller` | Настройки поллера | [`settings-poller.md`](settings-poller.md) |
+| `#/settings/display` | OLED-панель состояния | [`settings-display.md`](settings-display.md) |
 | `#/settings/dali` | Настройки DALI | [`settings-dali.md`](settings-dali.md) |
 | `#/settings/time` | Время и часовой пояс контроллера | — |
 | `#/settings/home-assistant` | Мост Home Assistant | — |

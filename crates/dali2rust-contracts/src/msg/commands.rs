@@ -1211,6 +1211,23 @@ declare_bus_payloads! {
         series: u64::MAX,
         frames: u8::MAX,
     };
+
+    pub struct DisplaySettingsUpdateCommand {
+        pub patch_mask: u8,
+        pub enabled: bool,
+        pub i2c_address: u8,
+        pub upside_down: bool,
+        pub screensaver_timeout_s: u32,
+        pub pages_mask: u8,
+    }
+    budget = DisplaySettingsUpdateCommand {
+        patch_mask: u8::MAX,
+        enabled: true,
+        i2c_address: u8::MAX,
+        upside_down: true,
+        screensaver_timeout_s: u32::MAX,
+        pages_mask: u8::MAX,
+    };
 }
 
 impl FirmwareUpdateBeginCommand {
@@ -1324,6 +1341,14 @@ impl PollerSettingsUpdateCommand {
     pub const PATCH_SKIP_UNBOUND_VIRTUAL_LAMPS: u8 = 32;
     pub const PATCH_INCLUDE_ENERGY: u8 = 64;
     pub const PATCH_INCLUDE_DIAGNOSTICS: u8 = 128;
+}
+
+impl DisplaySettingsUpdateCommand {
+    pub const PATCH_ENABLED: u8 = 1;
+    pub const PATCH_I2C_ADDRESS: u8 = 2;
+    pub const PATCH_UPSIDE_DOWN: u8 = 4;
+    pub const PATCH_SCREENSAVER_TIMEOUT_S: u8 = 8;
+    pub const PATCH_PAGES_MASK: u8 = 16;
 }
 
 impl HomeAssistantSettingsUpdateCommand {

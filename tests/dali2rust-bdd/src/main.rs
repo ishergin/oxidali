@@ -12,7 +12,8 @@ use cucumber::World;
 use dali2rust_test_support::UnreadableSlices;
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_adapters::{
-    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, HttpTestPorts, PollerConfig,
+    build_http_test_stack, BusStackRuntime, DaliRuntimeConfig, DisplayPanel, HttpTestPorts,
+    PollerConfig, RecordingPanel,
     StaticAsset,
 };
 use dali2rust_bus::BusConfig;
@@ -50,6 +51,7 @@ pub struct DaliWorld {
     dali_mock: Arc<Mutex<MockDaliTransport>>,
     mock_unblock_flag: Arc<AtomicBool>,
     mqtt_mock: Arc<dali2rust_mqtt_runtime::MockMqttClient>,
+    display_panel: Arc<Mutex<RecordingPanel>>,
     _runtime: Option<Box<BusStackRuntime>>,
     persistence_slices: Option<Arc<UnreadableSlices>>,
     network_link: Option<([u8; 6], Option<[u8; 4]>, String)>,
@@ -90,6 +92,7 @@ impl DaliWorld {
             dali_mock,
             mock_unblock_flag,
             mqtt_mock: dali2rust_mqtt_runtime::MockMqttClient::bundle().0,
+            display_panel: Arc::new(Mutex::new(RecordingPanel::default())),
             _runtime: None,
             persistence_slices: None,
             network_link: None,
@@ -204,7 +207,18 @@ impl DaliWorld {
         let network_link = self.network_link.as_ref().map(|(mac, ipv4, hostname)| {
             Arc::new(MockNetworkLink::new(*mac, *ipv4, hostname)) as Arc<dyn NetworkLink>
         });
-        HttpTestPorts { mqtt_client: Some(mqtt_bundle), network_link, poller_config: self.poller_config }
+        self.display_panel = Arc::new(Mutex::new(RecordingPanel::default()));
+        let display_panel: Arc<Mutex<dyn DisplayPanel>> = self.display_panel.clone();
+        HttpTestPorts {
+            mqtt_client: Some(mqtt_bundle),
+            network_link,
+            poller_config: self.poller_config,
+            display_panel: Some(display_panel),
+        }
+    }
+
+    pub fn display_panel(&self) -> &Arc<Mutex<RecordingPanel>> {
+        &self.display_panel
     }
 
     pub fn enable_in_memory_persistence(&mut self) {

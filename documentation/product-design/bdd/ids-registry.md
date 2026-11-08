@@ -44,6 +44,7 @@
 | `RULE-` | `rules/` | Движок правил |
 | `SCN-` | `scenes/` | Сцены |
 | `SET-DALI-` | `settings_dali/` | Настройки DALI |
+| `SET-DISP-` | `settings_display/` | Настройки дисплея |
 | `SET-HA-` | `settings_home_assistant/` | Настройки Home Assistant |
 | `SET-POL-` | `settings_poller/` | Настройки поллера |
 | `STATS-` | `stats/` | Статистика `/api/v1/stats` |

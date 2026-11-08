@@ -1,3 +1,5 @@
+use dali2rust_domain::registry::DisplaySettingsView;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DisplaySample {
     pub adapter_id: u8,
@@ -21,6 +23,7 @@ pub struct DisplaySample {
     pub mqtt_connected: bool,
     pub ws_clients: u32,
     pub persistence_failed: u32,
+    pub display: DisplaySettingsView,
 }
 
 pub trait DisplaySource: Send + Sync {

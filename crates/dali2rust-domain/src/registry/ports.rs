@@ -20,7 +20,7 @@ use super::product_objects::{
     VirtualLampCapabilityView, VirtualLampSnapshot, VirtualLampView,
 };
 use super::settings::{
-    ApplicationActiveMover, DaliSettingsView, HclOverrideView, HclScheduleView, PoliciesView,
+    ApplicationActiveMover, DaliSettingsView, DisplaySettingsView, HclOverrideView, HclScheduleView, PoliciesView,
     PolicyApplyCell, PollTargetSelection, PollerSettingsView, RedundancySettingsView,
 };
 
@@ -42,6 +42,10 @@ pub trait HclOverrideReadPort: Send + Sync {
 
 pub trait PollerSettingsReadPort: Send + Sync {
     fn poller_settings_view(&self) -> PollerSettingsView;
+}
+
+pub trait DisplaySettingsReadPort: Send + Sync {
+    fn display_settings_view(&self) -> DisplaySettingsView;
 }
 
 pub trait DaliSettingsReadPort: Send + Sync {
@@ -244,6 +248,10 @@ pub trait AdapterApplyWatchPort: Send + Sync {
 
 pub trait PollerSettingsApplyWatchPort: Send + Sync {
     fn poller_settings_applied_load(&self) -> u32;
+}
+
+pub trait DisplaySettingsApplyWatchPort: Send + Sync {
+    fn display_settings_applied_load(&self) -> u32;
 }
 
 pub trait DaliSettingsApplyWatchPort: Send + Sync {

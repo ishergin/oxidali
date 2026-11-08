@@ -14,6 +14,7 @@ pub const DALI_SETTINGS_SLICE_VERSION: u32 = 11;
 pub const REDUNDANCY_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const POLICIES_SLICE_VERSION: u32 = 2;
 pub const HOME_ASSISTANT_SETTINGS_SLICE_VERSION: u32 = 2;
+pub const DISPLAY_SETTINGS_SLICE_VERSION: u32 = 1;
 
 
 
@@ -159,6 +160,15 @@ pub struct PersistableRedundancySettingsSlice {
     pub boot_listen_ms: u32,
     pub peer_device_short_address: Option<u8>,
     pub peer_url: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct PersistableDisplaySettingsSlice {
+    pub enabled: bool,
+    pub i2c_address: u8,
+    pub upside_down: bool,
+    pub screensaver_timeout_s: u32,
+    pub pages_mask: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

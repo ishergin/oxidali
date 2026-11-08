@@ -39,6 +39,71 @@ pub struct PollerSettingsView {
     pub power_cycle_watch: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplaySettingsView {
+    pub enabled: bool,
+    pub i2c_address: u8,
+    pub upside_down: bool,
+    pub screensaver_timeout_s: u32,
+    pub pages_mask: u8,
+}
+
+impl DisplaySettingsView {
+    pub const I2C_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
+    pub const SCREENSAVER_OFF: u32 = 0;
+    pub const SCREENSAVER_MIN_S: u32 = 10;
+    pub const SCREENSAVER_MAX_S: u32 = 86_400;
+
+    pub fn address_is_valid(address: u8) -> bool {
+        Self::I2C_ADDRESSES.contains(&address)
+    }
+
+    pub fn screensaver_is_valid(timeout_s: u32) -> bool {
+        timeout_s == Self::SCREENSAVER_OFF
+            || (Self::SCREENSAVER_MIN_S..=Self::SCREENSAVER_MAX_S).contains(&timeout_s)
+    }
+
+    pub fn pages_are_valid(mask: u8) -> bool {
+        mask != 0 && mask & !dali2rust_contracts::msg::DisplayPage::ALL_MASK == 0
+    }
+
+    #[must_use]
+    pub fn sanitized(self) -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: self.enabled,
+            i2c_address: if Self::address_is_valid(self.i2c_address) {
+                self.i2c_address
+            } else {
+                defaults.i2c_address
+            },
+            upside_down: self.upside_down,
+            screensaver_timeout_s: if Self::screensaver_is_valid(self.screensaver_timeout_s) {
+                self.screensaver_timeout_s
+            } else {
+                defaults.screensaver_timeout_s
+            },
+            pages_mask: if Self::pages_are_valid(self.pages_mask) {
+                self.pages_mask
+            } else {
+                defaults.pages_mask
+            },
+        }
+    }
+}
+
+impl Default for DisplaySettingsView {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            i2c_address: Self::I2C_ADDRESSES[0],
+            upside_down: false,
+            screensaver_timeout_s: Self::SCREENSAVER_OFF,
+            pages_mask: dali2rust_contracts::msg::DisplayPage::Summary.mask_bit(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DaliSettingsView {
     pub dt8_auto_activation_repair: bool,

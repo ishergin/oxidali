@@ -11,11 +11,12 @@ pub(crate) const DALI_SETTINGS: u32 = 1 << 3;
 pub(crate) const REDUNDANCY_SETTINGS: u32 = 1 << 4;
 pub(crate) const POLICIES: u32 = 1 << 5;
 pub(crate) const HOME_ASSISTANT_SETTINGS: u32 = 1 << 6;
+pub(crate) const DISPLAY_SETTINGS: u32 = 1 << 7;
 const FIRST_INPUT_DEVICE_BANK: u32 = 8;
 const ALL_INPUT_DEVICE_BANKS: u8 = (1 << SliceKey::INPUT_DEVICE_BANKS) - 1;
 pub(crate) const INPUT_DEVICES: u32 = (ALL_INPUT_DEVICE_BANKS as u32) << FIRST_INPUT_DEVICE_BANK;
 
-const GLOBALS: [(u32, SliceKey); 7] = [
+const GLOBALS: [(u32, SliceKey); 8] = [
     (ADAPTERS, SliceKey::Adapters),
     (HCL_SCHEDULES, SliceKey::HclSchedules),
     (POLLER_SETTINGS, SliceKey::PollerSettings),
@@ -23,6 +24,7 @@ const GLOBALS: [(u32, SliceKey); 7] = [
     (REDUNDANCY_SETTINGS, SliceKey::RedundancySettings),
     (POLICIES, SliceKey::Policies),
     (HOME_ASSISTANT_SETTINGS, SliceKey::HomeAssistantSettings),
+    (DISPLAY_SETTINGS, SliceKey::DisplaySettings),
 ];
 
 fn bit(index: u8) -> u32 {
@@ -53,6 +55,7 @@ fn place(key: SliceKey) -> Option<(Word, u32)> {
         SliceKey::RedundancySettings => global(REDUNDANCY_SETTINGS),
         SliceKey::Policies => global(POLICIES),
         SliceKey::HomeAssistantSettings => global(HOME_ASSISTANT_SETTINGS),
+        SliceKey::DisplaySettings => global(DISPLAY_SETTINGS),
         SliceKey::PhysicalDevices { .. }
         | SliceKey::PhysicalDeviceBank { .. }
         | SliceKey::ControllerSettings

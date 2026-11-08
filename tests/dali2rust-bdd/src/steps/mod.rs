@@ -5,6 +5,7 @@ use crate::DaliWorld;
 pub mod commissioning_steps;
 pub mod contracts_steps;
 pub mod diagnostic_steps;
+pub mod display_steps;
 pub mod fanout_steps;
 pub mod frames;
 pub mod firmware_steps;

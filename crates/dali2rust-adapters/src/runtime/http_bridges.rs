@@ -6,6 +6,10 @@ use dali2rust_api::http::dali_settings_state::{
     DaliSettingsApplyWatch, DaliSettingsApplyWatchBridge, DaliSettingsHttpState,
     DaliSettingsHttpStateBridge,
 };
+use dali2rust_api::http::display_settings_state::{
+    DisplaySettingsApplyWatch, DisplaySettingsApplyWatchBridge, DisplaySettingsHttpState,
+    DisplaySettingsHttpStateBridge,
+};
 use dali2rust_api::http::diagnostics_state::{
     ApplyOrchestratorDto, BusCountersDto, ConfirmationBridgeDto, DaliWireDto, DaliWorkerDto,
     DiagnosticsDto, DiagnosticsHttpState, HclSchedulerDto, MqttBridgeDto, OperationTrackerDto,
@@ -153,6 +157,22 @@ pub(crate) struct RegistryHttpPorts {
     pub home_assistant_apply_watch: Arc<dyn HomeAssistantSettingsApplyWatch>,
     pub home_assistant_settings_port:
         Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
+    pub display: DisplayHttpPorts,
+}
+
+pub(crate) struct DisplayHttpPorts {
+    pub state: Arc<dyn DisplaySettingsHttpState>,
+    pub apply_watch: Arc<dyn DisplaySettingsApplyWatch>,
+}
+
+fn display_http_ports(
+    read: Arc<dyn dali2rust_domain::registry::DisplaySettingsReadPort>,
+    counters: &Arc<RegistryWorkerCounters>,
+) -> DisplayHttpPorts {
+    DisplayHttpPorts {
+        state: Arc::new(DisplaySettingsHttpStateBridge::new(read)),
+        apply_watch: Arc::new(DisplaySettingsApplyWatchBridge::new(apply_watch(counters))),
+    }
 }
 
 fn transfer_port(
@@ -215,10 +235,10 @@ pub(crate) fn wire_registry_http_ports(
     transfer: TransferSeams,
 ) -> RegistryHttpPorts {
     let c = &registry_counters;
-    let ha_settings_port = Arc::clone(&http_read.home_assistant);
-    let config_transfer = transfer_port(&store, transfer);
     RegistryHttpPorts {
         read_port: worker_read_port,
+        config_transfer: transfer_port(&store, transfer),
+        home_assistant_settings_port: Arc::clone(&http_read.home_assistant),
         input_device_state: Arc::new(InputDeviceHttpStateBridge::new(store)),
         adapter_state: Arc::new(AdapterHttpStateBridge::new(http_read.adapter)),
         group_state: Arc::new(GroupHttpStateBridge::new(http_read.group)),
@@ -248,11 +268,10 @@ pub(crate) fn wire_registry_http_ports(
         )),
         policies_state: Arc::new(PoliciesHttpStateBridge::new(http_read.policies)),
         policies_apply_watch: Arc::new(PoliciesApplyWatchBridge::new(apply_watch(c))),
-        config_transfer,
         home_assistant_apply_watch: Arc::new(HomeAssistantSettingsApplyWatchBridge::new(
             apply_watch(c),
         )),
-        home_assistant_settings_port: ha_settings_port,
+        display: display_http_ports(http_read.display, c),
     }
 }
 
