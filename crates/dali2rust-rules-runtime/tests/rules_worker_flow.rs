@@ -10,6 +10,8 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::dev103::instance_type;
+use dali2rust_platform::slice_store::{SliceKey, SliceStore};
+use dali2rust_test_support::HeldSliceWrite;
 use dali2rust_rules_model::testing::StubResolver;
 use dali2rust_rules_runtime::runtime::persistence::fnv1a32;
 use dali2rust_rules_runtime::{spawn_rules_worker, RulesStore, RulesWorkerCounters};
@@ -207,6 +209,16 @@ fn harness_spawn(
     world: EmptyWorld,
     resolver: Arc<dyn dali2rust_rules_model::NameResolver>,
 ) -> Harness {
+    let worker_slices: Arc<dyn SliceStore> = slices.clone();
+    harness_spawn_through(slices, worker_slices, world, resolver)
+}
+
+fn harness_spawn_through(
+    slices: Arc<dali2rust_bsp::slice_store_files::FileSliceStore>,
+    worker_slices: Arc<dyn SliceStore>,
+    world: EmptyWorld,
+    resolver: Arc<dyn dali2rust_rules_model::NameResolver>,
+) -> Harness {
     let (host, publisher, (worker_rx, ev_rx, out_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
             reg.subscribe_commands_and_events(
@@ -229,7 +241,7 @@ fn harness_spawn(
             store: Arc::clone(&store),
             compiler: Arc::new(dali2rust_rules_lang::RulesLangV1),
             resolver,
-            slices: Some(slices.clone() as Arc<dyn dali2rust_platform::slice_store::SliceStore>),
+            slices: Some(worker_slices),
             world: Arc::new(world),
             correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
         },
@@ -428,6 +440,46 @@ fn an_enable_toggle_bumps_the_revision_and_survives_hydration() {
             .map(|r| r.enabled),
         Some(false),
         "the manifest bit outlives the reboot"
+    );
+}
+
+const MANIFEST: SliceKey = SliceKey::Rules { bank: 3 };
+
+const MANIFEST_HOLD: Duration = Duration::from_secs(1);
+
+#[test]
+fn an_enable_toggle_reaches_the_slice_store_before_it_is_announced() {
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-enable-held"));
+    let raw: Arc<dyn SliceStore> = slices.clone();
+    let held = Arc::new(HeldSliceWrite::over(raw, MANIFEST_HOLD));
+    let through = |held: &Arc<HeldSliceWrite>| {
+        let store: Arc<dyn SliceStore> = held.clone();
+        harness_spawn_through(
+            slices.clone(),
+            store,
+            empty_world(),
+            Arc::new(StubResolver::permissive()),
+        )
+    };
+    let h = through(&held);
+    publish_document(&h, 51, DOC, 0);
+    assert!(recv_signal(&h, 51).error.is_none());
+    held.hold_next_write_of(MANIFEST);
+    publish(
+        &h,
+        52,
+        RuleEnableCommand {
+            name: dali2rust_contracts::msg::fixed_text_64("ночь"),
+            enabled: false,
+        },
+    );
+    recv_changed(&h, 2);
+    let h2 = through(&held);
+    wait_revision(&h2.store, 2);
+    assert_eq!(
+        h2.store.revision(),
+        2,
+        "a toggle announced before its manifest is written is lost to the next boot"
     );
 }
 

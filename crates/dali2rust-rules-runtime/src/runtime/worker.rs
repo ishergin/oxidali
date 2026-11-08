@@ -489,9 +489,9 @@ impl RulesWorker {
         };
         self.counters.enable_toggles.fetch_add(1, Ordering::Relaxed);
         self.flip_engine_bit(name, toggle.enabled, revision);
+        self.persist(&self.store.document());
         self.publish_changed();
         self.confirm(correlation_id, Ok(()));
-        self.persist(&self.store.document());
     }
 
     fn confirm(&self, correlation_id: u64, outcome: Result<(), (ErrorCode, &'static str)>) {
