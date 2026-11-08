@@ -2,6 +2,8 @@ import re
 from collections import Counter
 from pathlib import Path
 
+from hil import heap_census
+
 NOT_MEASURED = -1
 BUDGET_FILE = Path(__file__).resolve().parent.parent / "retry_budget.txt"
 STACK_BUDGET_FILE = Path(__file__).resolve().parent.parent / "stack_budget.txt"
@@ -340,6 +342,13 @@ def _boot_heap_lines(state):
     return out
 
 
+def _heap_census_lines(state):
+    boots = state.get("heap_census")
+    if not boots:
+        return []
+    return heap_census.report_lines(boots)
+
+
 def _runtime_heap_lines(state):
     figures = state.get("runtime_heap") or {}
     budget = state.get("runtime_heap_budget") or {}
@@ -668,6 +677,7 @@ def format_report(state, budget):
         else "%d x — %s" % (len(recals), "; ".join(recals))))
 
     lines += _boot_heap_lines(state)
+    lines += _heap_census_lines(state)
     lines += _runtime_heap_lines(state)
     lines += _stack_lines(state)
     lines += _bus_drop_lines(state, budget)

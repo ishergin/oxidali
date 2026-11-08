@@ -4,7 +4,7 @@ import pytest
 
 from hil import api as api_mod
 from hil import config as config_mod
-from hil import role, validity, virtual_gear
+from hil import heap_census, role, validity, virtual_gear
 from hil.lamp_guard import spell
 from hil.seriallog import SerialLog
 from hil_harness import UPTIME_SLACK_S, peer_health
@@ -57,6 +57,7 @@ def _validity_state(config):
     state["http_sockets_full"] = validity.http_sockets_full(census_lines)
     state["boot_heap_budget"] = validity.load_boot_heap_budget()
     state["boot_heap"] = _boot_heap_ladder(config)
+    state["heap_census"] = heap_census.parse_boots(census_lines)
     state["runtime_heap_budget"] = validity.load_runtime_heap_budget()
     state["runtime_heap"] = _runtime_heap(cfg)
     state["stack_identity"] = dict(validity.run_identity(cfg.runs_dir),

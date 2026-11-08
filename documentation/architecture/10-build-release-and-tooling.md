@@ -85,6 +85,7 @@ the crate when one changes, so a knob needs no build-script edit. A flag knob is
 | `DALI2RUST_PHY_ISR_LEVEL` | `3`, `4`, `5` (default): PHY interrupt level; `3` is the driver rollback path |
 | `DALI2RUST_PERSIST_DISABLE` | `1`: no slice store — no flash writes, no hydration; diagnosis only |
 | `DALI2RUST_HEAP_CHECK_S` | Heap-integrity sweep period from the heartbeat; absent or `0` = off |
+| `DALI2RUST_HEAP_CENSUS_HOLD_US` | Per-heap hold the boot-stage heap census may take before it cuts that heap's walk; the default is about a tick, and the late stages need it raised to come out whole ([07](07-memory-and-cores.md) §Reading memory at runtime) |
 | `DALI2RUST_STACKS_INTERNAL` | `1`: every stack that would be in PSRAM on the XIP image stays internal, httpd reserve included ([ADR-028](decisions/ADR-028-task-stacks-in-psram-on-the-xip-image.md)) |
 | `DALI2RUST_ETH_RX_INTERNAL` | `1`: received frames stay in the EMAC driver's internal buffer instead of a PSRAM copy ([ADR-029](decisions/ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md)) |
 | `DALI2RUST_RUST_HEAP_INTERNAL` | `1`: Rust allocations keep ESP-IDF's internal-first placement instead of PSRAM from 256 B ([ADR-028](decisions/ADR-028-task-stacks-in-psram-on-the-xip-image.md)) |

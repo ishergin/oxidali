@@ -58,6 +58,8 @@ const PSRAM_ATOMIC_SELFTEST: bool =
     matches!(flag_knob(option_env!("DALI2RUST_PSRAM_ATOMIC_SELFTEST")), Some(true));
 
 const HEARTBEAT_LOG_INTERVAL_SECS: u64 = 60;
+#[cfg(target_os = "espidf")]
+const BOOT_CENSUS_LINES_PER_TICK: usize = 4;
 
 #[cfg(target_os = "espidf")]
 const INTERNAL_PRESSURE_ALERT_BYTES: u32 = 12 * 1024;
@@ -481,6 +483,7 @@ fn heartbeat_loop(heap_check_s: u64) -> ! {
 fn heartbeat_tick(tick: u64, heap_check_s: u64) {
     dali2rust_bsp::alloc_probe::poll(false);
     log_internal_pressure();
+    flush_boot_census();
     if heap_check_s > 0 && tick % heap_check_s == 0 {
         check_heap_integrity();
     }
@@ -493,6 +496,14 @@ fn heartbeat_tick(tick: u64, heap_check_s: u64) {
         log_census();
     }
 }
+
+#[cfg(target_os = "espidf")]
+fn flush_boot_census() {
+    dali2rust_bsp::heap_walk::flush_boot_census(BOOT_CENSUS_LINES_PER_TICK);
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn flush_boot_census() {}
 
 #[cfg(target_os = "espidf")]
 fn log_console_drops() {

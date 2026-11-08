@@ -70,6 +70,7 @@ fn log_internal_heap_before_httpd() {
             h.internal_free_bytes,
             h.internal_largest_block_bytes
         );
+        dali2rust_bsp::heap_walk::record_boot_census("before httpd");
     }
 }
 

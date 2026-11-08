@@ -135,10 +135,14 @@ unless named.
   of bytes is first read as a deeper run, not as a change in the code.
 - `StackLowWater` (`dali2rust-bsp::stack_probe`) names the path the census cannot: the
   registry worker samples once per turn, tagged with the payload kind that just ran.
-- The census line (`task stack hwm (B free…): <task>=<bytes> …`) and the boot-stage lines
-  (`boot heap [<stage>]: internal free=…`, `internal heap before httpd: free=…`) are
-  parsed by the bench's validity section and `hil corpus`: reword one, or rename a stage,
-  together with `tools/hil/hil/validity.py` and `boot_heap_budget.txt`.
+- The census line (`task stack hwm (B free…): <task>=<bytes> …`), the boot-stage lines
+  (`boot heap [<stage>]: internal free=…`, `internal heap before httpd: free=…`) and the
+  heap-census lines (`boot heap census|sizes|top|spans|rust [<stage>] …`) are parsed by the
+  bench's validity section and `hil corpus`: reword one, or rename a stage, together with
+  `tools/hil/hil/validity.py`, `tools/hil/hil/heap_census.py`, `tools/hil/hil/corpus.py`
+  and `boot_heap_budget.txt`. Each chunked census line carries its own index and the
+  number of chunks, because the log queue drops a line rather than blocking, and a
+  dropped line must read as inconclusive and not as a smaller tally.
 - Measure a change's frame depth on the linked image before flashing, not after
   (`scripts/measure_stack_frames.py` reads every stack adjustment of a function, not only
   the first `addi sp`, resolves a frame held in a register (`lui` + `addi`), and adds a
@@ -204,8 +208,28 @@ unless named.
   the Rust heap by placement: live and peak bytes in internal SRAM and in PSRAM on
   `/api/v1/stats`, and the internal bytes by size class on the heartbeat's `rust heap:`
   line. Everything else on the internal heap is C: IDF, lwIP, drivers, task stacks.
-- Largest block, total and block count are boot-stage figures from one heap walk per
-  stage; nothing walks the heap at runtime ([02](02-runtime-and-threading.md)).
+- Largest block, total and block count are boot-stage figures from a heap walk, and so is
+  the census below, so a boot stage walks the internal heaps more than once; nothing walks
+  them at runtime ([02](02-runtime-and-threading.md)).
+- The same stages carry a census of the used internal blocks: a power-of-two bucket
+  histogram, an exact count per allocation size up to about 1 KiB, and each internal
+  heap's used share, walked with `heap_caps_walk` into a PSRAM table
+  (`dali2rust-bsp::heap_census` holds the tally and its lines,
+  `::heap_walk` the walk). It names no owner — it prices the hypotheses about the
+  unattributed internal bytes against each other — and its header repeats the block
+  count `heap_caps_get_info` saw before and after the walk, so a stage whose heap moved
+  underneath is read as raced rather than reconciled. Beside it the stage logs the Rust
+  heap's live internal bytes by size class, which is what separates the C share from ours:
+  the allocator counts requested bytes where the walk counts rounded blocks, so the
+  subtraction is close and not exact. The walk holds each heap's own lock, so it carries a
+  hold budget: a traversal that outruns it is cut and says so, and the per-heap hold is
+  logged beside the tally. That hold is the wall time others wait, so it counts the PHY
+  interrupt service that runs above the critical section
+  ([ADR-025](decisions/ADR-025-phy-interrupt-above-critical-sections.md)) — which is why a
+  hold overruns its budget by about one service, and why the same block count reads a
+  different hold from stage to stage. Its lines are not written at the stage — the records wait in PSRAM
+  and the heartbeat spells a few per tick, because the console queue drops a line rather than
+  blocking and a boot-time burst is the producer's to pace (ADR-007).
 - The internal minimum falls at runtime as well as at boot — an update, WebSocket
   clients and bursts of requests each take internal SRAM while they last, and a started
   `ws-client` sender keeps its task's share until reboot. The heartbeat
