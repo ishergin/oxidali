@@ -10,8 +10,10 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::dali::dev103::instance_type;
+use dali2rust_platform::slice_store::SliceStore;
+use dali2rust_test_support::HeldSliceWrite;
 use dali2rust_rules_model::testing::StubResolver;
-use dali2rust_rules_runtime::runtime::persistence::fnv1a32;
+use dali2rust_rules_runtime::runtime::persistence::{fnv1a32, RULES_MANIFEST_KEY};
 use dali2rust_rules_runtime::{spawn_rules_worker, RulesStore, RulesWorkerCounters};
 use dali2rust_rules_model::action::ActionKind;
 
@@ -207,6 +209,16 @@ fn harness_spawn(
     world: EmptyWorld,
     resolver: Arc<dyn dali2rust_rules_model::NameResolver>,
 ) -> Harness {
+    let worker_slices: Arc<dyn SliceStore> = slices.clone();
+    harness_spawn_through(slices, worker_slices, world, resolver)
+}
+
+fn harness_spawn_through(
+    slices: Arc<dali2rust_bsp::slice_store_files::FileSliceStore>,
+    worker_slices: Arc<dyn SliceStore>,
+    world: EmptyWorld,
+    resolver: Arc<dyn dali2rust_rules_model::NameResolver>,
+) -> Harness {
     let (host, publisher, (worker_rx, ev_rx, out_rx)) = BusHost::spawn(BusConfig::default(), |reg| {
         (
             reg.subscribe_commands_and_events(
@@ -229,7 +241,7 @@ fn harness_spawn(
             store: Arc::clone(&store),
             compiler: Arc::new(dali2rust_rules_lang::RulesLangV1),
             resolver,
-            slices: Some(slices.clone() as Arc<dyn dali2rust_platform::slice_store::SliceStore>),
+            slices: Some(worker_slices),
             world: Arc::new(world),
             correlation: Arc::new(dali2rust_bus::CorrelationIdAllocator::new()),
         },
@@ -297,6 +309,14 @@ where
             .try_publish(BusChannel::Commands, BusFrame::command(env)),
         PublishResult::Queued
     );
+}
+
+fn disable_rule(h: &Harness, corr: u64, name: &str) {
+    let toggle = RuleEnableCommand {
+        name: dali2rust_contracts::msg::fixed_text_64(name),
+        enabled: false,
+    };
+    publish(h, corr, toggle);
 }
 
 fn recv_signal(h: &Harness, corr: u64) -> dali2rust_contracts::msg::OperationWorkerSignalEvent {
@@ -401,14 +421,7 @@ fn an_enable_toggle_bumps_the_revision_and_survives_hydration() {
     let h = harness("rules-enable");
     publish_document(&h, 31, DOC, 0);
     assert!(recv_signal(&h, 31).error.is_none());
-    publish(
-        &h,
-        32,
-        RuleEnableCommand {
-            name: dali2rust_contracts::msg::fixed_text_64("ночь"),
-            enabled: false,
-        },
-    );
+    disable_rule(&h, 32, "ночь");
     recv_changed(&h, 2);
     let doc = h.store.document();
     assert_eq!(doc.revision, 2);
@@ -428,6 +441,43 @@ fn an_enable_toggle_bumps_the_revision_and_survives_hydration() {
             .map(|r| r.enabled),
         Some(false),
         "the manifest bit outlives the reboot"
+    );
+}
+
+const MANIFEST_HOLD: Duration = Duration::from_secs(1);
+
+#[test]
+fn an_enable_toggle_writes_only_its_manifest_and_before_it_is_announced() {
+    let slices = Arc::new(dali2rust_test_support::fs::temp_slice_store("rules-enable-held"));
+    let raw: Arc<dyn SliceStore> = slices.clone();
+    let held = Arc::new(HeldSliceWrite::over(raw, MANIFEST_HOLD));
+    let through = |held: &Arc<HeldSliceWrite>| {
+        let store: Arc<dyn SliceStore> = held.clone();
+        harness_spawn_through(
+            slices.clone(),
+            store,
+            empty_world(),
+            Arc::new(StubResolver::permissive()),
+        )
+    };
+    let h = through(&held);
+    publish_document(&h, 51, DOC, 0);
+    assert!(recv_signal(&h, 51).error.is_none());
+    let committed = held.writes().len();
+    held.hold_next_write_of(RULES_MANIFEST_KEY);
+    disable_rule(&h, 52, "ночь");
+    recv_changed(&h, 2);
+    let h2 = through(&held);
+    wait_revision(&h2.store, 2);
+    assert_eq!(
+        h2.store.revision(),
+        2,
+        "a toggle announced before its manifest is written is lost to the next boot"
+    );
+    assert_eq!(
+        held.writes()[committed..],
+        [RULES_MANIFEST_KEY],
+        "a toggle leaves the rule text banks alone"
     );
 }
 
@@ -743,14 +793,7 @@ fn a_rule_that_watches_its_own_failure_does_not_recurse() {
     );
 
     assert!(recv_setpoint(&h).is_none(), "an effect on a lamp the world does not know reaches no command");
-    publish(
-        &h,
-        103,
-        RuleEnableCommand {
-            name: dali2rust_contracts::msg::fixed_text_64("сам"),
-            enabled: false,
-        },
-    );
+    disable_rule(&h, 103, "сам");
     recv_changed(&h, 2);
     assert_eq!(
         h.counters.effects_unbound.load(std::sync::atomic::Ordering::Relaxed),
@@ -1723,14 +1766,7 @@ fn toggling_one_rule_leaves_the_other_rules_running() {
     run_rule(&h, 3, "выключатель");
     wait_cell(&h.cells.activations_total, 2, "the action that disables a rule");
 
-    publish(
-        &h,
-        4,
-        RuleEnableCommand {
-            name: dali2rust_contracts::msg::fixed_text_64("сосед"),
-            enabled: false,
-        },
-    );
+    disable_rule(&h, 4, "сосед");
     recv_changed(&h, 2);
     run_rule(&h, 5, "цель");
 

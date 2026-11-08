@@ -16,7 +16,7 @@ use dali2rust_rules_model::{NameResolver, RuleCompiler};
 
 use super::persistence::{
     apply_enable_table, enable_table_of, fnv1a32, reassemble, text_banks, RulesManifest,
-    RULES_MANIFEST_VERSION, RULES_TEXT_BANKS,
+    RULES_MANIFEST_KEY, RULES_MANIFEST_VERSION, RULES_TEXT_BANKS,
 };
 use super::rule_runtime::{classify, Firing};
 use super::store::{RulesDocument, RulesStore};
@@ -229,7 +229,7 @@ impl RulesWorker {
             compiled: Some(compiled),
             diagnostic: None,
         };
-        self.persist(&doc);
+        self.persist(&doc, write_banks);
         self.store.replace(doc);
         Ok(())
     }
@@ -489,9 +489,9 @@ impl RulesWorker {
         };
         self.counters.enable_toggles.fetch_add(1, Ordering::Relaxed);
         self.flip_engine_bit(name, toggle.enabled, revision);
+        self.persist(&self.store.document(), write_manifest);
         self.publish_changed();
         self.confirm(correlation_id, Ok(()));
-        self.persist(&self.store.document());
     }
 
     fn confirm(&self, correlation_id: u64, outcome: Result<(), (ErrorCode, &'static str)>) {
@@ -569,9 +569,9 @@ impl RulesWorker {
         publish_signal(&self.publisher, self.bus_id, &self.liveness, Origin::Api, signal);
     }
 
-    fn persist(&self, doc: &RulesDocument) {
+    fn persist(&self, doc: &RulesDocument, write: BankWriter) {
         let Some(slices) = &self.slices else { return };
-        if write_banks(slices.as_ref(), doc).is_err() {
+        if write(slices.as_ref(), doc).is_err() {
             self.counters.persist_failed.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -639,6 +639,8 @@ pub(crate) fn publish_signal(
     });
 }
 
+type BankWriter = fn(&dyn SliceStore, &RulesDocument) -> Result<(), ()>;
+
 fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
     for (key, bytes) in text_banks(doc.source.as_bytes()) {
         if bytes.is_empty() && slices.load(key).map_or(true, |held| held.is_empty()) {
@@ -646,6 +648,10 @@ fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
         }
         write_one(slices, key, &bytes)?;
     }
+    write_manifest(slices, doc)
+}
+
+fn write_manifest(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
     let entries = doc.enable_table.clone();
     let manifest = RulesManifest {
         version: RULES_MANIFEST_VERSION,
@@ -656,7 +662,7 @@ fn write_banks(slices: &dyn SliceStore, doc: &RulesDocument) -> Result<(), ()> {
         entries,
     };
     let bytes = postcard::to_allocvec(&manifest).map_err(|_| ())?;
-    write_one(slices, SliceKey::Rules { bank: 3 }, &bytes)
+    write_one(slices, RULES_MANIFEST_KEY, &bytes)
 }
 
 fn write_one(slices: &dyn SliceStore, key: SliceKey, bytes: &[u8]) -> Result<(), ()> {
@@ -684,7 +690,7 @@ fn load_document(
     compiler: &dyn RuleCompiler,
     resolver: &dyn NameResolver,
 ) -> Result<Option<RulesDocument>, &'static str> {
-    let manifest_bytes = match slices.load(SliceKey::Rules { bank: 3 }) {
+    let manifest_bytes = match slices.load(RULES_MANIFEST_KEY) {
         Ok(bytes) => bytes,
         Err(_) => return Ok(None),
     };

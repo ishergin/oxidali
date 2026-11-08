@@ -22,7 +22,7 @@ pub use ingress_hold::{
 };
 pub use net::MockNetworkLink;
 pub use peer::FakePeerController;
-pub use slices::UnreadableSlices;
+pub use slices::{HeldSliceWrite, UnreadableSlices};
 pub use sync::{
     await_counter_u32, await_counter_u64, recv_with_deadline, remains_false_for,
     try_wait_until, wait_for_tcp_ready, wait_until,

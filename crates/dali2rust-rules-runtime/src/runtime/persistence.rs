@@ -8,6 +8,8 @@ pub const RULES_MANIFEST_VERSION: u32 = 1;
 pub const RULES_BANK_BYTES: usize = 4080;
 pub const RULES_TEXT_BANKS: u8 = 3;
 
+pub const RULES_MANIFEST_KEY: SliceKey = SliceKey::Rules { bank: RULES_TEXT_BANKS };
+
 #[must_use]
 pub fn fnv1a32(bytes: &[u8]) -> u32 {
     let mut hash: u32 = 0x811C_9DC5;
