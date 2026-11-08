@@ -25,6 +25,7 @@ const PROJECT_LOG_TARGETS: &[&str] = &[
     "dali2rust_bsp::sntp_sync",
     "dali2rust_dali_runtime::runtime::dali_worker",
     "dali2rust_display_runtime::display::esp_idf",
+    "dali2rust_display_runtime::runtime::panel_driver",
     "dali2rust_firmware::composition",
     "dali2rust_firmware::composition::esp_idf",
     "dali2rust_firmware::composition::host",
