@@ -214,7 +214,7 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 | `verify_spawn_sites.py` | every std thread start in non-test source — a call of the `esp_thread` or gear-emulator spawn helper, or a direct `std::thread` — has its line in `scripts/spawn_sites.txt` under a literal task name, every line has its call, a `host` line sits in code compiled off ESP-IDF only, and thread-per-occasion lines stay within a small cap ([02](02-runtime-and-threading.md)); tasks ESP-IDF creates itself, such as esp-mqtt's task per connect, are out of its reach |
 | `verify_web_assets.sh` | every embedded file present, `tsc -b`, UI tests |
 | `verify_web_classes_styled.py` | every `web/app` class has a CSS rule |
-| `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; a card's only dates are ones its mocked UI shows, each with its time, and none in a comment; `web/app` speaks card vocabulary |
+| `verify_design_vocabulary.py` | every card's `:root` is the one in `tokens.css`; every class a card uses has a rule; a card's only dates are ones its mocked UI shows, each with its time, and none in a comment; `web/app` speaks card vocabulary; a `var()` without a fallback names a custom property its card or `web/app` declares |
 | `verify_ui_follows_design.sh` | a visual `web/app` change since `origin/main` changes a card, or declares `UI-Design: unchanged` |
 | `verify_fn_length.sh`, `verify_fn_length_esp.py` | no function over 40 lines, host and ESP-only code |
 | `verify_counter_surface.py` | counter names agree across spellings ([04](04-contracts-and-api-bridge.md)) |

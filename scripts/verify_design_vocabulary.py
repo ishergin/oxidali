@@ -32,6 +32,21 @@ def history_dates(text: str) -> list[tuple[int, str]]:
     return out
 
 
+PROPERTY_SET = re.compile(r"(--[A-Za-z][\w-]*)\s*:")
+BARE_VAR = re.compile(r"var\(\s*(--[A-Za-z][\w-]*)\s*\)")
+
+
+def undeclared_vars(path: str, declared: set[str]) -> list[str]:
+    text = open(path, encoding="utf-8").read()
+    known = declared | set(PROPERTY_SET.findall(text))
+    out = []
+    for m in BARE_VAR.finditer(text):
+        if m.group(1) not in known:
+            line = text.count("\n", 0, m.start()) + 1
+            out.append(f"     {path}:{line}: {m.group(1)}")
+    return out
+
+
 def root_block(text: str) -> str | None:
     m = re.search(r":root\s*\{.*?\n\}", text, re.S)
     return re.sub(r"\s+", " ", m.group(0)).strip() if m else None
@@ -96,6 +111,20 @@ if foreign:
         "C. web/app uses classes the design system does not define and that are not\n"
         "     in the frozen exception list:\n"
         + "\n".join(f"     .{c:22} {', '.join(sorted(f))}" for c, f in sorted(foreign.items()))
+    )
+
+app_sources = sorted(
+    p for ext in ("tsx", "ts", "css") for p in glob.glob(f"web/app/src/**/*.{ext}", recursive=True)
+)
+app_declared: set[str] = set()
+for p in app_sources:
+    app_declared |= set(PROPERTY_SET.findall(open(p, encoding="utf-8").read()))
+unbound = [line for p in app_sources for line in undeclared_vars(p, app_declared)]
+unbound += [line for p in cards for line in undeclared_vars(p, set())]
+if unbound:
+    fail.append(
+        "E. var() with no fallback names a custom property nothing declares, so the\n"
+        "     property silently falls back to its initial value:\n" + "\n".join(unbound)
     )
 
 if fail:
