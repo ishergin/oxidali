@@ -445,7 +445,7 @@ tr.editor-row td { background: var(--accent-soft); padding: 10px 12px; }
 .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px;
   margin-right: 6px; border: 1px solid var(--border-strong); }
 .fb-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px;
-  border: 1px solid var(--line); vertical-align: -2px; margin-right: 6px; }
+  border: 1px solid var(--border-strong); vertical-align: -2px; margin-right: 6px; }
 .rgb-in { box-sizing: border-box; width: 52px; padding: 4px 6px; background: var(--raised); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--mono); font-size: 12px; text-align: right; }
 .rgb-in.sm { width: 44px; margin-right: 0; }
@@ -821,7 +821,7 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
 .fieldrow .fc .presets { padding: 0; border-top: none; justify-content: flex-end; }
 .fieldrow .fc .num, .fieldrow .fc .txt { font-family: var(--mono); font-size: 12px;
   padding: 5px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border);
-  background: var(--surface-sunken); color: var(--text); }
+  background: var(--raised); color: var(--text); }
 .fieldrow .fc .num { width: 96px; text-align: right; }
 .fieldrow .fc .txt { width: 190px; text-align: left; }
 .fieldrow .fc .txt.err, .fieldrow .fc .num.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
