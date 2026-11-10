@@ -269,8 +269,10 @@ fn log_backward_timeout_and_clear(p: *mut TransportInner, window_was_open: bool)
     } else {
         SESSION_QUERY_BACKWARD_LEAD_MS
     };
+    // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
     let rx_started = unsafe { (*p).isr.close_backward_window() };
     if let Some(rx_pre_idle) = rx_started {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         let (idle_ticks, failure_flags) =
             unsafe { ((*p).isr.idle_ticks(), (*p).isr.bus_failure_flags()) };
         let outcome = match super::incomplete_reception_outcome(rx_pre_idle) {
@@ -351,10 +353,12 @@ impl EspIdfDaliTransport {
     }
 
     fn take_session_event(p: *mut TransportInner) -> Option<SessionEvent> {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe { (*p).isr.pop_session_event() }
     }
 
     fn drain_session_events(p: *mut TransportInner) {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe {
             while (*p).isr.pop_any_session_event().is_some() {}
             let dropped = (*p).isr.take_session_dropped();
@@ -365,31 +369,39 @@ impl EspIdfDaliTransport {
     }
 
     fn prepare_session_exchange(p: *mut TransportInner) -> Result<ExchangeId, EspIdfDaliError> {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         let pending = unsafe { (*p).cancel_unacknowledged.load(Ordering::Acquire) };
         if pending != 0 {
             let cancelled = ExchangeId(pending);
+            // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
             if !unsafe { (*p).isr.cancellation_acknowledged(cancelled) } {
                 return Err(EspIdfDaliError::Other(
                     "DALI TX cancellation acknowledgement pending",
                 ));
             }
+            // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
             unsafe {
                 (*p).cancel_unacknowledged.store(0, Ordering::Release);
             }
         }
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         let exchange_id = unsafe { (*p).isr.begin_exchange() };
         Self::drain_session_events(p);
         Ok(exchange_id)
     }
 
     fn cancel_current_exchange(p: *mut TransportInner) -> Result<(), EspIdfDaliError> {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         let exchange_id = unsafe { (*p).isr.current_exchange() };
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe {
             (*p).cancel_unacknowledged
                 .store(exchange_id.0, Ordering::Release);
         }
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe { (*p).isr.cancel_exchange(exchange_id) };
         let deadline = std::time::Instant::now() + Duration::from_millis(CANCEL_ACK_TIMEOUT_MS);
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         while !unsafe { (*p).isr.cancellation_acknowledged(exchange_id) } {
             if !Self::wait_for_notification_or_deadline(p, deadline) {
                 return Err(EspIdfDaliError::Other(
@@ -397,6 +409,7 @@ impl EspIdfDaliTransport {
                 ));
             }
         }
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe {
             (*p).cancel_unacknowledged.store(0, Ordering::Release);
         }
@@ -422,11 +435,13 @@ impl EspIdfDaliTransport {
             ));
         }
         let exchange_id = Self::prepare_session_exchange(p)?;
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe { (*p).isr.take_batch_aborted() };
         for &(frame, expects_backward, min_idle_us) in run {
             let hb = encode_forward16_raw(frame);
             let label = TxFrameLabel::Forward16(frame);
             let gates = Self::tx_gates(p, label, settle_us_to_idle_ticks(min_idle_us));
+            // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
             if !unsafe {
                 (*p).isr
                     .queue_tx_for(&hb.data, hb.length, expects_backward, gates, exchange_id)
@@ -458,6 +473,7 @@ impl EspIdfDaliTransport {
                 }
             };
             last = outcome;
+            // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
             if unsafe { (*p).isr.take_batch_aborted() } || outcome == TransferOutcome::Collision {
                 Self::cancel_keeping_verdict(p);
                 return Ok(BatchOutcome::Aborted(outcome));
@@ -544,6 +560,7 @@ impl EspIdfDaliTransport {
                 .store(frame.addresses_single_gear(), Ordering::Relaxed)
         };
         let gates = Self::tx_gates(p, frame, min_idle_ticks);
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         while !unsafe {
             (*p).isr
                 .submit_tx_for(&hb.data, hb.length, expects_backward, gates, exchange_id)
@@ -561,6 +578,7 @@ impl EspIdfDaliTransport {
 
     fn record_tx_settle(p: *mut TransportInner, pre_idle_ticks: u16) {
         let on_wire = settle_ticks_on_wire(pre_idle_ticks, TX_ARM_LEAD_TICKS);
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         unsafe {
             (*p).last_tx_settle_ticks
                 .store(u32::from(on_wire), Ordering::Release);
@@ -568,6 +586,7 @@ impl EspIdfDaliTransport {
     }
 
     fn backward_window_has_closed(p: *mut TransportInner) -> bool {
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
         let idle_ticks = unsafe { (*p).isr.idle_ticks() };
         idle_ticks.saturating_mul(PHY_TICK_US) >= BACKWARD_ACCEPTANCE_LIMIT_US
     }
@@ -595,6 +614,7 @@ impl EspIdfDaliTransport {
                 ));
             }
 
+            // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
             if unsafe { (*p).isr.session_expects_backward() } {
                 window_was_open = true;
                 deadline = start + window;
@@ -986,6 +1006,7 @@ impl DaliTransport for EspIdfDaliTransport {
     }
 
     fn is_bus_idle(&self) -> Result<bool, Self::Error> {
+        // SAFETY: `inner` lives as long as the transport; task code reads it only through atomics.
         let idle = unsafe {
             (*self.inner).isr.idle_ticks() >= settle_us_to_idle_ticks(DEFAULT_IDLE_SETTLE_US)
         };
@@ -1061,10 +1082,12 @@ impl DaliTransport for EspIdfDaliTransport {
     }
 
     fn foreign_activity(&self) -> u32 {
+        // SAFETY: `inner` lives as long as the transport; task code reads it only through atomics.
         unsafe { (*self.inner).foreign_frames.load(Ordering::Acquire) }
     }
 
     fn last_tx_settle_ticks(&self) -> Option<u16> {
+        // SAFETY: `inner` lives as long as the transport; task code reads it only through atomics.
         let raw = unsafe { (*self.inner).last_tx_settle_ticks.load(Ordering::Acquire) };
         u16::try_from(raw).ok()
     }
@@ -1315,9 +1338,11 @@ struct SnifferAnswers {
 /// # Safety
 /// `inner` must be valid for the transport's lifetime, as it is for the whole sniffer thread.
 unsafe fn mirror_bus_failure_counters(inner: *mut TransportInner) {
+    // SAFETY: the caller's contract.
     let Some(w) = (unsafe { (*inner).wire_counters.get() }) else {
         return;
     };
+    // SAFETY: same.
     let flags = unsafe { (*inner).isr.bus_failure_flags() };
     w.bus_power_down_active.store(
         u32::from(flags & dali2rust_dali_phy::isr::BUS_FAILURE_POWER_DOWN != 0),
@@ -1328,10 +1353,12 @@ unsafe fn mirror_bus_failure_counters(inner: *mut TransportInner) {
         Ordering::Relaxed,
     );
     w.bus_power_down_entries.store(
+        // SAFETY: same.
         unsafe { (*inner).isr.bus_power_down_entries() },
         Ordering::Relaxed,
     );
     w.system_failure_entries.store(
+        // SAFETY: same.
         unsafe { (*inner).isr.system_failure_entries() },
         Ordering::Relaxed,
     );
@@ -1364,13 +1391,17 @@ unsafe fn mirror_arbitration_counters(inner: *mut TransportInner) {
     }
 }
 
+/// # Safety
+/// `inner` must be valid for the transport's lifetime.
 unsafe fn mirror_wire_occupancy(
     inner: *mut TransportInner,
     window: &mut dali2rust_platform::dali::WireLoadWindow,
 ) {
+    // SAFETY: the caller's contract.
     let Some(w) = (unsafe { (*inner).wire_counters.get() }) else {
         return;
     };
+    // SAFETY: same.
     let (total, active, tx) = unsafe { (*inner).isr.wire_tick_counts() };
     w.wire_ticks_total.store(total, Ordering::Relaxed);
     w.wire_ticks_active.store(active, Ordering::Relaxed);
@@ -1431,9 +1462,10 @@ fn dali_sniffer_loop(inner_addr: usize, stop: Arc<AtomicBool>) {
         let sample = unsafe { coherent_isr_tick_sample(inner) };
         let now_us = sample
             .map(|(clock, _)| clock)
+            // SAFETY: `esp_timer_get_time` reads the system timer and has no preconditions.
             .unwrap_or_else(|| unsafe { esp_idf_svc::sys::esp_timer_get_time() });
         let gap_us = diagnostics.note_poll(now_us, poll_ms);
-        // SAFETY: same.
+        // SAFETY: `inner` is valid for the transport lifetime (see above).
         unsafe { mirror_poll_gap(inner, gap_us, poll_ms) };
         let window = sample
             .map(|(clock, ticks)| diagnostics.account_isr_ticks(clock, ticks))
@@ -1495,8 +1527,11 @@ fn observe_unit_capture(inner: *mut TransportInner, unit: &mut UnitTap, capture:
 /// # Safety
 /// `inner` must remain valid for the transport lifetime.
 unsafe fn coherent_isr_tick_sample(inner: *mut TransportInner) -> Option<(i64, u32)> {
+    // SAFETY: the caller's contract.
     let before = unsafe { (*inner).isr.wire_tick_counts().0 };
+    // SAFETY: `esp_timer_get_time` reads the system timer and has no preconditions.
     let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
+    // SAFETY: same.
     let after = unsafe { (*inner).isr.wire_tick_counts().0 };
     (before == after).then_some((now_us, before))
 }

@@ -173,6 +173,7 @@ fn read_observation(
 
 fn monotonic_ms() -> u32 {
     #[cfg(target_os = "espidf")]
+    // SAFETY: `esp_timer_get_time` reads the system timer and has no preconditions.
     return (unsafe { esp_idf_svc::sys::esp_timer_get_time() as u64 } / 1000) as u32;
     #[cfg(not(target_os = "espidf"))]
     return 0;
