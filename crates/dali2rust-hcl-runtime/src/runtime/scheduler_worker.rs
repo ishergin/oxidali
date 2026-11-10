@@ -279,24 +279,12 @@ fn run_loop(rx: BusSubscriberRx, conf_rx: BusSubscriberRx, deps: SchedulerDeps) 
         match deps.liveness.while_turning(|| rx.recv_timeout(wait)) {
             Ok(frame) => {
                 apply_frame(&mut state, &deps, &frame);
-                WORKER_STACK.note(frame_tag(&frame));
+                WORKER_STACK.note(frame.payload_name());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => WORKER_STACK.note("idle"),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
         drain_stale_confirmations(&conf_rx);
-    }
-}
-
-fn frame_tag(frame: &BusFrame) -> &'static str {
-    match frame {
-        BusFrame::Event(envelope) => match &envelope.payload {
-            BusEventPayload::HclScheduleChangedEvent(_) => "event:HclScheduleChanged",
-            BusEventPayload::RuntimeStateChangedEvent(_) => "event:RuntimeStateChanged",
-            _ => "event:other",
-        },
-        BusFrame::Command(_) => "command",
-        BusFrame::Confirmation(_) => "confirmation",
     }
 }
 
@@ -422,7 +410,11 @@ fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: 
 
 dali2rust_contracts::dispatch_bus_events! {
     pub const HCL_SCHEDULER_HANDLED_EVENTS;
-    fn dispatch_scheduler_event(payload: &BusEventPayload, state: &mut SchedulerState, deps: &SchedulerDeps);
+    fn dispatch_scheduler_event(
+        payload: &BusEventPayload,
+        state: &mut SchedulerState,
+        deps: &SchedulerDeps,
+    );
     payload = payload;
     ignored = { deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed); };
     HclScheduleChangedEvent(body) => apply_schedule_change(state, deps, body),

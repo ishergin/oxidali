@@ -228,14 +228,6 @@ struct RegistryWorkerDeps {
 static WORKER_STACK: StackLowWater =
     StackLowWater::new("registry_worker", std_thread_stack::STATE_WORKER_STACK);
 
-fn frame_tag(frame: &BusFrame) -> &'static str {
-    match frame {
-        BusFrame::Command(ce) => ce.payload.variant_name(),
-        BusFrame::Event(ee) => ee.payload.variant_name(),
-        BusFrame::Confirmation(_) => "confirmation",
-    }
-}
-
 fn flush_before_import(frame: &BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
     let BusFrame::Command(command) = frame else {
         return;
@@ -253,7 +245,7 @@ fn flush_before_import(frame: &BusFrame, deps: &RegistryWorkerDeps, clock: &mut 
 }
 
 fn apply_frame_and_flush(frame: BusFrame, deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
-    let tag = frame_tag(&frame);
+    let tag = frame.payload_name();
     flush_before_import(&frame, deps, clock);
     match &frame {
         BusFrame::Command(_) => process_one(
