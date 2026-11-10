@@ -7,7 +7,7 @@ use dali2rust_domain::registry::{
 
 use super::conversions::{
     color_mode_str, device_type_str, effective_color_mode, failure_status_view,
-    last_dapc_source_view, observation_source_from_runtime, override_source_str, power_state_str,
+    last_dapc_source_view, override_source_str, power_state_str,
     status_flags_view, unbound_capabilities_view,
 };
 use super::physical_devices::PhysicalDeviceRecord;
@@ -40,10 +40,7 @@ pub(crate) fn physical_device_state_view(
         waf: rec.runtime.waf,
         status: status_flags_view(rec.runtime.status_flags.as_ref()),
         failure_status: failure_status_view(rec.runtime.failure_status.as_ref()),
-        value_source: rec
-            .runtime
-            .value_source
-            .map(observation_source_from_runtime),
+        value_source: rec.runtime.value_source,
         last_seen_ms: rec.runtime.last_seen_ms,
         last_dapc_source: last_dapc_source_view(rec.runtime.last_dapc_source),
         error: rec.runtime.error.map(|code| RuntimeErrorView { code }),

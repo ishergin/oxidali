@@ -1,35 +1,8 @@
 use serde::{Deserialize, Serialize};
 use dali2rust_contracts::msg::{
-    ColorMode, DeviceType, DeviceTypeSet, ExtendedVersionEntry, MAX_EXTENDED_VERSIONS,
+    ColorMode, DeviceType, DeviceTypeSet, ExtendedVersionEntry, RuntimeSource,
+    MAX_EXTENDED_VERSIONS,
 };
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ObservationSource {
-    #[default]
-    Api,
-    Sniffer,
-    Poller,
-    Mqtt,
-    Hcl,
-    Cluster,
-    AdapterProxy,
-    Rules,
-}
-
-impl ObservationSource {
-    pub const fn rest_name(self) -> &'static str {
-        match self {
-            Self::Api => "api",
-            Self::Sniffer => "sniffer",
-            Self::Poller => "poller",
-            Self::Mqtt => "mqtt",
-            Self::Hcl => "hcl",
-            Self::Cluster => "cluster",
-            Self::AdapterProxy => "adapter_proxy",
-            Self::Rules => "rules",
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LastDapcSourceView {
@@ -64,13 +37,13 @@ pub struct StatusFlagsView {
     pub power_cycle_seen: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailureStatusView {
     pub raw: u8,
     pub lamp_failure: bool,
     pub gear_failure: bool,
     pub communication_failure: bool,
-    pub source: ObservationSource,
+    pub source: RuntimeSource,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +62,7 @@ pub struct PhysicalDeviceStateView {
     pub waf: Option<(u8, u8, u8)>,
     pub status: Option<StatusFlagsView>,
     pub failure_status: Option<FailureStatusView>,
-    pub value_source: Option<ObservationSource>,
+    pub value_source: Option<RuntimeSource>,
     pub last_seen_ms: Option<u64>,
     pub last_dapc_source: LastDapcSourceView,
     pub error: Option<RuntimeErrorView>,

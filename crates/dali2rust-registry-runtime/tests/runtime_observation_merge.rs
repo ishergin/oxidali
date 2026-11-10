@@ -305,7 +305,7 @@ fn an_absence_verdict_does_not_relabel_the_level_it_leaves_alone() {
     assert_eq!(after.level, Some(200), "the level is the operator's own evidence");
     assert_eq!(
         after.value_source,
-        Some(dali2rust_domain::registry::ObservationSource::Api),
+        Some(RuntimeSource::Api),
         "the poller read nothing; it must not be named as the source of this level"
     );
     assert_eq!(
