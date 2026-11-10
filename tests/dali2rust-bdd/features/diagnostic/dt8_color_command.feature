@@ -14,10 +14,12 @@ Feature: DT8 Color Command Support
 
   @id:DIAG-151
   Scenario: The prelude and its extended frame are one transaction
-    Given a DALI mock transport with response 0
+    Given prelude 0xC108 and extended frame 0x01EA collide on the extended frame once, then go through
     When I send a DALI command with wire_address 1 and command 234
     Then the response status should be 200
-    And forward frame 0xC108 should be immediately followed by 0x01EA
+    And the JSON DaliCommandResponse success should be true
+    And the DALI mock transport should have sent exactly the forward frames 0xC108 0x01EA 0xC108 0x01EA
+    And all scripted DALI exchanges should be consumed without errors
 
   @id:DIAG-152
   Scenario: A Tc step is a single control frame under the DT8 prelude
