@@ -72,9 +72,6 @@ pub struct HclSchedulerCounters {
     pub ignored_commands: AtomicU32,
 }
 
-pub const HCL_SCHEDULER_HANDLED_EVENTS: &[&str] =
-    &["HclScheduleChangedEvent", "RuntimeStateChangedEvent"];
-
 pub type SharedOverrideLedger = Arc<Mutex<OverrideLedger>>;
 
 pub(crate) fn lock_ledger(ledger: &SharedOverrideLedger) -> MutexGuard<'_, OverrideLedger> {
@@ -305,7 +302,7 @@ fn frame_tag(frame: &BusFrame) -> &'static str {
 
 fn apply_frame(state: &mut SchedulerState, deps: &SchedulerDeps, frame: &BusFrame) {
     match frame {
-        BusFrame::Event(envelope) => apply_event(state, deps, &envelope.payload),
+        BusFrame::Event(envelope) => dispatch_scheduler_event(&envelope.payload, state, deps),
         BusFrame::Command(envelope) => dispatch_scheduler_command(
             &envelope.payload,
             state,
@@ -423,16 +420,13 @@ fn confirm_override_command(deps: &SchedulerDeps, correlation_id: u64, refusal: 
     );
 }
 
-fn apply_event(state: &mut SchedulerState, deps: &SchedulerDeps, payload: &BusEventPayload) {
-    match payload {
-        BusEventPayload::HclScheduleChangedEvent(body) => apply_schedule_change(state, deps, body),
-        BusEventPayload::RuntimeStateChangedEvent(body) => {
-            suspend_hit_targets(state, deps, &runtime_commit(body));
-        }
-        _ => {
-            deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed);
-        }
-    }
+dali2rust_contracts::dispatch_bus_events! {
+    pub const HCL_SCHEDULER_HANDLED_EVENTS;
+    fn dispatch_scheduler_event(payload: &BusEventPayload, state: &mut SchedulerState, deps: &SchedulerDeps);
+    payload = payload;
+    ignored = { deps.counters.ignored_events.fetch_add(1, Ordering::Relaxed); };
+    HclScheduleChangedEvent(body) => apply_schedule_change(state, deps, body),
+    RuntimeStateChangedEvent(body) => suspend_hit_targets(state, deps, &runtime_commit(body)),
 }
 
 fn apply_schedule_change(
