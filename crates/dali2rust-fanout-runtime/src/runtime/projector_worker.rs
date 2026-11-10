@@ -5,7 +5,7 @@ use std::time::Duration;
 use dali2rust_bsp::{esp_thread, std_thread_stack};
 use dali2rust_bus::{
     wait_then_drain, BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx,
-    RequiredPublishOutcome, WorkerTurn,
+    RequiredPublishOutcome,
 };
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
@@ -123,7 +123,7 @@ pub fn spawn_projector_worker(
                 let turn = wait_then_drain(&ev_rx, |frame| {
                     handle_event_frame(&frame, &ctx, &mut coalescer);
                 });
-                if turn == WorkerTurn::Disconnected {
+                if turn.is_err() {
                     break;
                 }
                 flush_coalesced(&ctx, &mut coalescer);

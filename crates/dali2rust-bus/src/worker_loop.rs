@@ -1,3 +1,4 @@
+use std::sync::mpsc::RecvError;
 use std::time::Duration;
 
 use crate::{BusFrame, BusSubscriberRx};
@@ -15,30 +16,34 @@ pub fn recv_then_drain(
     on_frame: impl FnMut(BusFrame),
 ) -> WorkerTurn {
     match rx.recv_timeout(timeout) {
-        Ok(frame) => drain_after(rx, frame, on_frame),
+        Ok(frame) => {
+            drain_after(rx, frame, on_frame);
+            WorkerTurn::Handled
+        }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => WorkerTurn::Idle,
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => WorkerTurn::Disconnected,
     }
 }
 
-pub fn wait_then_drain(rx: &BusSubscriberRx, on_frame: impl FnMut(BusFrame)) -> WorkerTurn {
-    match rx.recv() {
-        Ok(frame) => drain_after(rx, frame, on_frame),
-        Err(std::sync::mpsc::RecvError) => WorkerTurn::Disconnected,
-    }
+pub fn wait_then_drain(
+    rx: &BusSubscriberRx,
+    on_frame: impl FnMut(BusFrame),
+) -> Result<(), RecvError> {
+    drain_after(rx, rx.recv()?, on_frame);
+    Ok(())
 }
 
-fn drain_after(rx: &BusSubscriberRx, first: BusFrame, mut on_frame: impl FnMut(BusFrame)) -> WorkerTurn {
+fn drain_after(rx: &BusSubscriberRx, first: BusFrame, mut on_frame: impl FnMut(BusFrame)) {
     on_frame(first);
     while let Ok(frame) = rx.try_recv() {
         on_frame(frame);
     }
-    WorkerTurn::Handled
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+    use std::thread;
 
     use dali2rust_contracts::bus::command_envelope;
     use dali2rust_contracts::msg::{BusCommandPayload, DaliCommandPayload};
@@ -71,16 +76,24 @@ mod tests {
         tx.send(frame(1)).unwrap();
         tx.send(frame(2)).unwrap();
         let mut seen = Vec::new();
-        let turn = wait_then_drain(&rx, |frame| seen.push(command_of(&frame)));
-        assert_eq!(turn, WorkerTurn::Handled);
+        wait_then_drain(&rx, |frame| seen.push(command_of(&frame))).expect("frames were queued");
         assert_eq!(seen, [1, 2]);
+    }
+
+    #[test]
+    fn a_wait_returns_with_the_frame_another_thread_sends() {
+        let (tx, rx) = mpsc::channel();
+        let sender = thread::spawn(move || tx.send(frame(7)).unwrap());
+        let mut seen = Vec::new();
+        wait_then_drain(&rx, |frame| seen.push(command_of(&frame))).expect("a frame was sent");
+        sender.join().unwrap();
+        assert_eq!(seen, [7]);
     }
 
     #[test]
     fn a_wait_ends_when_the_bus_is_gone() {
         let (tx, rx) = mpsc::channel::<BusFrame>();
         drop(tx);
-        let turn = wait_then_drain(&rx, |_| panic!("no frame was sent"));
-        assert_eq!(turn, WorkerTurn::Disconnected);
+        assert_eq!(wait_then_drain(&rx, |_| panic!("no frame was sent")), Err(RecvError));
     }
 }
