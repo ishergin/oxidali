@@ -29,6 +29,7 @@ pub const TX_RING_CAP: usize = 5;
 pub enum SessionEvent {
     TxComplete {
         pre_idle_ticks: u16,
+        sniff_seq: u32,
     },
     TxCollision,
     TxRejected,
@@ -914,6 +915,7 @@ impl PhyIsrCore {
         }
         self.push_session_event(SessionEvent::TxComplete {
             pre_idle_ticks: phy.tx_pre_idle_ticks(),
+            sniff_seq: self.table_path.sniff_seq.load(Ordering::Relaxed),
         });
     }
 
@@ -1421,7 +1423,7 @@ mod tests {
         for _ in 0..128 {
             // SAFETY: see above.
             unsafe { core.tick() };
-            if let Some(SessionEvent::TxComplete { pre_idle_ticks }) = core.pop_session_event() {
+            if let Some(SessionEvent::TxComplete { pre_idle_ticks, .. }) = core.pop_session_event() {
                 armed_after = Some(pre_idle_ticks);
                 break;
             }
@@ -1774,7 +1776,7 @@ mod tests {
         for _ in 0..128 {
             // SAFETY: single-threaded test standing in for the ISR context.
             unsafe { core.tick() };
-            if let Some(SessionEvent::TxComplete { pre_idle_ticks }) = core.pop_session_event() {
+            if let Some(SessionEvent::TxComplete { pre_idle_ticks, .. }) = core.pop_session_event() {
                 reported = Some(pre_idle_ticks);
                 break;
             }
@@ -2068,6 +2070,101 @@ mod tests {
             drive(core, input_ptr, second, TX_HALF_BIT_TICKS);
         }
         drive(core, input_ptr, 0b0010, 24);
+    }
+
+    unsafe fn sniff_seq_of_sent_frame(core: &PhyIsrCore) -> u32 {
+        assert!(core.submit_tx(&test_forward_frame(), 16, false, TxGates::settle(0)));
+        // SAFETY: the caller stands in for the ISR context.
+        unsafe { sniff_seq_at_completion(core) }
+    }
+
+    unsafe fn sniff_seq_at_completion(core: &PhyIsrCore) -> u32 {
+        for _ in 0..512 {
+            // SAFETY: a single-threaded test stands in for the ISR context.
+            unsafe { core.tick() };
+            if let Some(SessionEvent::TxComplete { sniff_seq, .. }) = core.pop_session_event() {
+                return sniff_seq;
+            }
+        }
+        panic!("the frame must go out");
+    }
+
+    // IEC 62386-101 §9.3
+    #[test]
+    fn a_sent_frame_counts_every_capture_since_our_previous_one() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let first = unsafe { sniff_seq_of_sent_frame(&core) };
+        // SAFETY: as above.
+        let quiet = unsafe { sniff_seq_of_sent_frame(&core) };
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+        // SAFETY: as above.
+        let after_forward = unsafe { sniff_seq_of_sent_frame(&core) };
+        receive_foreign_frame(&core, input_ptr, &EIGHT_BITS);
+        // SAFETY: as above.
+        let after_backward = unsafe { sniff_seq_of_sent_frame(&core) };
+        receive_foreign_frame(&core, input_ptr, &frame24_bits(QACE_BROADCAST));
+        // SAFETY: as above.
+        let after_frame24 = unsafe { sniff_seq_of_sent_frame(&core) };
+
+        assert_eq!(quiet.wrapping_sub(first), 0, "a quiet line between our frames counts nothing");
+        assert_eq!(after_forward.wrapping_sub(quiet), 1, "another master's forward frame");
+        assert_eq!(
+            after_backward.wrapping_sub(after_forward),
+            1,
+            "a backward frame no session waited for is an active state between our frames too"
+        );
+        assert_eq!(after_frame24.wrapping_sub(after_backward), 1, "a 24-bit forward frame");
+    }
+
+    #[test]
+    fn a_capture_while_our_frame_waits_out_its_settling_counts_before_that_frame() {
+        const SETTLE_TICKS: u8 = 200;
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let first = unsafe { sniff_seq_of_sent_frame(&core) };
+        assert!(core.submit_tx(&test_forward_frame(), 16, false, TxGates::settle(SETTLE_TICKS)));
+        // SAFETY: as above.
+        unsafe { core.tick() };
+        receive_foreign_frame(&core, input_ptr, &EIGHT_BITS);
+        // SAFETY: as above.
+        let delayed = unsafe { sniff_seq_at_completion(&core) };
+        // SAFETY: as above.
+        let next = unsafe { sniff_seq_of_sent_frame(&core) };
+
+        assert_eq!(delayed.wrapping_sub(first), 1, "stamped when it left, not when it was armed");
+        assert_eq!(next.wrapping_sub(delayed), 0, "so the capture is not counted twice");
+    }
+
+    #[test]
+    fn the_answer_our_query_waited_for_is_not_counted_against_our_next_frame() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let before = unsafe { sniff_seq_of_sent_frame(&core) };
+        // SAFETY: as above.
+        unsafe { send_query(&core) };
+        receive_foreign_frame(&core, input_ptr, &EIGHT_BITS);
+        assert!(matches!(core.pop_session_event(), Some(SessionEvent::RxComplete(_))));
+        // SAFETY: as above.
+        let after_answer = unsafe { sniff_seq_of_sent_frame(&core) };
+
+        assert_eq!(
+            after_answer.wrapping_sub(before),
+            0,
+            "the session took the answer; only captures nobody waited for are counted"
+        );
     }
 
     unsafe fn send_query(core: &PhyIsrCore) {

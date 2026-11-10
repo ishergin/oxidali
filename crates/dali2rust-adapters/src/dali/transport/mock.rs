@@ -61,6 +61,8 @@ struct MockInner {
     wire: super::bus_unit_wire::InjectedWire,
     dtr: [u8; 3],
     last_tx_settle_ticks: Option<u16>,
+    captures_before_next_tx: u32,
+    captures_between_last_two_tx: Option<u32>,
 }
 
 impl Default for MockInner {
@@ -89,6 +91,8 @@ impl Default for MockInner {
             wire: super::bus_unit_wire::InjectedWire::default(),
             dtr: [0; 3],
             last_tx_settle_ticks: None,
+            captures_before_next_tx: 0,
+            captures_between_last_two_tx: None,
         }
     }
 }
@@ -288,6 +292,8 @@ impl MockDaliTransport {
         g.pending_foreign_before = None;
         g.foreign_frames_before.clear();
         g.foreign_activity = 0;
+        g.captures_before_next_tx = 0;
+        g.captures_between_last_two_tx = None;
     }
 
     pub fn set_foreign_activity(&self, value: u32) {
@@ -335,9 +341,14 @@ fn enqueue_scripted(inner: &Mutex<MockInner>, frame: u16, outcome: ScriptedOutco
 const DTR_WRITE_ADDRESS_BYTES: [u16; 3] = [0xA3, 0xC3, 0xC5];
 const DTR_QUERY_OPCODES: [u16; 3] = [0x98, 0x9C, 0x9D];
 
+fn note_own_transmission(g: &mut MockInner) {
+    g.captures_between_last_two_tx = Some(std::mem::take(&mut g.captures_before_next_tx));
+    g.wire.note_own_forward();
+}
+
 fn record_forward_send(g: &mut MockInner, frame: u16, min_idle_us: u32) {
     g.sent_frames.push(frame);
-    g.wire.note_own_forward();
+    note_own_transmission(g);
     g.sent_frame_min_idle_us.push(min_idle_us);
     g.sent_frame_times.push(Instant::now());
     if let Some(index) = DTR_WRITE_ADDRESS_BYTES
@@ -374,6 +385,11 @@ fn fail_requires_exchange(g: &mut MockInner, outcome: ScriptedOutcome) -> Result
 
 fn note_foreign_activity(g: &mut MockInner) {
     g.foreign_activity = g.foreign_activity.saturating_add(1);
+    note_capture(g);
+}
+
+fn note_capture(g: &mut MockInner) {
+    g.captures_before_next_tx = g.captures_before_next_tx.saturating_add(1);
 }
 
 fn record_foreign_before(g: &mut MockInner, step: ScriptedExchange) {
@@ -383,6 +399,26 @@ fn record_foreign_before(g: &mut MockInner, step: ScriptedExchange) {
     let before_index = g.sent_frames.len();
     g.foreign_frames_before.push((before_index, foreign));
     note_foreign_activity(g);
+}
+
+fn window_capture(
+    g: &mut MockInner,
+    expects_backward: bool,
+    in_window: TransferOutcome,
+) -> TransferOutcome {
+    note_window_capture(g, in_window, expects_backward);
+    backward_window_outcome(expects_backward, in_window)
+}
+
+fn note_window_capture(g: &mut MockInner, outcome: TransferOutcome, expects_backward: bool) {
+    let session_took_it = expects_backward && outcome == TransferOutcome::CorruptedInWindow;
+    let captured = matches!(
+        outcome,
+        TransferOutcome::ForeignInWindow | TransferOutcome::CorruptedInWindow
+    );
+    if captured && !session_took_it {
+        note_capture(g);
+    }
 }
 
 fn backward_window_outcome(expects_backward: bool, in_window: TransferOutcome) -> TransferOutcome {
@@ -472,11 +508,13 @@ fn scripted_transfer_outcome(
         }
         ScriptedOutcome::Collision => Ok(TransferOutcome::Collision),
         ScriptedOutcome::BusBusy => Ok(TransferOutcome::BusBusy),
-        ScriptedOutcome::ForeignInWindow => Ok(backward_window_outcome(
+        ScriptedOutcome::ForeignInWindow => Ok(window_capture(
+            g,
             expects_backward,
             TransferOutcome::ForeignInWindow,
         )),
-        ScriptedOutcome::CorruptedInWindow => Ok(backward_window_outcome(
+        ScriptedOutcome::CorruptedInWindow => Ok(window_capture(
+            g,
             expects_backward,
             TransferOutcome::CorruptedInWindow,
         )),
@@ -538,8 +576,9 @@ impl DaliTransport for MockDaliTransport {
         let mut g = self.wait_if_blocked(g);
         g.sent_frames24.push(frame);
         g.sent_frame24_min_idle_us.push(min_idle_us);
-        g.wire.note_own_forward();
+        note_own_transmission(&mut g);
         if let Some(outcome) = g.frame24_outcomes.pop_front() {
+            note_window_capture(&mut g, outcome, expects_backward);
             return Ok(outcome);
         }
         if !expects_backward {
@@ -633,6 +672,10 @@ impl DaliTransport for MockDaliTransport {
         self.inner.lock().unwrap().last_tx_settle_ticks
     }
 
+    fn captures_between_last_two_tx(&self) -> Option<u32> {
+        self.inner.lock().unwrap().captures_between_last_two_tx
+    }
+
     fn foreign_activity(&self) -> u32 {
         self.inner.lock().unwrap().foreign_activity
     }
@@ -717,6 +760,38 @@ mod tests {
         assert_eq!(transport.receive_backward_frame().unwrap(), Some(2));
         assert_eq!(transport.receive_backward_frame().unwrap(), Some(3));
         assert_eq!(transport.receive_backward_frame().unwrap(), None);
+    }
+
+    #[test]
+    fn traffic_an_exchange_saw_counts_between_it_and_the_next_frame() {
+        let mut transport = MockDaliTransport::new();
+        transport.expect_forward_frame_with_backward_contended(0x0120, None);
+        transport.expect_forward_frame(0x0120);
+        transport.expect_forward_frame_foreign_in_window(0x0190);
+        transport.expect_forward_frame_corrupted_in_window(0x0120);
+        transport.expect_forward_frame_corrupted_in_window(0x0190);
+        transport.expect_forward_frame(0x0120);
+
+        transport.exchange_frame(0x0120, false).unwrap();
+        transport.exchange_frame(0x0120, false).unwrap();
+        assert_eq!(transport.captures_between_last_two_tx(), Some(1), "contended traffic");
+        transport.exchange_frame(0x0190, true).unwrap();
+        transport.exchange_frame(0x0120, false).unwrap();
+        assert_eq!(transport.captures_between_last_two_tx(), Some(1), "a frame in the window");
+        transport.exchange_frame(0x0190, true).unwrap();
+        assert_eq!(transport.captures_between_last_two_tx(), Some(1), "a violation nobody awaited");
+        transport.exchange_frame(0x0120, false).unwrap();
+        assert_eq!(
+            transport.captures_between_last_two_tx(),
+            Some(0),
+            "the violation the open window took is its answer"
+        );
+
+        let frame24 = [0xFF, 0xFE, 0x3D];
+        transport.script_frame24_outcome(TransferOutcome::ForeignInWindow);
+        transport.exchange_frame24(frame24, true).unwrap();
+        transport.exchange_frame24(frame24, false).unwrap();
+        assert_eq!(transport.captures_between_last_two_tx(), Some(1), "a 24-bit window too");
     }
 
     #[test]

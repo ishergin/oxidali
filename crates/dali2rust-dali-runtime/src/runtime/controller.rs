@@ -19,6 +19,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 mod transaction;
 mod retry;
+mod send_twice;
 mod sniffer;
 mod unit;
 
@@ -26,6 +27,7 @@ mod unit;
 use transaction::BUS_RELEASE_SETTLE_US;
 pub use transaction::TRANSACTION_BUDGET_MS;
 use retry::unit_retryable;
+use send_twice::StrayHalf;
 use unit::UnitAttempt;
 
 pub const PHY_TICK_US: u32 = 104;
@@ -36,7 +38,7 @@ const MAX_SETTLE_MS: u64 = 20;
 const MAX_EXCHANGE_MS: u64 = 50;
 pub const BACKGROUND_YIELD_BUDGET_MS: u64 = MAX_SETTLE_MS + MAX_EXCHANGE_MS;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum WireFrame {
     Forward16(ForwardFrame),
     Forward24([u8; 3]),
@@ -64,6 +66,7 @@ pub struct DaliController<T: DaliTransport + Send> {
     wire_class: TransactionPriority,
     tx: TransactionState,
     unit: Option<UnitAttempt>,
+    stray_half: Option<StrayHalf>,
     last_release_ms: u64,
     busy_since_release: bool,
     wire_counters: Arc<DaliWireCounters>,
@@ -73,6 +76,7 @@ pub struct DaliController<T: DaliTransport + Send> {
 struct TransactionState {
     depth: u16,
     first_frame_sent: bool,
+    shielded_across_release: bool,
     exempt: bool,
     first_frame_at_ms: u64,
     last_frame_at_ms: u64,
@@ -118,6 +122,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             wire_class: TransactionPriority::Configuration,
             tx: TransactionState::default(),
             unit: None,
+            stray_half: None,
             last_release_ms: clock_now,
             busy_since_release: false,
             wire_counters: Arc::new(DaliWireCounters::default()),
@@ -361,9 +366,10 @@ impl<T: DaliTransport + Send> DaliController<T> {
     }
 
     fn try_pair24_once(&mut self, frame: [u8; 3]) -> Result<(), FrameError> {
-        self.exchange_with_attempts(WireFrame::Forward24(frame), false, 1)?;
-        self.exchange_with_attempts(WireFrame::Forward24(frame), false, 1)?;
-        self.judge_send_twice_interval()
+        let half = WireFrame::Forward24(frame);
+        self.exchange_with_attempts(half, false, 1)?;
+        self.exchange_with_attempts(half, false, 1)?;
+        self.judge_send_twice_pair(half)
     }
 
     fn try_unit_once(
@@ -383,27 +389,9 @@ impl<T: DaliTransport + Send> DaliController<T> {
             let (repeat_backward, observed) = self.exchange_once(frame, expects_backward)?;
             backward = repeat_backward;
             contended |= observed;
-            self.judge_send_twice_interval()?;
+            self.judge_send_twice_pair(WireFrame::Forward16(frame))?;
         }
         Ok((backward, contended))
-    }
-
-    // IEC 62386-101 Table 17, Table 20
-    fn judge_send_twice_interval(&mut self) -> Result<(), FrameError> {
-        let Some(ticks) = self.last_tx_settle_ticks() else {
-            return Ok(());
-        };
-        let interval_us = u32::from(ticks) * PHY_TICK_US;
-        if interval_us >= RetryPolicy::SEND_TWICE_MAX_INTERVAL_US {
-            self.wire_counters.send_twice_split.fetch_add(1, Relaxed);
-            return Err(FrameError::BusBusy);
-        }
-        if interval_us >= RetryPolicy::SEND_TWICE_TX_MAX_US {
-            self.wire_counters
-                .send_twice_over_transmitter_max
-                .fetch_add(1, Relaxed);
-        }
-        Ok(())
     }
 
     fn exchange_once(
@@ -496,6 +484,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             return;
         }
         self.session.record_transmission(self.clock.as_ref());
+        self.stray_half = None;
         self.note_unit_started();
         self.busy_since_release = true;
         self.wire_counters.note_frame_sent(priority as u8);

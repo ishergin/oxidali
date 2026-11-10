@@ -24,11 +24,9 @@ impl<T: DaliTransport + Send> DaliController<T> {
         }
         let mut contended = false;
         for attempt in 0..attempts {
-            if let Some(cause) = self.held_by() {
-                return Err(FrameError::Held(cause));
-            }
-            if self.must_yield() {
-                return Err(FrameError::Preempted);
+            self.stop_before_frame()?;
+            if self.wait_out_stray_half(frame) {
+                self.stop_before_frame()?;
             }
             self.at_step_boundary = false;
             self.credit_natural_release();
@@ -49,6 +47,16 @@ impl<T: DaliTransport + Send> DaliController<T> {
         }
         self.wire_counters.retry_exhausted.fetch_add(1, Relaxed);
         Err(FrameError::TransportError)
+    }
+
+    fn stop_before_frame(&self) -> Result<(), FrameError> {
+        if let Some(cause) = self.held_by() {
+            return Err(FrameError::Held(cause));
+        }
+        if self.must_yield() {
+            return Err(FrameError::Preempted);
+        }
+        Ok(())
     }
 
     pub(super) fn should_retry_contended_query_no_answer(

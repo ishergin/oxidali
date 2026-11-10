@@ -36,3 +36,12 @@ Feature: DT8 Color Command Support
     And the DALI mock transport should have received 3 forward frames
     And forward frame 0xC106 should be immediately followed by 0x01E3
     And forward frame 0x01E3 should be immediately followed by 0x01E3
+
+  @id:DIAG-154
+  Scenario: A configuration pair split by another master's frame goes out again whole
+    Given another master's frame 0xFF90 lands between the halves of the first 0x01E3 pair after prelude 0xC106
+    When I send a DALI command with wire_address 1 and command 227
+    Then the response status should be 200
+    And the JSON DaliCommandResponse success should be true
+    And the DALI bus should have carried 0xC106 0x01E3 foreign 0xFF90 0x01E3 0xC106 0x01E3 0x01E3
+    And all scripted DALI exchanges should be consumed without errors

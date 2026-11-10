@@ -3,8 +3,10 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_domain::dali::commands::{ExtendedCommand, SpecialCommand, StandardCommand};
 use dali2rust_domain::dali::types::DaliAddress;
-use crate::runtime::executor::test_helpers::shared::priorities_of;
-use dali2rust_test_support::AdvancingClock;
+use crate::runtime::executor::test_helpers::shared::{assert_script_consumed, priorities_of};
+use dali2rust_test_support::{AdvancingClock, StoppedClock};
+use std::time::Instant;
+use super::send_twice::STRAY_HALF_LIFETIME_MS;
 use dali2rust_domain::dali::devices::dt6_led::Dt6Command;
 use dali2rust_domain::dali::devices::dt8_color::Dt8Command;
 
@@ -834,6 +836,62 @@ impl Clock for ManualClock {
     }
 }
 
+struct HeldFrom(Instant);
+
+impl WireHold for HeldFrom {
+    fn held(&self) -> Option<HoldCause> {
+        (Instant::now() >= self.0).then_some(HoldCause::Quiescent)
+    }
+}
+
+#[test]
+fn a_wire_hold_that_begins_while_a_stray_half_is_waited_out_stops_the_frame() {
+    const HOLD_BEGINS_AFTER_MS: u64 = 50;
+    let (transport, mut controller) = scripted_controller_on(
+        &[(None, RESET_SHORT_0), (Some(FOREIGN_QUERY), RESET_SHORT_0)],
+        1,
+        Box::new(StoppedClock::at(0)),
+    );
+    assert_eq!(controller.send_command(&reset_short_0()), Err(FrameError::BusBusy));
+    let begins = Instant::now() + Duration::from_millis(HOLD_BEGINS_AFTER_MS);
+    controller.hold = Some(Arc::new(HeldFrom(begins)));
+
+    assert_eq!(
+        controller.send_command(&reset_short_0()),
+        Err(FrameError::Held(HoldCause::Quiescent)),
+        "the hold and yield checks come after the wait, so they see what changed during it"
+    );
+    assert_eq!(transport.lock().unwrap().sent_frames().len(), 2);
+}
+
+#[test]
+fn a_re_run_that_waited_out_its_stray_half_keeps_the_started_transaction_shield() {
+    let mock = scripted_mock(&[
+        (None, BROADCAST_OFF),
+        (None, RESET_SHORT_0),
+        (Some(FOREIGN_QUERY), RESET_SHORT_0),
+    ]);
+    mock.expect_forward_frame_collision(RESET_SHORT_0);
+    mock.expect_forward_frame(RESET_SHORT_0);
+    mock.expect_forward_frame(RESET_SHORT_0);
+    let transport = Arc::new(Mutex::new(mock));
+    let mut controller =
+        DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0)));
+    controller.retry_policy = retry_policy(3);
+
+    let outcome = controller.transaction(|controller| {
+        controller.send_raw(ForwardFrame(BROADCAST_OFF), false)?;
+        controller.hold = Some(Arc::new(HeldFrom(Instant::now())));
+        controller.send_command(&reset_short_0())
+    });
+
+    assert!(
+        outcome.is_ok(),
+        "no hold lands inside a started transaction, even after the wait: {outcome:?}"
+    );
+    assert_script_consumed(&transport);
+}
+
 struct TimeAdvancingTransport {
     inner: MockDaliTransport,
     now_ms: Arc<AtomicU64>,
@@ -870,6 +928,10 @@ impl DaliTransport for TimeAdvancingTransport {
 
     fn honours_settle(&self) -> bool {
         true
+    }
+
+    fn captures_between_last_two_tx(&self) -> Option<u32> {
+        self.inner.captures_between_last_two_tx()
     }
 }
 
@@ -1039,6 +1101,300 @@ fn a_split_send_twice_pair_is_refused_at_the_acceptance_edge() {
             .load(Ordering::Relaxed),
         0
     );
+}
+
+const RESET_SHORT_0: u16 = 0x0120;
+const SELECT_DIMMING_CURVE_SHORT_0: u16 = 0x01E3;
+const ENABLE_DT6: u16 = 0xC106;
+const FOREIGN_QUERY: u16 = 0xFF90;
+const BROADCAST_OFF: u16 = 0xFF00;
+
+fn reset_short_0() -> DaliCommand {
+    DaliCommand::Standard {
+        address: DaliAddress::short(0).unwrap(),
+        command: StandardCommand::Reset,
+    }
+}
+
+fn select_dimming_curve_short_0() -> DaliCommand {
+    DaliCommand::Extended {
+        address: DaliAddress::short(0).unwrap(),
+        command: ExtendedCommand::Dt6(Dt6Command::SelectDimmingCurve),
+    }
+}
+
+fn scripted_mock(script: &[(Option<u16>, u16)]) -> MockDaliTransport {
+    let mock = MockDaliTransport::new();
+    for &(foreign_before, frame) in script {
+        if let Some(foreign) = foreign_before {
+            mock.expect_foreign_frame_before_next(foreign);
+        }
+        mock.expect_forward_frame(frame);
+    }
+    mock
+}
+
+fn scripted_controller(
+    script: &[(Option<u16>, u16)],
+    attempts: u8,
+) -> (Arc<Mutex<MockDaliTransport>>, DaliController<MockDaliTransport>) {
+    scripted_controller_on(script, attempts, test_clock())
+}
+
+fn scripted_controller_on(
+    script: &[(Option<u16>, u16)],
+    attempts: u8,
+    clock: Box<dyn Clock>,
+) -> (Arc<Mutex<MockDaliTransport>>, DaliController<MockDaliTransport>) {
+    let transport = Arc::new(Mutex::new(scripted_mock(script)));
+    let mut controller = DaliController::new(Arc::clone(&transport), clock);
+    controller.retry_policy = retry_policy(attempts);
+    (transport, controller)
+}
+
+fn plain_half(raw: u16) -> WireFrame {
+    WireFrame::Forward16(ForwardFrame(raw))
+}
+
+fn split_pairs(controller: &DaliController<MockDaliTransport>) -> u32 {
+    controller.wire_counters.send_twice_split.load(Ordering::Relaxed)
+}
+
+#[test]
+fn a_foreign_frame_between_the_halves_of_a_pair_re_runs_the_pair() {
+    let (transport, mut controller) = scripted_controller(
+        &[
+            (None, RESET_SHORT_0),
+            (Some(FOREIGN_QUERY), RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+        ],
+        3,
+    );
+
+    controller
+        .send_command(&reset_short_0())
+        .expect("the re-run lands an unbroken pair");
+
+    assert_script_consumed(&transport);
+    assert_eq!(
+        split_pairs(&controller),
+        1,
+        "101 §9.3: a receiver reads two frames with an active state between them as separate"
+    );
+}
+
+#[test]
+fn a_foreign_frame_between_the_halves_re_runs_an_extended_pair_from_its_prelude() {
+    let (transport, mut controller) = scripted_controller(
+        &[
+            (None, ENABLE_DT6),
+            (None, SELECT_DIMMING_CURVE_SHORT_0),
+            (Some(FOREIGN_QUERY), SELECT_DIMMING_CURVE_SHORT_0),
+            (None, ENABLE_DT6),
+            (None, SELECT_DIMMING_CURVE_SHORT_0),
+            (None, SELECT_DIMMING_CURVE_SHORT_0),
+        ],
+        3,
+    );
+
+    controller
+        .send_command(&select_dimming_curve_short_0())
+        .expect("the re-run lands prelude and pair unbroken");
+
+    assert_script_consumed(&transport);
+    assert_eq!(split_pairs(&controller), 1);
+}
+
+#[test]
+fn a_pair_split_by_a_foreign_frame_on_its_last_attempt_fails() {
+    let (transport, mut controller) = scripted_controller(
+        &[(None, RESET_SHORT_0), (Some(FOREIGN_QUERY), RESET_SHORT_0)],
+        1,
+    );
+
+    assert_eq!(
+        controller.send_command(&reset_short_0()),
+        Err(FrameError::BusBusy),
+        "101 §9.3: an active state between the halves leaves no pair, so none is reported as sent"
+    );
+    assert_script_consumed(&transport);
+    assert_eq!(split_pairs(&controller), 1);
+}
+
+#[test]
+fn a_pair_split_twice_in_a_row_lands_on_its_third_attempt() {
+    let (transport, mut controller) = scripted_controller(
+        &[
+            (None, RESET_SHORT_0),
+            (Some(FOREIGN_QUERY), RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+            (Some(FOREIGN_QUERY), RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+        ],
+        3,
+    );
+
+    controller
+        .send_command(&reset_short_0())
+        .expect("the third attempt lands an unbroken pair");
+
+    assert_script_consumed(&transport);
+    assert_eq!(split_pairs(&controller), 2);
+}
+
+#[test]
+fn a_re_run_holds_the_copy_identical_to_the_stray_half_past_the_grey_area() {
+    const MS_PER_EXCHANGE: u64 = 30;
+    let now_ms = Arc::new(AtomicU64::new(0));
+    let transport = Arc::new(Mutex::new(TimeAdvancingTransport {
+        inner: scripted_mock(&[
+            (None, RESET_SHORT_0),
+            (Some(FOREIGN_QUERY), RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+        ]),
+        now_ms: Arc::clone(&now_ms),
+        advance_ms: MS_PER_EXCHANGE,
+    }));
+    let clock = Box::new(ManualClock { now_ms });
+    let mut controller = DaliController::new(Arc::clone(&transport), clock);
+    controller.retry_policy = retry_policy(3);
+
+    controller
+        .send_command(&reset_short_0())
+        .expect("the held re-run lands an unbroken pair");
+
+    let gap_ms = transport.lock().unwrap().inner.forward_frame_gap_ms(1, 2).expect("four frames");
+    let stray_to_copy = Duration::from_millis(u64::try_from(gap_ms).expect("fits"));
+    assert!(
+        stray_to_copy
+            >= Duration::from_micros(u64::from(RetryPolicy::SEND_TWICE_GREY_MAX_INTERVAL_US)),
+        "101 §9.3, Table 20: counted from the stray half, not from the pair's first frame, \
+         {stray_to_copy:?}"
+    );
+}
+
+#[test]
+fn a_held_re_run_opens_a_new_transaction_at_its_class_priority() {
+    let (transport, mut controller) = scripted_controller_on(
+        &[
+            (None, RESET_SHORT_0),
+            (Some(FOREIGN_QUERY), RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+            (None, RESET_SHORT_0),
+        ],
+        3,
+        Box::new(StoppedClock::at(0)),
+    );
+
+    controller.send_command(&reset_short_0()).expect("the held re-run lands");
+
+    let class = DaliPriority::Configuration;
+    assert_eq!(
+        priorities_of(&transport.lock().unwrap().sent_frame_settle_us()),
+        vec![class, DaliPriority::Transaction, class, DaliPriority::Transaction],
+        "101 §9.2: the line was released for longer than a transaction may pause"
+    );
+    assert_eq!(
+        controller.wire_counters.transactions_completed.load(Ordering::Relaxed),
+        2
+    );
+}
+
+#[test]
+fn a_stray_half_holds_only_the_frame_identical_to_it_until_it_expires() {
+    let now_ms = Arc::new(AtomicU64::new(0));
+    let clock = Box::new(ManualClock {
+        now_ms: Arc::clone(&now_ms),
+    });
+    let (_, mut controller) = scripted_controller_on(
+        &[
+            (None, ENABLE_DT6),
+            (None, SELECT_DIMMING_CURVE_SHORT_0),
+            (Some(FOREIGN_QUERY), SELECT_DIMMING_CURVE_SHORT_0),
+        ],
+        1,
+        clock,
+    );
+    assert_eq!(
+        controller.send_command(&select_dimming_curve_short_0()),
+        Err(FrameError::BusBusy)
+    );
+
+    assert_eq!(
+        controller.stray_half_wait(plain_half(SELECT_DIMMING_CURVE_SHORT_0)),
+        Duration::from_millis(STRAY_HALF_LIFETIME_MS)
+    );
+    assert_eq!(
+        controller.stray_half_wait(plain_half(ENABLE_DT6)),
+        Duration::ZERO,
+        "a different frame between them already keeps the stray half and an identical frame apart"
+    );
+    now_ms.fetch_add(STRAY_HALF_LIFETIME_MS, Ordering::SeqCst);
+    assert_eq!(
+        controller.stray_half_wait(plain_half(SELECT_DIMMING_CURVE_SHORT_0)),
+        Duration::ZERO,
+        "Table 20: past the grey area no gear pairs the stray half"
+    );
+}
+
+#[test]
+fn only_a_frame_of_ours_on_the_wire_ends_the_stray_half() {
+    let (transport, mut controller) = scripted_controller_on(
+        &[(None, RESET_SHORT_0), (Some(FOREIGN_QUERY), RESET_SHORT_0)],
+        1,
+        Box::new(StoppedClock::at(0)),
+    );
+    let broadcast_off = ForwardFrame::new(0xFF, 0x00);
+    let held = Duration::from_millis(STRAY_HALF_LIFETIME_MS);
+    assert_eq!(controller.send_command(&reset_short_0()), Err(FrameError::BusBusy));
+
+    transport
+        .lock()
+        .unwrap()
+        .expect_forward_frame_bus_busy(broadcast_off.raw());
+    let _ = controller.send_raw(broadcast_off, false);
+    assert_eq!(
+        controller.stray_half_wait(plain_half(RESET_SHORT_0)),
+        held,
+        "a frame that never reached the wire leaves the stray half live"
+    );
+
+    transport.lock().unwrap().expect_forward_frame(broadcast_off.raw());
+    controller.send_raw(broadcast_off, false).expect("sent");
+    assert_script_consumed(&transport);
+    assert_eq!(
+        controller.stray_half_wait(plain_half(RESET_SHORT_0)),
+        Duration::ZERO,
+        "101 §9.3: a frame of ours after the stray half leaves it no consecutive frame to pair with"
+    );
+}
+
+#[test]
+fn a_foreign_frame_before_the_unit_leaves_the_pair_alone() {
+    let (transport, mut controller) = scripted_controller(
+        &[(Some(FOREIGN_QUERY), RESET_SHORT_0), (None, RESET_SHORT_0)],
+        3,
+    );
+    controller.send_command(&reset_short_0()).expect("an unbroken pair");
+    assert_script_consumed(&transport);
+    assert_eq!(split_pairs(&controller), 0, "the line before the first half is not between the halves");
+
+    let (transport, mut controller) = scripted_controller(
+        &[
+            (Some(FOREIGN_QUERY), ENABLE_DT6),
+            (None, SELECT_DIMMING_CURVE_SHORT_0),
+            (None, SELECT_DIMMING_CURVE_SHORT_0),
+        ],
+        3,
+    );
+    controller
+        .send_command(&select_dimming_curve_short_0())
+        .expect("an unbroken prelude and pair");
+    assert_script_consumed(&transport);
+    assert_eq!(split_pairs(&controller), 0);
 }
 
 #[test]
@@ -1413,6 +1769,7 @@ struct ScriptedFrame24Transport {
     outcomes: std::collections::VecDeque<TransferOutcome>,
     sent: Vec<[u8; 3]>,
     settle_ticks: Option<u16>,
+    captured_before: Vec<usize>,
 }
 
 impl ScriptedFrame24Transport {
@@ -1422,7 +1779,13 @@ impl ScriptedFrame24Transport {
             outcomes: outcomes.iter().copied().collect(),
             sent: Vec::new(),
             settle_ticks,
+            captured_before: Vec::new(),
         }
+    }
+
+    fn with_a_capture_before(mut self, frame_index: usize) -> Self {
+        self.captured_before.push(frame_index);
+        self
     }
 }
 
@@ -1458,6 +1821,51 @@ impl DaliTransport for ScriptedFrame24Transport {
     fn last_tx_settle_ticks(&self) -> Option<u16> {
         self.settle_ticks
     }
+
+    fn captures_between_last_two_tx(&self) -> Option<u32> {
+        let last = self.sent.len().checked_sub(1)?;
+        Some(u32::from(self.captured_before.contains(&last)))
+    }
+}
+
+#[test]
+fn a_24_bit_send_twice_pair_split_by_a_foreign_frame_is_resent_whole() {
+    let transport = Arc::new(Mutex::new(
+        ScriptedFrame24Transport::new(&[], None).with_a_capture_before(1),
+    ));
+    let mut controller = DaliController::new(Arc::clone(&transport), test_clock());
+    controller.retry_policy = retry_policy(3);
+
+    controller
+        .send_frame24_twice(PROBE_24)
+        .expect("the second attempt lands an unbroken pair");
+
+    assert_eq!(transport.lock().unwrap().sent, vec![PROBE_24; 4]);
+    assert_eq!(
+        controller.wire_counters.send_twice_split.load(Ordering::Relaxed),
+        1
+    );
+}
+
+#[test]
+fn a_24_bit_pair_split_by_a_foreign_frame_on_its_last_attempt_is_contended() {
+    let transport = Arc::new(Mutex::new(
+        ScriptedFrame24Transport::new(&[], None).with_a_capture_before(1),
+    ));
+    let mut controller =
+        DaliController::new(Arc::clone(&transport), Box::new(StoppedClock::at(0)));
+    controller.retry_policy = retry_policy(1);
+
+    assert_eq!(
+        controller.send_frame24_twice(PROBE_24),
+        Err(Frame24Fault::Contended)
+    );
+    assert_eq!(transport.lock().unwrap().sent, vec![PROBE_24; 2]);
+    assert_eq!(
+        controller.stray_half_wait(WireFrame::Forward24(PROBE_24)),
+        Duration::from_millis(STRAY_HALF_LIFETIME_MS),
+        "101 §9.3: the next identical 24-bit frame waits out the stray half"
+    );
 }
 
 #[test]

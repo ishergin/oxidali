@@ -167,6 +167,8 @@ struct TransportInner {
     _rx_pin: PinDriver<'static, Input>,
     foreign_frames: AtomicU32,
     last_tx_settle_ticks: AtomicU32,
+    last_tx_sniff_seq: AtomicU32,
+    captures_between_last_two_tx: AtomicU32,
     previous_forward: AtomicU32,
     cancel_unacknowledged: AtomicU32,
     forward_single_gear: AtomicBool,
@@ -448,8 +450,8 @@ impl EspIdfDaliTransport {
             let outcome = match Self::await_queued_frame(p, frame)? {
                 TxAttemptOutcome::BusBusy => TransferOutcome::BusBusy,
                 TxAttemptOutcome::Collision => TransferOutcome::Collision,
-                TxAttemptOutcome::Sent { pre_idle_ticks } => {
-                    Self::record_tx_settle(p, pre_idle_ticks);
+                TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq } => {
+                    Self::record_sent_frame(p, pre_idle_ticks, sniff_seq);
                     if expects_backward {
                         Self::do_receive_backward_outcome(p, Some(frame))?
                     } else {
@@ -564,6 +566,17 @@ impl EspIdfDaliTransport {
         unsafe {
             (*p).last_tx_settle_ticks
                 .store(u32::from(on_wire), Ordering::Release);
+        }
+    }
+
+    fn record_sent_frame(p: *mut TransportInner, pre_idle_ticks: u16, sniff_seq: u32) {
+        Self::record_tx_settle(p, pre_idle_ticks);
+        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
+        let previous = unsafe { (*p).last_tx_sniff_seq.swap(sniff_seq, Ordering::AcqRel) };
+        // SAFETY: same.
+        unsafe {
+            (*p).captures_between_last_two_tx
+                .store(sniff_seq.wrapping_sub(previous), Ordering::Release);
         }
     }
 
@@ -839,6 +852,8 @@ impl EspIdfDaliTransport {
                 _rx_pin: rx,
                 foreign_frames: AtomicU32::new(0),
                 last_tx_settle_ticks: AtomicU32::new(TX_SETTLE_UNMEASURED),
+                last_tx_sniff_seq: AtomicU32::new(0),
+                captures_between_last_two_tx: AtomicU32::new(0),
                 previous_forward: AtomicU32::new(NO_PREVIOUS_FRAME),
                 cancel_unacknowledged: AtomicU32::new(0),
                 forward_single_gear: AtomicBool::new(true),
@@ -942,8 +957,8 @@ impl DaliTransport for EspIdfDaliTransport {
         match attempt {
             TxAttemptOutcome::BusBusy => Ok(TransferOutcome::BusBusy),
             TxAttemptOutcome::Collision => Ok(TransferOutcome::Collision),
-            TxAttemptOutcome::Sent { pre_idle_ticks } => {
-                Self::record_tx_settle(p, pre_idle_ticks);
+            TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq } => {
+                Self::record_sent_frame(p, pre_idle_ticks, sniff_seq);
                 if expects_backward {
                     Self::do_receive_backward_outcome(p, None).map_err(Frame24Error::Transport)
                 } else {
@@ -1048,8 +1063,8 @@ impl DaliTransport for EspIdfDaliTransport {
         )? {
             TxAttemptOutcome::BusBusy => Ok(TransferOutcome::BusBusy),
             TxAttemptOutcome::Collision => Ok(TransferOutcome::Collision),
-            TxAttemptOutcome::Sent { pre_idle_ticks } => {
-                Self::record_tx_settle(p, pre_idle_ticks);
+            TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq } => {
+                Self::record_sent_frame(p, pre_idle_ticks, sniff_seq);
                 if expects_backward {
                     Self::do_receive_backward_outcome(p, Some(frame))
                 } else {
@@ -1067,6 +1082,11 @@ impl DaliTransport for EspIdfDaliTransport {
     fn last_tx_settle_ticks(&self) -> Option<u16> {
         let raw = unsafe { (*self.inner).last_tx_settle_ticks.load(Ordering::Acquire) };
         u16::try_from(raw).ok()
+    }
+
+    fn captures_between_last_two_tx(&self) -> Option<u32> {
+        // SAFETY: `inner` lives as long as the transport; task code reads it only through atomics.
+        Some(unsafe { (*self.inner).captures_between_last_two_tx.load(Ordering::Acquire) })
     }
 
     fn honours_settle(&self) -> bool {
