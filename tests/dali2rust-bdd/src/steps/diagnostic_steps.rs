@@ -135,9 +135,13 @@ async fn dali_mock_two_frames_order(world: &mut DaliWorld, first_hex: String, se
 
 // DIAG-151
 #[given(
-    regex = r"^prelude 0x([0-9A-F]{4}) and extended frame 0x([0-9A-F]{4}) collide on the extended frame once, then go through$"
+    regex = r"^the extended frame 0x([0-9a-fA-F]+) after prelude 0x([0-9a-fA-F]+) collides once, then both go through$"
 )]
-async fn given_extended_frame_collides_once(world: &mut DaliWorld, prelude_hex: String, frame_hex: String) {
+async fn given_extended_frame_collides_once(
+    world: &mut DaliWorld,
+    frame_hex: String,
+    prelude_hex: String,
+) {
     let prelude = u16::from_str_radix(&prelude_hex, 16).expect("prelude hex frame");
     let extended = u16::from_str_radix(&frame_hex, 16).expect("extended hex frame");
     let mock = world.dali_mock().lock().expect("mock lock");
@@ -150,7 +154,7 @@ async fn given_extended_frame_collides_once(world: &mut DaliWorld, prelude_hex: 
 
 // DIAG-151
 #[then(
-    regex = r"^the DALI mock transport should have sent exactly the forward frames ((?:0x[0-9A-F]{4} ?)+)$"
+    regex = r"^the DALI mock transport should have sent exactly the forward frames ((?:0x[0-9a-fA-F]+ ?)+)$"
 )]
 async fn dali_mock_exact_frames(world: &mut DaliWorld, listed: String) {
     let wanted: Vec<u16> = listed

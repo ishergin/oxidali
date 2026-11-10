@@ -13,8 +13,8 @@ Feature: DT8 Color Command Support
     And the DALI mock transport should have sent forward frame 0xC108 before 0x01EA
 
   @id:DIAG-151
-  Scenario: The prelude and its extended frame are one transaction
-    Given prelude 0xC108 and extended frame 0x01EA collide on the extended frame once, then go through
+  Scenario: A collided extended frame is retried from its prelude
+    Given the extended frame 0x01EA after prelude 0xC108 collides once, then both go through
     When I send a DALI command with wire_address 1 and command 234
     Then the response status should be 200
     And the JSON DaliCommandResponse success should be true
