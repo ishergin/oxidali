@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dali2rust_bsp::{esp_thread, std_thread_stack};
 use dali2rust_bus::{
-    recv_then_drain, BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx,
+    wait_then_drain, BusChannel, BusFrame, BusId, BusPublisher, BusSubscriberRx,
     RequiredPublishOutcome, WorkerTurn,
 };
 use dali2rust_contracts::bus::command_envelope;
@@ -20,8 +20,6 @@ use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
     capability_accepts_color_mode, CapabilityFlagsView, ProjectorReadPort,
 };
-
-const IDLE_RECV_TIMEOUT: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Default)]
 pub struct ProjectorCounters {
@@ -122,14 +120,13 @@ pub fn spawn_projector_worker(
             };
             let mut coalescer = ObservedCoalescer::default();
             loop {
-                let turn = recv_then_drain(&ev_rx, IDLE_RECV_TIMEOUT, |frame| {
+                let turn = wait_then_drain(&ev_rx, |frame| {
                     handle_event_frame(&frame, &ctx, &mut coalescer);
                 });
-                match turn {
-                    WorkerTurn::Handled => flush_coalesced(&ctx, &mut coalescer),
-                    WorkerTurn::Idle => {}
-                    WorkerTurn::Disconnected => break,
+                if turn == WorkerTurn::Disconnected {
+                    break;
                 }
+                flush_coalesced(&ctx, &mut coalescer);
             }
         },
     )
