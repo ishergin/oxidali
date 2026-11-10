@@ -118,3 +118,30 @@ pub(crate) fn effective_color_mode(
         other => other,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use RuntimeSource::{AdapterProxy, Api, Cluster, Hcl, Mqtt, Poller, Readback, Rules, Sniffer};
+
+    fn every_runtime_source() -> [RuntimeSource; 9] {
+        let all = [Poller, Sniffer, Api, Mqtt, Hcl, Cluster, AdapterProxy, Rules, Readback];
+        for source in all {
+            match source {
+                Poller | Sniffer | Api | Mqtt | Hcl | Cluster | AdapterProxy | Rules | Readback => {}
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn rest_and_websocket_name_every_value_source_alike() {
+        for source in every_runtime_source() {
+            assert_eq!(
+                observation_source_from_runtime(source).rest_name(),
+                source.rest_name(),
+                "{source:?}"
+            );
+        }
+    }
+}

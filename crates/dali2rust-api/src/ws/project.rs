@@ -560,12 +560,16 @@ mod tests {
     }
 
     fn runtime_event() -> EventEnvelope {
+        runtime_event_observing(observation())
+    }
+
+    fn runtime_event_observing(state_observation: RuntimeObservation) -> EventEnvelope {
         envelope(RuntimeStateChangedEvent {
             adapter_id: 0,
             virtual_lamp_id: Some(12),
             short_address: Some(17),
             state_setpoint: cct_setpoint(),
-            state_observation: observation(),
+            state_observation,
             commit_source: RuntimeSource::Api,
             commit_dimensions: cct_setpoint().dimensions(),
             commit_holds_hcl: true,
@@ -599,6 +603,18 @@ mod tests {
         assert!(s["error"].is_null());
         assert_eq!(s["status"]["raw"], 0);
         assert_eq!(s["failure_status"]["source"], "poller");
+    }
+
+    #[test]
+    fn an_operator_read_names_the_asker_as_rest_does() {
+        let read = RuntimeObservation {
+            value_source: Some(RuntimeSource::Readback),
+            ..observation()
+        };
+        let frames = project_event(&runtime_event_observing(read), EVENT_TS_MS);
+        let (_, frame) = frames.first().expect("a runtime frame");
+        let v: Value = serde_json::from_str(frame).unwrap();
+        assert_eq!(v["payload"]["state"]["value_source"], "api");
     }
 
     #[test]
