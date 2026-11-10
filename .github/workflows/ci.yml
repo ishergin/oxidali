@@ -105,7 +105,7 @@ jobs:
       - name: Install just
         run: brew install just
 
-      - name: cargo check on the P4 triple
+      - name: clippy on the P4 triple
         run: just esp-check
 
   release-sync-advisory:

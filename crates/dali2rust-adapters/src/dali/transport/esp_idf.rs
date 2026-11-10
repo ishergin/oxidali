@@ -1531,7 +1531,7 @@ unsafe fn coherent_isr_tick_sample(inner: *mut TransportInner) -> Option<(i64, u
     let before = unsafe { (*inner).isr.wire_tick_counts().0 };
     // SAFETY: `esp_timer_get_time` reads the system timer and has no preconditions.
     let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() };
-    // SAFETY: same.
+    // SAFETY: the caller's contract.
     let after = unsafe { (*inner).isr.wire_tick_counts().0 };
     (before == after).then_some((now_us, before))
 }
