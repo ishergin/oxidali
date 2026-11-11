@@ -595,6 +595,7 @@ def test_a_crawling_subscriber_costs_neither_its_neighbour_nor_rest(
 
 VANISH_POLL_S = 1.0
 COUNT_POLL_S = 0.5
+RELEASE_BUDGET_S = 15.0
 RELEASE_SETTLE_S = 5.0
 NO_KEEPALIVE = "took no keepalive"
 NOT_COMPLETED = "did not complete"
@@ -691,6 +692,11 @@ def _watch(api, before, earliest, latest):
         time.sleep(VANISH_POLL_S)
 
 
+def _settled(api, before):
+    _clients_until(api, lambda n: n <= before, RELEASE_BUDGET_S)
+    return _clients_until(api, lambda n: n < before, RELEASE_SETTLE_S)[-1]
+
+
 def _vanish_and_watch(api, peer, before, report):
     gap = _vanish_or_skip(peer)["connected_to_rules_s"]
     report["connected_to_rules_s"], report["window"] = gap, vanish.window(gap)
@@ -705,7 +711,7 @@ def _vanished_run(api, hil_config, before, report):
             report["counting"] = _clients_until(api, lambda n: n == before + 1, ACK_BUDGET_S)
             if report["counting"][-1] == before + 1:
                 _vanish_and_watch(api, peer, before, report)
-        report["settled"] = _clients_until(api, lambda n: n < before, RELEASE_SETTLE_S)[-1]
+        report["settled"] = _settled(api, before)
         report["serial_lines"] = log.lines() if log is not None else None
 
 

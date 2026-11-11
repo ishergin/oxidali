@@ -27,6 +27,8 @@ SERVER_WAIT_S = 30.0
 SETTLE_S = 10.0
 POLL_S = 0.05
 QUICK_S = 0.05
+RELEASE_TEST_S = 2.0
+LATE_RELEASE_READS = 5
 FAILSAFE_TEST_S = 1
 HOLD_TEST_S = 4
 HELLO = json.dumps({"op": "hello", "channels": ["diagnostics"]}).encode()
@@ -620,9 +622,11 @@ def test_the_hardware_test_skips_on_the_missing_go_ahead_before_it_touches_anyth
 
 class World:
     def __init__(self, clients):
-        self.clients = clients
+        self.clients, self.due = clients, []
 
     def diagnostics(self):
+        if self.due:
+            self.clients += self.due.pop(0)
         return {"websocket": {"clients": self.clients, "inbox_overflow_total": 0}}
 
 
@@ -643,7 +647,8 @@ class StubPeer:
         return {"ev": vanish.VANISHED, "connected_to_rules_s": 0.5}
 
     def release(self):
-        self.world.clients += self.script.get("at_release", 0)
+        late = self.script.get("reads_to_release", 0)
+        self.world.due = [0] * late + [self.script.get("at_release", 0)]
         return self.script.get("released", vanish.CLEAN_RELEASE)
 
     def stop(self):
@@ -690,6 +695,7 @@ def hardware(monkeypatch):
                         lambda cfg: types.SimpleNamespace(monitor_alive=False))
     for name in ("ACK_BUDGET_S", "RELEASE_SETTLE_S", "VANISH_POLL_S", "COUNT_POLL_S"):
         monkeypatch.setattr(test_ws, name, QUICK_S)
+    monkeypatch.setattr(test_ws, "RELEASE_BUDGET_S", RELEASE_TEST_S)
     yield Hardware(monkeypatch)
     assert reached == []
 
@@ -736,10 +742,12 @@ def test_a_client_the_count_never_showed_is_inconclusive_and_needs_no_sweep(hard
     assert hardware.sweeps == []
 
 
-def test_a_slot_held_through_the_window_and_freed_by_the_release_is_red(hardware, monkeypatch):
+@pytest.mark.parametrize("reads_to_release", [0, LATE_RELEASE_READS])
+def test_a_slot_held_through_the_window_and_freed_by_the_release_is_red(hardware, monkeypatch,
+                                                                        reads_to_release):
     monkeypatch.setattr(vanish, "OVERRUN_S", 0.0)
     hardware.window = (0.0, QUICK_S * 4)
     with pytest.raises(AssertionError, match="keepalive did not reclaim it"):
-        hardware.run({"at_release": -1})
+        hardware.run({"at_release": -1, "reads_to_release": reads_to_release})
     assert hardware.report["verdict"] == vanish.NEVER_FREED
     assert hardware.survived == [True]
