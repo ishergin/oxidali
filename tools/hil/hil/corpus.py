@@ -391,7 +391,7 @@ WIRE_CLASSES = (
     ("persist_overlap", re.compile(r"DALI persist overlap:")),
     ("arbitration", re.compile(r"DALI arbitration:")),
     ("stack_census", re.compile(r"task stack hwm")),
-    ("heap_census", re.compile(r"boot heap (?:census|sizes|top|spans|rust) \[")),
+    ("heap_census", re.compile(r"boot heap (?:census|sizes|top|spans|rust|large) \[")),
     ("boot_heap", re.compile(r"boot heap \[")),
     ("boot", re.compile(r"boot:0x[0-9a-f]+|rst:0x|dali2rust .*version|"
                         r"ESP-ROM:|cpu_start:")),

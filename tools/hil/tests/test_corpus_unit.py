@@ -110,6 +110,14 @@ def test_every_class_is_found_and_uninteresting_lines_are_dropped(tmp_path):
     assert (out / "wire" / "captures.log").read_text().count("capture=[") == 2
 
 
+def test_a_large_block_line_is_kept_with_the_heap_census(tmp_path):
+    line = ("2026-09-16T00:00:06.600 W (6) x: boot heap large [after eth] 0/1 "
+            "seen=1 kept=1: 4ff21000+3072:emac_rx\n")
+    report = corpus.capture_wire(_write_log(tmp_path, line), tmp_path / "corpus")
+
+    assert report["classes"]["heap_census"]["seen_in_window"] == 1
+
+
 def test_a_missing_log_is_reported_rather_than_invented(tmp_path):
     report = corpus.capture_wire(tmp_path / "absent.log", tmp_path / "corpus")
     assert report == {"log": str(tmp_path / "absent.log"), "present": False}

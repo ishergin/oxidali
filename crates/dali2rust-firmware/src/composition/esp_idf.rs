@@ -60,10 +60,13 @@ pub fn init_boot() -> (
     Option<Arc<dyn SliceStore>>,
 ) {
     let peripherals = boot_prologue();
+    dali2rust_bsp::heap_walk::record_boot_census("before eth");
     let (link, ip) = setup_eth();
+    dali2rust_bsp::heap_walk::record_boot_census("after eth");
 
     let persistence_slices = init_persistence_store();
     let dali_transport = setup_dali_transport(peripherals.pins.gpio14, peripherals.pins.gpio17);
+    dali2rust_bsp::heap_walk::record_boot_census("after transport");
     let hardware = init_display_oled(
         peripherals.i2c0,
         peripherals.pins.gpio33,

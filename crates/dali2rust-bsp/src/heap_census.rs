@@ -10,8 +10,11 @@ pub const TOP_EXACT_COUNT: usize = 24;
 pub const TOPS_PER_LINE: usize = 8;
 pub const BUCKETS_PER_LINE: usize = 4;
 pub const SPANS_PER_LINE: usize = 2;
-pub const STAGE_SLOTS: usize = 8;
+pub const STAGE_SLOTS: usize = 12;
 pub const STAGE_NAME_BYTES: usize = 24;
+pub const LARGE_SLOTS: usize = 32;
+pub const LARGES_PER_LINE: usize = 2;
+pub const OWNER_NAME_BYTES: usize = 16;
 pub const RUST_CLASSES: usize = crate::rust_heap::SIZE_CLASSES;
 pub const HOLD_BUDGET_US: u32 = 900;
 
@@ -32,6 +35,40 @@ pub struct SpanTally {
     pub hold_us: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OwnerName {
+    pub bytes: [u8; OWNER_NAME_BYTES],
+    pub len: u32,
+}
+
+impl OwnerName {
+    pub fn new(name: &[u8]) -> Self {
+        let mut bytes = [0; OWNER_NAME_BYTES];
+        let len = copy_prefix(&mut bytes, name);
+        for byte in bytes.iter_mut().filter(|byte| **byte == b' ') {
+            *byte = b'_';
+        }
+        Self { bytes, len }
+    }
+
+    pub fn as_str(&self) -> &str {
+        text_of(&self.bytes, self.len)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LargeBlock {
+    pub addr: u32,
+    pub size: u32,
+    pub owner: OwnerName,
+}
+
+impl LargeBlock {
+    pub fn holds(&self, at: u32) -> bool {
+        at.wrapping_sub(self.addr) < self.size
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeapCensus {
     pub used_blocks: u32,
@@ -50,6 +87,8 @@ pub struct HeapCensus {
     pub cut_heaps: u32,
     pub hold_budget_us: u32,
     pub top: [(u32, u32); TOP_EXACT_COUNT],
+    pub large: [LargeBlock; LARGE_SLOTS],
+    pub large_seen: u32,
 }
 
 impl Default for HeapCensus {
@@ -71,6 +110,8 @@ impl Default for HeapCensus {
             cut_heaps: 0,
             hold_budget_us: HOLD_BUDGET_US,
             top: [(0, 0); TOP_EXACT_COUNT],
+            large: [LargeBlock::default(); LARGE_SLOTS],
+            large_seen: 0,
         }
     }
 }
@@ -83,6 +124,28 @@ impl HeapCensus {
             self.add_used(at, size);
         } else {
             self.add_free(at, size);
+        }
+    }
+
+    pub fn note_large(&mut self, addr: u32, size: u32, used: bool) {
+        if !used || size <= EXACT_MAX_BYTES {
+            return;
+        }
+        let at = self.large_seen as usize;
+        self.large_seen = self.large_seen.wrapping_add(1);
+        if let Some(slot) = self.large.get_mut(at) {
+            *slot = LargeBlock { addr, size, owner: OwnerName::default() };
+        }
+    }
+
+    pub fn large_kept(&self) -> usize {
+        (self.large_seen as usize).min(LARGE_SLOTS)
+    }
+
+    pub fn name_owner(&mut self, stack_start: u32, name: &[u8]) {
+        let kept = self.large_kept();
+        if let Some(block) = self.large.iter_mut().take(kept).find(|b| b.holds(stack_start)) {
+            block.owner = OwnerName::new(name);
         }
     }
 
@@ -256,35 +319,33 @@ pub struct StageRecord {
 }
 
 impl StageRecord {
-    pub fn blank() -> Self {
-        Self {
-            name: [0; STAGE_NAME_BYTES],
-            name_len: 0,
-            blocks_before: 0,
-            blocks_after: 0,
-            walk_us: 0,
-            info_us: 0,
-            rust_internal_bytes: 0,
-            rust_psram_bytes: 0,
-            rust_by_class: [0; RUST_CLASSES],
-            census: HeapCensus::default(),
-        }
+    pub fn clear(&mut self) {
+        // SAFETY: every field, nested ones too, is an integer or an aggregate of integers: all-zero bytes are valid.
+        unsafe { core::ptr::write_bytes(core::ptr::from_mut(self), 0, 1) };
+        self.census.hold_budget_us = HOLD_BUDGET_US;
     }
 
     pub fn stage(&self) -> &str {
-        let len = (self.name_len as usize).min(STAGE_NAME_BYTES);
-        core::str::from_utf8(self.name.get(..len).unwrap_or(&[])).unwrap_or("?")
+        text_of(&self.name, self.name_len)
     }
 
     pub fn set_stage(&mut self, stage: &str) {
         self.name = [0; STAGE_NAME_BYTES];
-        let bytes = stage.as_bytes();
-        let len = bytes.len().min(STAGE_NAME_BYTES);
-        if let (Some(into), Some(from)) = (self.name.get_mut(..len), bytes.get(..len)) {
-            into.copy_from_slice(from);
-        }
-        self.name_len = len as u32;
+        self.name_len = copy_prefix(&mut self.name, stage.as_bytes());
     }
+}
+
+fn copy_prefix(into: &mut [u8], from: &[u8]) -> u32 {
+    let len = from.len().min(into.len());
+    if let (Some(into), Some(from)) = (into.get_mut(..len), from.get(..len)) {
+        into.copy_from_slice(from);
+    }
+    len as u32
+}
+
+fn text_of(bytes: &[u8], len: u32) -> &str {
+    let len = (len as usize).min(bytes.len());
+    core::str::from_utf8(bytes.get(..len).unwrap_or(&[])).unwrap_or("?")
 }
 
 pub struct BootCensusLog {
@@ -298,7 +359,7 @@ impl BootCensusLog {
         let at = self.used as usize;
         let record = self.records.get_mut(at)?;
         self.used = self.used.wrapping_add(1);
-        *record = StageRecord::blank();
+        record.clear();
         record.set_stage(stage);
         Some(record)
     }
@@ -320,7 +381,10 @@ impl BootCensusLog {
 }
 
 pub fn lines_per_stage() -> usize {
-    2 + bucket_line_count() + top_line_count() + SPAN_COUNT.div_ceil(SPANS_PER_LINE)
+    2 + bucket_line_count()
+        + top_line_count()
+        + SPAN_COUNT.div_ceil(SPANS_PER_LINE)
+        + LARGE_SLOTS.div_ceil(LARGES_PER_LINE)
 }
 
 pub enum CensusText<'a> {
@@ -329,6 +393,7 @@ pub enum CensusText<'a> {
     Top(TopLine<'a>),
     Spans(SpanLine<'a>),
     Rust(RustLine<'a>),
+    Large(LargeLine<'a>),
     Nothing,
 }
 
@@ -340,6 +405,7 @@ impl Display for CensusText<'_> {
             Self::Top(line) => line.fmt(f),
             Self::Spans(line) => line.fmt(f),
             Self::Rust(line) => line.fmt(f),
+            Self::Large(line) => line.fmt(f),
             Self::Nothing => Ok(()),
         }
     }
@@ -359,10 +425,29 @@ pub fn line_of(record: &StageRecord, at: usize) -> CensusText<'_> {
     if at <= buckets + tops {
         return CensusText::Top(TopLine { stage, census, chunk: at - 1 - buckets });
     }
-    if at == buckets + tops + 1 {
+    tail_line_of(record, at - buckets - tops - 1)
+}
+
+fn tail_line_of(record: &StageRecord, at: usize) -> CensusText<'_> {
+    let span_lines = SPAN_COUNT.div_ceil(SPANS_PER_LINE);
+    if at == 0 {
         return CensusText::Rust(rust_line_of(record));
     }
-    span_line_at(record, at - buckets - tops - 2)
+    if at <= span_lines {
+        return span_line_at(record, at - 1);
+    }
+    large_line_at(record, at - 1 - span_lines)
+}
+
+fn large_line_at(record: &StageRecord, chunk: usize) -> CensusText<'_> {
+    if chunk >= large_line_count(&record.census) {
+        return CensusText::Nothing;
+    }
+    CensusText::Large(LargeLine {
+        stage: record.stage(),
+        census: &record.census,
+        chunk,
+    })
 }
 
 fn rust_line_of(record: &StageRecord) -> RustLine<'_> {
@@ -526,6 +611,38 @@ impl Display for TopLine<'_> {
     }
 }
 
+pub struct LargeLine<'a> {
+    pub stage: &'a str,
+    pub census: &'a HeapCensus,
+    pub chunk: usize,
+}
+
+impl Display for LargeLine<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(
+            f,
+            "boot heap large [{}] {}/{} seen={} kept={}:",
+            self.stage,
+            self.chunk,
+            large_line_count(self.census),
+            self.census.large_seen,
+            self.census.large_kept()
+        )?;
+        let kept = self.census.large.iter().take(self.census.large_kept());
+        for block in kept.skip(self.chunk * LARGES_PER_LINE).take(LARGES_PER_LINE) {
+            write!(f, " {:x}+{}", block.addr, block.size)?;
+            if block.owner.len > 0 {
+                write!(f, ":{}", block.owner.as_str())?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn large_line_count(census: &HeapCensus) -> usize {
+    census.large_kept().div_ceil(LARGES_PER_LINE).max(1)
+}
+
 pub fn top_line_count() -> usize {
     TOP_EXACT_COUNT.div_ceil(TOPS_PER_LINE)
 }
@@ -586,6 +703,16 @@ mod tests {
             cut_heaps: SPAN_COUNT as u32,
             hold_budget_us: US_CEILING,
             top: [(EXACT_MAX_BYTES, INTERNAL_BLOCK_CEILING); TOP_EXACT_COUNT],
+            large: [saturated_large(); LARGE_SLOTS],
+            large_seen: INTERNAL_BLOCK_CEILING,
+        }
+    }
+
+    fn saturated_large() -> LargeBlock {
+        LargeBlock {
+            addr: u32::MAX,
+            size: INTERNAL_BYTE_CEILING,
+            owner: OwnerName::new(&[b'w'; OWNER_NAME_BYTES]),
         }
     }
 
@@ -620,6 +747,9 @@ mod tests {
         }
         for chunk in 0..span_line_count(&census) {
             rendered.push(SpanLine { stage: LONGEST_STAGE, census: &census, chunk }.to_string());
+        }
+        for chunk in 0..large_line_count(&census) {
+            rendered.push(LargeLine { stage: LONGEST_STAGE, census: &census, chunk }.to_string());
         }
         for line in &rendered {
             widest = widest.max(line.len());
@@ -874,7 +1004,7 @@ off=0/0 sum=1/32"
         assert_eq!(log.pending(), 0);
         assert!(log.take_line().is_none());
         assert_eq!(spelled.len(), 2 * lines_per_stage());
-        let spoken = 2 + bucket_line_count() + top_line_count() + 1;
+        let spoken = 2 + bucket_line_count() + top_line_count() + 1 + 1;
         for stage in ["composition start", "after hydrate"] {
             let mine: Vec<&String> = spelled.iter().filter(|line| line.contains(stage)).collect();
             assert_eq!(mine.len(), spoken, "{mine:?}");
@@ -883,6 +1013,7 @@ off=0/0 sum=1/32"
             assert_eq!(mine.iter().filter(|l| l.starts_with("boot heap top")).count(), 3);
             assert_eq!(mine.iter().filter(|l| l.starts_with("boot heap rust")).count(), 1);
             assert_eq!(mine.iter().filter(|l| l.starts_with("boot heap spans")).count(), 1);
+            assert_eq!(mine.iter().filter(|l| l.starts_with("boot heap large")).count(), 1);
         }
         assert_eq!(
             spelled.iter().filter(|line| line.is_empty()).count(),
@@ -891,7 +1022,24 @@ off=0/0 sum=1/32"
     }
 
     #[test]
-    fn a_ninth_stage_finds_no_record_rather_than_overwriting_the_first() {
+    fn an_opened_stage_starts_from_a_clean_record_whatever_the_slot_held() {
+        let mut census = saturated();
+        census.note_large(BLOCK_AT, STACK_BYTES, true);
+        census.name_owner(BLOCK_AT, b"stale");
+        census.hold_budget_us = 1;
+        let mut log = empty_log();
+        log.records[0] = saturated_record(census);
+        let record = log.open_stage("fresh").expect("a free record");
+        assert_eq!(record.stage(), "fresh");
+        assert_eq!((record.blocks_before, record.walk_us, record.rust_internal_bytes), (0, 0, 0));
+        assert_eq!((record.census.used_blocks, record.census.off_table_blocks), (0, 0));
+        assert_eq!((record.census.large_seen, record.census.large[0].addr), (0, 0));
+        assert_eq!(record.census.large[0].owner.len, 0);
+        assert_eq!(record.census.hold_budget_us, HOLD_BUDGET_US);
+    }
+
+    #[test]
+    fn a_stage_past_the_last_record_finds_none_rather_than_overwriting_the_first() {
         let mut log = empty_log();
         for at in 0..STAGE_SLOTS {
             assert!(log.open_stage(&format!("stage {at}")).is_some());
@@ -909,6 +1057,81 @@ off=0/0 sum=1/32"
         assert!("a stage name far longer than the record holds".starts_with(record.stage()));
     }
 
+    const BLOCK_AT: u32 = 0x4ff2_0000;
+    const STACK_BYTES: u32 = 4096;
+
+    #[test]
+    fn only_a_used_block_past_the_exact_table_is_kept_with_its_address() {
+        let mut census = HeapCensus::default();
+        census.note_large(BLOCK_AT, EXACT_MAX_BYTES, true);
+        census.note_large(BLOCK_AT + 0x2000, EXACT_MAX_BYTES + EXACT_STEP_BYTES, false);
+        census.note_large(BLOCK_AT + 0x4000, EXACT_MAX_BYTES + EXACT_STEP_BYTES, true);
+        assert_eq!(census.large_seen, 1);
+        assert_eq!(census.large_kept(), 1);
+        assert_eq!(census.large[0].addr, BLOCK_AT + 0x4000);
+        assert_eq!(census.large[0].size, EXACT_MAX_BYTES + EXACT_STEP_BYTES);
+    }
+
+    #[test]
+    fn the_large_table_keeps_the_first_blocks_and_only_counts_the_rest() {
+        let mut census = HeapCensus::default();
+        let extra = 8;
+        for at in 0..(LARGE_SLOTS as u32 + extra) {
+            census.note_large(BLOCK_AT + at * STACK_BYTES, STACK_BYTES, true);
+        }
+        assert_eq!(census.large_seen, LARGE_SLOTS as u32 + extra);
+        assert_eq!(census.large_kept(), LARGE_SLOTS);
+        assert_eq!(census.large[0].addr, BLOCK_AT, "a block past the table must not wrap onto the first");
+        assert_eq!(census.large[LARGE_SLOTS - 1].addr, BLOCK_AT + (LARGE_SLOTS as u32 - 1) * STACK_BYTES);
+        let line = LargeLine { stage: "s", census: &census, chunk: 0 }.to_string();
+        assert!(line.contains(&format!("seen={} kept={LARGE_SLOTS}:", LARGE_SLOTS as u32 + extra)), "{line}");
+    }
+
+    #[test]
+    fn a_block_takes_the_name_of_the_task_whose_stack_starts_inside_it() {
+        let mut census = HeapCensus::default();
+        census.note_large(BLOCK_AT, STACK_BYTES, true);
+        census.note_large(BLOCK_AT + STACK_BYTES, STACK_BYTES, true);
+        census.note_large(BLOCK_AT + 4 * STACK_BYTES, STACK_BYTES, true);
+        census.name_owner(BLOCK_AT + 16, b"Tmr Svc");
+        census.name_owner(BLOCK_AT + 2 * STACK_BYTES, b"outside");
+        census.name_owner(BLOCK_AT - 16, b"below");
+        census.name_owner(BLOCK_AT + 4 * STACK_BYTES + STACK_BYTES - 1, b"last byte");
+        assert_eq!(census.large[0].owner.as_str(), "Tmr_Svc");
+        assert_eq!(census.large[1].owner.len, 0, "a stack starting at the next block's end is not this one's");
+        assert_eq!(census.large[2].owner.as_str(), "last_byte");
+    }
+
+    #[test]
+    fn the_large_lines_spell_every_kept_block_once_with_its_owner() {
+        let mut census = HeapCensus::default();
+        for at in 0..3 {
+            census.note_large(BLOCK_AT + at * STACK_BYTES, STACK_BYTES, true);
+        }
+        census.name_owner(BLOCK_AT + STACK_BYTES, b"main");
+        let mut record = saturated_record(census);
+        record.set_stage("after eth");
+        let lines: Vec<String> = (0..LARGE_SLOTS.div_ceil(LARGES_PER_LINE))
+            .map(|chunk| large_line_at(&record, chunk).to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "boot heap large [after eth] 0/2 seen=3 kept=3: 4ff20000+4096 4ff21000+4096:main",
+                "boot heap large [after eth] 1/2 seen=3 kept=3: 4ff22000+4096",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stage_with_no_large_block_still_says_so_in_one_line() {
+        let record = saturated_record(HeapCensus::default());
+        assert_eq!(large_line_count(&record.census), 1);
+        assert_eq!(large_line_at(&record, 0).to_string(), "boot heap large [] 0/1 seen=0 kept=0:");
+        assert!(matches!(large_line_at(&record, 1), CensusText::Nothing));
+    }
+
     #[test]
     fn every_chunked_line_count_covers_its_whole_table() {
         assert_eq!(bucket_line_count(), 3);
@@ -916,5 +1139,6 @@ off=0/0 sum=1/32"
         assert_eq!(top_line_count(), 3);
         assert!(top_line_count() * TOPS_PER_LINE >= TOP_EXACT_COUNT);
         assert!(span_line_count(&saturated()) * SPANS_PER_LINE >= SPAN_COUNT);
+        assert!(large_line_count(&saturated()) * LARGES_PER_LINE >= LARGE_SLOTS);
     }
 }

@@ -17,12 +17,20 @@ SPANS_RE = re.compile(
 RUST_RE = re.compile(
     r"boot heap rust \[([^\]]+)\]: internal=(\d+) psram=(\d+)((?: c\d+:\d+)*)"
 )
+LARGE_RE = re.compile(
+    r"boot heap large \[([^\]]+)\] (\d+)/(\d+) seen=(\d+) kept=(\d+):"
+    r"((?: [0-9a-f]+\+\d+(?::\S+)?)*)"
+)
 NO_TABLE_RE = re.compile(r"boot heap census \[([^\]]+)\]: no PSRAM")
 
 BUCKET_ENTRY_RE = re.compile(r"b(\d+):(\d+)/(\d+)")
 TOP_ENTRY_RE = re.compile(r"(\d+)x(\d+)")
 SPAN_ENTRY_RE = re.compile(r"(\d+)@([0-9a-f]+):(\d+)/(\d+)/(\d+)us")
 CLASS_ENTRY_RE = re.compile(r"c(\d+):(\d+)")
+LARGE_ENTRY_RE = re.compile(r"([0-9a-f]+)\+(\d+)(?::(\S+))?")
+
+ARRIVAL_MIN_BYTES = 1024
+TOP_EXACT_COUNT = 24
 
 
 def _stage(raw: str) -> str:
@@ -60,6 +68,11 @@ class StageCensus:
     rust_internal: Optional[int] = None
     rust_psram: Optional[int] = None
     rust_classes: Dict[int, int] = field(default_factory=dict)
+    large: Dict[Tuple[int, int], str] = field(default_factory=dict)
+    large_chunks: Set[int] = field(default_factory=set)
+    large_chunks_total: Optional[int] = None
+    large_seen: Optional[int] = None
+    large_kept: Optional[int] = None
 
     def bucket_sums(self) -> Tuple[int, int]:
         blocks = sum(entry[0] for entry in self.buckets.values())
@@ -142,6 +155,10 @@ def _read_line(line: str, at) -> None:
     rust = RUST_RE.search(line)
     if rust:
         _read_rust(at(_stage(rust.group(1)), False), rust)
+        return
+    large = LARGE_RE.search(line)
+    if large:
+        _read_large(at(_stage(large.group(1)), False), large)
 
 
 def _read_header(entry: StageCensus, found) -> None:
@@ -197,6 +214,15 @@ def _read_rust(entry: StageCensus, found) -> None:
         entry.rust_classes[int(at)] = int(byte_count)
 
 
+def _read_large(entry: StageCensus, found) -> None:
+    entry.large_chunks.add(int(found.group(2)))
+    entry.large_chunks_total = int(found.group(3))
+    entry.large_seen = int(found.group(4))
+    entry.large_kept = int(found.group(5))
+    for addr, size, owner in LARGE_ENTRY_RE.findall(found.group(6)):
+        entry.large[(int(addr, 16), int(size))] = owner
+
+
 def verdicts(entry: StageCensus) -> List[str]:
     if entry.refused:
         return ["not measured: PSRAM refused the census table"]
@@ -219,9 +245,9 @@ def verdicts(entry: StageCensus) -> List[str]:
             % (entry.used_blocks, entry.ref_before)
         )
     out += _buckets_complete(entry)
-    out += _chunked_complete(entry, "a top-size", len(entry.top_by_chunk),
+    out += _chunked_complete(entry, "top-size", len(entry.top_by_chunk),
                              entry.top_chunks_total)
-    out += _chunked_complete(entry, "a heap", len(entry.span_chunks),
+    out += _chunked_complete(entry, "heap", len(entry.span_chunks),
                              entry.span_chunks_total)
     if entry.rust_internal is None:
         out.append("no Rust-share line reached the log: the C share cannot be taken")
@@ -242,12 +268,12 @@ def _chunked_complete(entry: StageCensus, what: str, seen: int,
     if total is None:
         return ["no %s line reached the log for this stage" % what]
     if seen != total:
-        return ["%s line is missing from the log (%d of %d)" % (what, seen, total)]
+        return ["a %s line is missing from the log (%d of %d)" % (what, seen, total)]
     return []
 
 
 def _buckets_complete(entry: StageCensus) -> List[str]:
-    out = _chunked_complete(entry, "a bucket", len(entry.bucket_chunks),
+    out = _chunked_complete(entry, "bucket", len(entry.bucket_chunks),
                             entry.bucket_chunks_total)
     if out:
         return out
@@ -258,6 +284,48 @@ def _buckets_complete(entry: StageCensus) -> List[str]:
             % (blocks, byte_count, entry.sum_blocks, entry.sum_bytes)
         )
     return out
+
+
+def large_verdicts(entry: StageCensus) -> List[str]:
+    if entry.refused or not entry.header_seen:
+        return verdicts(entry)[:1]
+    out = _chunked_complete(entry, "large-block", len(entry.large_chunks),
+                            entry.large_chunks_total)
+    if out:
+        return out
+    if entry.large_kept is not None and len(entry.large) != entry.large_kept:
+        out.append(
+            "the large-block lines carry %d blocks, their header says %d kept"
+            % (len(entry.large), entry.large_kept)
+        )
+    if entry.large_seen is not None and entry.large_seen > (entry.large_kept or 0):
+        out.append(
+            "more large blocks than the table holds (%d seen, %d kept)"
+            % (entry.large_seen, entry.large_kept or 0)
+        )
+    out += _walk_doubts(entry)
+    return out
+
+
+def _walk_doubts(entry: StageCensus) -> List[str]:
+    out = []
+    if entry.cut_heaps:
+        out.append("a cut heap traversal hides its blocks")
+    if entry.raced():
+        out.append("the heap moved during the walk")
+    return out
+
+
+def large_whole(entry: StageCensus) -> bool:
+    return not large_verdicts(entry)
+
+
+def top_doubts(entry: StageCensus) -> List[str]:
+    if entry.refused or not entry.header_seen:
+        return verdicts(entry)[:1]
+    out = _chunked_complete(entry, "top-size", len(entry.top_by_chunk),
+                            entry.top_chunks_total)
+    return out + _walk_doubts(entry)
 
 
 def believable(entry: StageCensus) -> bool:
@@ -289,6 +357,8 @@ def report_lines(boots: List[Boot]) -> List[str]:
     for stage in order:
         out += _stage_lines(found[stage])
     out += _delta_lines(order, found)
+    out += large_lines(order, found)
+    out += arrival_lines(order, found)
     return out
 
 
@@ -343,3 +413,84 @@ def top_lines(entry: StageCensus) -> List[str]:
     for size, blocks in top:
         out.append("    %6d x %5d = %8d" % (size, blocks, size * blocks))
     return out
+
+
+LargeKey = Tuple[int, int]
+
+
+def _large_spans(order: List[str], found: Dict[str, StageCensus]):
+    first: Dict[LargeKey, str] = {}
+    last: Dict[LargeKey, str] = {}
+    owner: Dict[LargeKey, str] = {}
+    for stage in order:
+        for key, name in found[stage].large.items():
+            first.setdefault(key, stage)
+            last[key] = stage
+            if name:
+                owner[key] = name
+    return first, last, owner
+
+
+def large_lines(order: List[str], found: Dict[str, StageCensus]) -> List[str]:
+    if all(found[stage].large_chunks_total is None for stage in order):
+        return ["  large blocks: no stage reported its blocks past 1020 B"]
+    whole = [stage for stage in order if large_whole(found[stage])]
+    out = _large_table(whole, found)
+    for stage in order:
+        for note in large_verdicts(found[stage]):
+            out.append("    *** %s: %s; left out, so a block first shown after it "
+                       "may have arrived at it" % (stage, note))
+    return out
+
+
+def _large_table(whole: List[str], found: Dict[str, StageCensus]) -> List[str]:
+    if not whole:
+        return ["  large blocks: no stage carried its whole large-block table"]
+    first, last, owner = _large_spans(whole, found)
+    rank = {stage: at for at, stage in enumerate(whole)}
+    out = [
+        "  large blocks (used, past 1020 B) by the first whole stage that shows them; "
+        "those under %s were there before it:" % whole[0]
+    ]
+    for key in sorted(first, key=lambda key: (rank[first[key]], key[0])):
+        gone = "" if last[key] == whole[-1] else "  gone after %s" % last[key]
+        out.append(
+            "    %-18s %8x %6d  %s%s"
+            % (first[key], key[0], key[1], owner.get(key, "(unnamed)"), gone)
+        )
+    return out
+
+
+def arrivals(before: StageCensus, after: StageCensus) -> List[Tuple[int, int, str]]:
+    was = dict(before.top())
+    full = len(was) >= TOP_EXACT_COUNT
+    floor = min((size * blocks for size, blocks in was.items()), default=0)
+    out = []
+    for size, blocks in after.top():
+        earlier = was.get(size, floor // size if full else 0)
+        grown = blocks - earlier
+        if grown > 0 and size * grown >= ARRIVAL_MIN_BYTES:
+            out.append((size, grown, _arrival_kind(size in was, full)))
+    return out
+
+
+def _arrival_kind(present: bool, full: bool) -> str:
+    if present:
+        return ""
+    return " (entered the top: at least)" if full else " (new in top)"
+
+
+def arrival_lines(order: List[str], found: Dict[str, StageCensus]) -> List[str]:
+    out = ["  top-size arrivals between neighbouring stages (%d B or more):" % ARRIVAL_MIN_BYTES]
+    for was, now in zip(order, order[1:]):
+        doubts = ["%s: %s" % (stage, note) for stage in (was, now)
+                  for note in top_doubts(found[stage])]
+        if doubts:
+            out.append("    %s -> %s  not compared: %s" % (was, now, "; ".join(doubts)))
+            continue
+        moved = arrivals(found[was], found[now])
+        if not moved:
+            continue
+        spelled = " ".join("%dx+%d%s" % entry for entry in moved)
+        out.append("    %s -> %s  %s" % (was, now, spelled))
+    return out if len(out) > 1 else []

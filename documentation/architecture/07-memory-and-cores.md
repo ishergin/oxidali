@@ -137,7 +137,7 @@ unless named.
   registry worker samples once per turn, tagged with the payload kind that just ran.
 - The census line (`task stack hwm (B free…): <task>=<bytes> …`), the boot-stage lines
   (`boot heap [<stage>]: internal free=…`, `internal heap before httpd: free=…`) and the
-  heap-census lines (`boot heap census|sizes|top|spans|rust [<stage>] …`) are parsed by the
+  heap-census lines (`boot heap census|sizes|top|spans|rust|large [<stage>] …`) are parsed by the
   bench's validity section and `hil corpus`: reword one, or rename a stage, together with
   `tools/hil/hil/validity.py`, `tools/hil/hil/heap_census.py`, `tools/hil/hil/corpus.py`
   and `boot_heap_budget.txt`. Each chunked census line carries its own index and the
@@ -215,8 +215,20 @@ unless named.
   histogram, an exact count per allocation size up to about 1 KiB, and each internal
   heap's used share, walked with `heap_caps_walk` into a PSRAM table
   (`dali2rust-bsp::heap_census` holds the tally and its lines,
-  `::heap_walk` the walk). It names no owner — it prices the hypotheses about the
-  unattributed internal bytes against each other — and its header repeats the block
+  `::heap_walk` the walk). It prices the hypotheses about the unattributed internal bytes
+  against each other, and names an owner only where the heap itself can: the first
+  `LARGE_SLOTS` used blocks past the exact table are kept with their address and the rest
+  only counted, and a kept block whose range holds a task's stack start carries that
+  task's name. The other large blocks are placed by the stage that first shows them, which
+  is why the census also runs before and after the Ethernet bring-up and after the
+  persistence store and the DALI transport, ahead of the composition. The bench report
+  lists each large block under the first stage whose large-block table is whole (every
+  line arrived, nothing past the table, the walk neither cut nor raced), and each
+  top-table size that grows by `ARRIVAL_MIN_BYTES` or more between two neighbouring
+  stages whose top table arrived whole from a walk neither cut nor raced; a size absent
+  from a full earlier top table is counted as a lower bound. A stage that reached the log
+  and is left out is named; one missing from the log is not, so the stage list above the
+  table is part of the reading. Its header repeats the block
   count `heap_caps_get_info` saw before and after the walk, so a stage whose heap moved
   underneath is read as raced rather than reconciled. Beside it the stage logs the Rust
   heap's live internal bytes by size class, which is what separates the C share from ours:
@@ -238,4 +250,4 @@ unless named.
   (`runtime_heap_budget.txt`).
 - Boot cost is logged per stage (composition start, around hydration, around the OTA
   worker, after the workers, before httpd); those are the stages
-  `boot_heap_budget.txt` gates.
+  `boot_heap_budget.txt` gates. The census's own earlier stages are not on that ladder.
