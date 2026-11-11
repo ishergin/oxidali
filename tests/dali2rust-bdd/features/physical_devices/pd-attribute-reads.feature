@@ -431,3 +431,19 @@ Feature: Physical-device attribute reads
     Then the response status should be 202
     And the last operation eventually succeeds
     And the forward frame "0191" should have reached the wire 3 times
+
+  @id:PD-318
+  Scenario: An operator's read past the DALI queue depth is refused at once, not queued
+    Given a discovery script for all 64 short addresses
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds within the full-segment budget
+    Given the DALI transport blocks indefinitely
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    And the DALI transport eventually holds an exchange
+    When I start a runtime-status read of adapter 0's physical devices 1 to 63
+    Then every one of those reads should have been answered 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 503
+    And the JSON error should be "commands_ingress_overload"
+    When the DALI transport unblocks

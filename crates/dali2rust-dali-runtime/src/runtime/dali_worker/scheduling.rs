@@ -16,9 +16,7 @@ pub(super) fn run_command_loop(inputs: &mut WorkerInputs<impl DaliApplicationCon
     let holds = GateHolds::new(read_port);
     while let Ok(frame) = cmd_rx.recv() {
         let mut batch = vec![Queued::new(frame)];
-        while let Some(Queued { frame, riders }) =
-            take_next_command(&mut batch, cmd_rx, publisher, adapter_id, counters)
-        {
+        while let Some(Queued { frame, riders }) = take_next_command(&mut batch, cmd_rx, &env) {
             let scope = frame_scope(&frame, interactive, adapter_id);
             let hold = holds.for_frame(&frame);
             let run = |c: &mut _| process_one(frame, c, &env, &riders);
@@ -101,19 +99,30 @@ impl Queued {
 fn take_next_command(
     batch: &mut Vec<Queued>,
     cmd_rx: &BusSubscriberRx,
-    publisher: &BusPublisher,
-    adapter_id: BusId,
-    counters: &DaliWorkerCounters,
+    env: &WorkerEnv<'_>,
 ) -> Option<Queued> {
     while let Ok(extra) = cmd_rx.try_recv() {
         batch.push(Queued::new(extra));
     }
-    supersede_stale_target_state(batch, publisher, adapter_id, counters);
+    supersede_stale_target_state(batch, env.publisher, env.adapter_id, env.counters);
+    env.interactive.note_queue_depth(queue_places_held(batch, env.adapter_id));
     if batch.is_empty() {
         return None;
     }
-    let index = highest_priority_index(batch, adapter_id);
+    let index = highest_priority_index(batch, env.adapter_id);
     Some(batch.remove(index))
+}
+
+fn queue_places_held(batch: &[Queued], adapter_id: BusId) -> usize {
+    batch
+        .iter()
+        .filter(|queued| match &queued.frame {
+            BusFrame::Command(ce) => {
+                crate::runtime::priority::holds_a_queue_place(&ce.meta, &ce.payload, adapter_id)
+            }
+            _ => false,
+        })
+        .count()
 }
 
 fn highest_priority_index(batch: &[Queued], adapter_id: BusId) -> usize {

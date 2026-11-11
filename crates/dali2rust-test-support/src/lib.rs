@@ -18,7 +18,8 @@ pub use bus::{
 pub use clock::{AdvancingClock, SettableClock, StoppedClock};
 pub use fs::{temp_fs, InMemoryFileSystemHal, temp_slice_store, write_slice};
 pub use ingress_hold::{
-    hold_the_events_ingress_full, hold_the_events_ingress_with_room, HeldEventsIngress,
+    hold_the_events_ingress_full, hold_the_events_ingress_with_room, hold_the_router,
+    HeldEventsIngress,
 };
 pub use net::MockNetworkLink;
 pub use peer::FakePeerController;

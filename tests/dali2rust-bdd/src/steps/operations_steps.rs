@@ -103,7 +103,7 @@ async fn then_every_operation_finishes(world: &mut DaliWorld) {
 
 const FULL_SEGMENT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 
-// PD-240 COMM-098
+// PD-240 COMM-098 PD-318
 #[then("the last operation eventually succeeds within the full-segment budget")]
 async fn then_full_segment_operation_succeeds(world: &mut DaliWorld) {
     wait_for_operation_status_within(world, "succeeded", FULL_SEGMENT_OPERATION_TIMEOUT);

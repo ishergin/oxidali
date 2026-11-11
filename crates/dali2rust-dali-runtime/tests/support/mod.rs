@@ -57,6 +57,15 @@ pub fn dapc_frame() -> u16 {
 }
 
 pub fn read_frame(correlation_id: u64, origin: Origin, groups: DaliAttributeGroup) -> BusFrame {
+    read_frame_of(correlation_id, origin, SHORT, groups)
+}
+
+pub fn read_frame_of(
+    correlation_id: u64,
+    origin: Origin,
+    short_address: u8,
+    groups: DaliAttributeGroup,
+) -> BusFrame {
     BusFrame::command(dali2rust_contracts::bus::command_envelope(
         0,
         correlation_id,
@@ -64,7 +73,7 @@ pub fn read_frame(correlation_id: u64, origin: Origin, groups: DaliAttributeGrou
         Some(origin),
         DaliReadAttributesCommand {
             registry_adapter_id: 0,
-            short_address: SHORT,
+            short_address,
             attribute_groups_mask: groups.mask_bit(),
             memory_banks: MemoryBankReadPreset::None,
         },

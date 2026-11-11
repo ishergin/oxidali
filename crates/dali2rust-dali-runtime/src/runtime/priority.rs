@@ -363,10 +363,39 @@ impl WireArrivalObserver {
     }
 }
 
+pub const OPERATOR_BACKGROUND_QUEUE_DEPTH: usize =
+    dali2rust_domain::registry::MAX_SHORT_ADDRESSES;
+
+const QUEUE_PLACES: u32 = OPERATOR_BACKGROUND_QUEUE_DEPTH as u32;
+
+fn waits_behind_the_queue(priority: WirePriority, origin: Origin) -> bool {
+    origin == Origin::Api && priority != WirePriority::Interactive
+}
+
+pub(crate) fn holds_a_queue_place(
+    meta: &BusEnvelope,
+    payload: &BusCommandPayload,
+    adapter_id: BusId,
+) -> bool {
+    command_wire_priority(meta, payload, adapter_id)
+        .is_some_and(|priority| waits_behind_the_queue(priority, meta.origin))
+}
+
 impl CommandArrivalObserver for WireArrivalObserver {
+    fn admits_command(&self, meta: &BusEnvelope, payload: &BusCommandPayload) -> bool {
+        !holds_a_queue_place(meta, payload, self.adapter_id)
+            || self.gate.reserve_queue_place(QUEUE_PLACES)
+    }
+
     fn observe_command(&self, meta: &BusEnvelope, payload: &BusCommandPayload) {
         if let Some(priority) = command_wire_priority(meta, payload, self.adapter_id) {
             self.gate.note_arrival(priority);
+        }
+    }
+
+    fn withdraw_command(&self, meta: &BusEnvelope, payload: &BusCommandPayload) {
+        if holds_a_queue_place(meta, payload, self.adapter_id) {
+            self.gate.release_queue_place();
         }
     }
 }
@@ -562,6 +591,89 @@ mod tests {
             command_wire_priority(&meta(Origin::Internal, 0), &projector_runtime_update(), OURS),
             None
         );
+    }
+
+    fn operator_read() -> BusCommandPayload {
+        dali2rust_contracts::msg::DaliReadAttributesCommand {
+            registry_adapter_id: 0,
+            short_address: 5,
+            attribute_groups_mask: dali2rust_contracts::msg::DaliAttributeGroup::RuntimeStatus
+                .mask_bit(),
+            memory_banks: dali2rust_contracts::msg::MemoryBankReadPreset::None,
+        }
+        .into()
+    }
+
+    fn observer_at_depth(depth: usize) -> WireArrivalObserver {
+        let gate = Arc::new(WireActivity::new());
+        gate.note_queue_depth(depth);
+        WireArrivalObserver::new(gate, OURS)
+    }
+
+    const FULL: usize = OPERATOR_BACKGROUND_QUEUE_DEPTH;
+
+    #[test]
+    fn an_operators_background_command_is_refused_once_the_queue_holds_its_depth() {
+        let read = operator_read();
+        assert!(observer_at_depth(FULL - 1).admits_command(&meta(Origin::Api, 0), &read));
+        assert!(
+            !observer_at_depth(FULL).admits_command(&meta(Origin::Api, 0), &read),
+            "a full queue still took an operator's read"
+        );
+    }
+
+    #[test]
+    fn an_operators_lamp_command_is_admitted_however_deep_the_queue() {
+        let full = observer_at_depth(usize::MAX);
+        assert!(full.admits_command(&meta(Origin::Api, 0), &dali_command()));
+    }
+
+    #[test]
+    fn paced_and_internal_work_is_admitted_however_deep_the_queue() {
+        let full = observer_at_depth(usize::MAX);
+        for origin in [Origin::Poller, Origin::Internal, Origin::Mqtt, Origin::Hcl] {
+            assert!(
+                full.admits_command(&meta(origin, 0), &operator_read()),
+                "{origin:?} paces its own work and was refused"
+            );
+        }
+    }
+
+    #[test]
+    fn an_admitted_operator_command_holds_its_place_until_it_is_withdrawn() {
+        let observer = observer_at_depth(FULL - 1);
+        let api = meta(Origin::Api, 0);
+        assert!(observer.admits_command(&api, &operator_read()));
+        assert_eq!(observer.gate.queue_depth(), QUEUE_PLACES, "the admission took no place");
+        assert!(!observer.admits_command(&api, &operator_read()), "the last place was handed out twice");
+        observer.withdraw_command(&api, &operator_read());
+        assert_eq!(observer.gate.queue_depth(), QUEUE_PLACES - 1);
+        assert!(observer.admits_command(&api, &operator_read()), "a withdrawn command kept its place");
+    }
+
+    #[test]
+    fn work_that_is_never_refused_takes_and_gives_back_no_place() {
+        let observer = observer_at_depth(1);
+        assert!(observer.admits_command(&meta(Origin::Api, 0), &dali_command()));
+        assert!(observer.admits_command(&meta(Origin::Poller, 0), &operator_read()));
+        assert_eq!(observer.gate.queue_depth(), 1);
+        observer.withdraw_command(&meta(Origin::Poller, 0), &operator_read());
+        observer.withdraw_command(&meta(Origin::Api, 0), &dali_command());
+        assert_eq!(observer.gate.queue_depth(), 1);
+    }
+
+    #[test]
+    fn a_withdrawal_from_an_empty_queue_stays_at_zero() {
+        let observer = observer_at_depth(0);
+        observer.withdraw_command(&meta(Origin::Api, 0), &operator_read());
+        assert_eq!(observer.gate.queue_depth(), 0);
+    }
+
+    #[test]
+    fn another_adapters_command_is_not_ours_to_refuse() {
+        let full = observer_at_depth(usize::MAX);
+        assert!(full.admits_command(&meta(Origin::Api, 1), &operator_read()));
+        assert!(full.admits_command(&meta(Origin::Api, 0), &projector_runtime_update()));
     }
 
     #[test]
