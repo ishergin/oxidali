@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import re
 import shlex
@@ -132,7 +133,7 @@ class Bench:
 
     def peer(self, controller, candidates=None, failsafe_s=None):
         cfg = HilConfig(base="http://127.0.0.1:%d" % controller.port, serial_remote="",
-                        wb_ssh="root@127.0.0.1")
+                        wb_ssh="root@127.0.0.1", allow_wb_packet_filter=True)
         return vanish.VanishingPeer(cfg, nonce=NONCE, candidates=candidates or [str(self.fake)],
                                     failsafe_s=failsafe_s)
 
@@ -394,3 +395,56 @@ def test_the_hardware_test_is_slow_carries_its_id_and_does_not_need_the_serial_c
              test_ws.test_a_client_gone_from_the_network_is_reclaimed_by_keepalive.pytestmark}
     assert "slow" in marks and "serial" not in marks
     assert marks["hil_id"].args == ("HIL-WS-11",)
+
+
+class Untouchable:
+    def __init__(self):
+        self.reached = []
+
+    def __getattr__(self, name):
+        self.reached.append(name)
+        raise AssertionError("the gate let the run reach %s" % name)
+
+
+def _recording(reached, name):
+    def record(*args, **kwargs):
+        reached.append(name)
+        raise AssertionError("the gate let the run reach %s" % name)
+    return record
+
+
+def test_the_go_ahead_is_read_from_its_own_flag_and_off_by_default(monkeypatch):
+    monkeypatch.delenv(vanish.PACKET_FILTER_ENV, raising=False)
+    assert not HilConfig(serial_remote="").allow_wb_packet_filter
+    monkeypatch.setenv(vanish.PACKET_FILTER_ENV, "0")
+    assert not HilConfig(serial_remote="").allow_wb_packet_filter
+    monkeypatch.setenv(vanish.PACKET_FILTER_ENV, "1")
+    assert HilConfig(serial_remote="").allow_wb_packet_filter
+
+
+def test_without_the_go_ahead_nothing_reaches_the_wb_command_builders(monkeypatch):
+    reached = []
+    for name in ("ssh_argv", "remote_command", "vanish_command", "failsafe_command"):
+        monkeypatch.setattr(vanish, name, _recording(reached, name))
+    monkeypatch.setattr(vanish.subprocess, "Popen", _recording(reached, "Popen"))
+    cfg = HilConfig(base="http://127.0.0.1:1", serial_remote="", wb_ssh="root@127.0.0.1",
+                    allow_wb_packet_filter=False)
+    with pytest.raises(vanish.PacketFilterNotAllowed, match=vanish.PACKET_FILTER_ENV):
+        vanish.VanishingPeer(cfg).start()
+    assert reached == []
+    assert "production WB" in vanish.packet_filter_refusal(cfg)
+    assert vanish.packet_filter_refusal(dataclasses.replace(cfg, allow_wb_packet_filter=True)) \
+        is None
+
+
+def test_the_hardware_test_skips_on_the_missing_go_ahead_before_it_touches_anything(
+        monkeypatch):
+    built = []
+    monkeypatch.setattr(vanish, "VanishingPeer", _recording(built, "VanishingPeer"))
+    cfg = HilConfig(base="http://127.0.0.1:1", serial_remote="", wb_ssh="root@127.0.0.1",
+                    allow_wb_packet_filter=False)
+    api, baseline, artifacts = Untouchable(), Untouchable(), Untouchable()
+    with pytest.raises(pytest.skip.Exception, match=vanish.PACKET_FILTER_ENV):
+        test_ws.test_a_client_gone_from_the_network_is_reclaimed_by_keepalive(
+            api, cfg, baseline, artifacts)
+    assert built == [] and api.reached == baseline.reached == artifacts.reached == []

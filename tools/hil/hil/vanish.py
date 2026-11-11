@@ -35,6 +35,11 @@ IPTABLES_CANDIDATES = ("iptables-legacy", "iptables")
 CHAINS = ("OUTPUT", "INPUT")
 INTERPRETER = "python3"
 
+PACKET_FILTER_ENV = "HIL_ALLOW_WB_PACKET_FILTER"
+PACKET_FILTER_REFUSED = (
+    "HIL-WS-11 puts two iptables DROP rules on the production WB, so it runs only with %s=1, "
+    "the owner's go-ahead for this run (tools/hil/STRATEGY.md §4.10)" % PACKET_FILTER_ENV)
+
 CONNECTED = "connected"
 REFUSED = "refused"
 VANISHED = "vanished"
@@ -58,6 +63,10 @@ Tuple4 = collections.namedtuple("Tuple4", "local_ip local_port peer_ip peer_port
 
 
 class VanishUnavailable(RuntimeError):
+    pass
+
+
+class PacketFilterNotAllowed(RuntimeError):
     pass
 
 
@@ -287,6 +296,10 @@ main()
 """
 
 
+def packet_filter_refusal(cfg):
+    return None if cfg.allow_wb_packet_filter else PACKET_FILTER_REFUSED
+
+
 def controller_address(base):
     parts = urlsplit(base if "//" in base else "http://" + base)
     return parts.hostname, parts.port or DEFAULT_HTTP_PORT
@@ -418,6 +431,9 @@ class VanishingPeer:
         self._proc = None
 
     def start(self):
+        refusal = packet_filter_refusal(self.cfg)
+        if refusal is not None:
+            raise PacketFilterNotAllowed(refusal)
         host, port = controller_address(self.cfg.base)
         remote = remote_command(host, port, self.candidates, self.hold_s)
         try:

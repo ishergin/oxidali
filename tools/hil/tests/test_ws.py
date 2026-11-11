@@ -701,6 +701,9 @@ def _verdict_facts(before, report, freed):
 @pytest.mark.slow
 def test_a_client_gone_from_the_network_is_reclaimed_by_keepalive(
         api, hil_config, ws_baseline, test_artifacts):
+    refusal = vanish.packet_filter_refusal(hil_config)
+    if refusal is not None:
+        pytest.skip(refusal)
     before = _clients(api)
     if before >= WS_CLIENT_LIMIT:
         pytest.skip("%d WebSocket clients are connected already (a web UI tab counts), and the "
