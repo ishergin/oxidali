@@ -31,6 +31,7 @@ struct EspPartitionFlash {
 
 // SAFETY: a static partition descriptor and a read-only mapping never unmapped; partition APIs lock internally.
 unsafe impl Send for EspPartitionFlash {}
+// SAFETY: same.
 unsafe impl Sync for EspPartitionFlash {}
 
 #[cfg(esp_idf_spiram_xip_from_psram)]

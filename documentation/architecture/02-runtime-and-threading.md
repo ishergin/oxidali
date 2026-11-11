@@ -43,7 +43,8 @@ registry locking → [06](06-registry-and-persistence.md).
 - The primary channel is read with a blocking `recv()` or a bounded `recv_timeout()`.
   Secondary inboxes are drained with `try_recv()` only after the primary wait returns.
   `dali2rust_bus::recv_then_drain` is the single-inbox shape: one bounded wait, then
-  whatever that inbox already holds.
+  whatever that inbox already holds; `wait_then_drain` is the same without a bound, for
+  a worker with no work of its own between frames.
 - Never a `try_recv()` + `thread::sleep` polling loop. Never `thread::park()` on the main
   thread: `main` hands the heartbeat to the `census` thread and returns; only if that
   spawn fails does the 1 s heartbeat loop run on `main`.

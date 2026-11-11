@@ -40,7 +40,7 @@ BDD conventions → [05](05-testing-and-bdd.md); updates over the network →
 | Host | `check`, `test` (`--all-targets` over `scripts/host_crates.txt`, so no doc-tests), `quick <crates…>` (check all, test the named crates and BDD), `clippy` (`-D warnings`), `clippy-pedantic-advisory`, `fmt` (manual; rustfmt is no gate — wrap only lines you touch) |
 | BDD | `bdd` (`bdd_shards=N` over N processes), `bdd-check`, `bdd-stage`, `check-stage-clean` |
 | Gates | `verify`; `ci` = clippy, test, bdd, verify, `esp-check`, `gear-sim-check`; `contracts-check`; `verify-release` (the maintainer's sync state: UI bundle, pushed cards) |
-| Firmware | `esp-check` (`cargo check` on the P4 triple), `p4-fw-build`, `p4-isr-iram-check`, `p4-fw-flash` |
+| Firmware | `esp-check` (clippy on the P4 triple, denying only an undocumented `unsafe`), `p4-fw-build`, `p4-isr-iram-check`, `p4-fw-flash` |
 | Other | emulator `gear-sim-check` / `gear-sim-isr-iram-check`; `gc`, `gc-status`; `hil-preflight`, `hil-smoke`, `hil-default`, `hil-slow` |
 
 - `just ci` before a commit lands and after anything that moves a contract, a wire order
@@ -234,7 +234,8 @@ unchecked image, and `hil flash` refuses one unless told `--allow-red-isr`.
 - Rationale lives in this directory and the ADRs; a workaround for an external defect in
   [`known-issues.md`](../product-design/known-issues.md).
 - An `#[allow(…)]` carries `reason = "…"` instead of a comment; `just clippy` denies one
-  without it, and an `unsafe` block without `// SAFETY:`.
+  without it, and an `unsafe` block without `// SAFETY:`, which `just esp-check` also
+  denies in the code only the P4 triple compiles.
 - `scripts/verify_comments.py` enforces it; `--strip <paths>` removes violations and
   leaves a file alone if its tokens would change. A branch that conflicts with the strip
   takes its own version and re-runs `python3 scripts/verify_comments.py --strip <paths>`.

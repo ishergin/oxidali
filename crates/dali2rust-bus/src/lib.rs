@@ -60,7 +60,7 @@ pub use bus::{
 pub use publish_or_drop::publish_or_drop;
 
 #[cfg(feature = "std")]
-pub use worker_loop::{recv_then_drain, WorkerTurn};
+pub use worker_loop::{recv_then_drain, wait_then_drain, WorkerTurn};
 
 #[cfg(feature = "std")]
 pub use publish_required::{
