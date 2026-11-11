@@ -154,6 +154,7 @@ fn frame_priority_key(frame: &BusFrame, adapter_id: BusId) -> u8 {
 enum SupersedeKind {
     TargetState,
     RecallScene { scene_id: u8 },
+    OperatorRead,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -173,21 +174,7 @@ fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<Superse
         return None;
     }
     match &ce.payload {
-        BusCommandPayload::DaliSetTargetStateCommand(ts) => {
-            let identity = match ts.scope {
-                DaliTargetScope::Short => ts.short_address,
-                DaliTargetScope::VirtualLamp => ts.virtual_lamp_id,
-                DaliTargetScope::Group => ts.group_id,
-                _ => return None,
-            };
-            Some(SupersedeKey {
-                kind: SupersedeKind::TargetState,
-                adapter: ts.registry_adapter_id,
-                scope: ts.scope as u8,
-                identity,
-                hold_hcl: ts.hold_hcl,
-            })
-        }
+        BusCommandPayload::DaliSetTargetStateCommand(ts) => target_state_key(ts),
         BusCommandPayload::DaliRecallSceneCommand(rc) => Some(SupersedeKey {
             kind: SupersedeKind::RecallScene { scene_id: rc.scene_id },
             adapter: rc.registry_adapter_id,
@@ -195,8 +182,35 @@ fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<Superse
             identity: recall_identity(rc),
             hold_hcl: rc.hold_hcl,
         }),
+        BusCommandPayload::DaliReadAttributesCommand(ar) if ce.meta.origin == Origin::Api => {
+            Some(SupersedeKey {
+                kind: SupersedeKind::OperatorRead,
+                adapter: ar.registry_adapter_id,
+                scope: DaliTargetScope::Short as u8,
+                identity: ar.short_address,
+                hold_hcl: false,
+            })
+        }
         _ => None,
     }
+}
+
+fn target_state_key(
+    ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
+) -> Option<SupersedeKey> {
+    let identity = match ts.scope {
+        DaliTargetScope::Short => ts.short_address,
+        DaliTargetScope::VirtualLamp => ts.virtual_lamp_id,
+        DaliTargetScope::Group => ts.group_id,
+        _ => return None,
+    };
+    Some(SupersedeKey {
+        kind: SupersedeKind::TargetState,
+        adapter: ts.registry_adapter_id,
+        scope: ts.scope as u8,
+        identity,
+        hold_hcl: ts.hold_hcl,
+    })
 }
 
 fn recall_identity(rc: &dali2rust_contracts::msg::DaliRecallSceneCommand) -> u8 {
@@ -431,6 +445,38 @@ mod tests {
         let (kept, superseded) = settle_batch(batch, &[true, false], &[]);
         assert_eq!(shape(&kept), vec![(Some(SECOND), vec![])]);
         assert_eq!(superseded, vec![RIDER, FIRST]);
+    }
+
+    fn read(origin: Origin, short: u8) -> BusFrame {
+        BusFrame::command(dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            FIRST,
+            BusId::default().0,
+            Some(origin),
+            dali2rust_contracts::msg::DaliReadAttributesCommand {
+                registry_adapter_id: 0,
+                short_address: short,
+                attribute_groups_mask: 1,
+                memory_banks: dali2rust_contracts::msg::MemoryBankReadPreset::None,
+            },
+        ))
+    }
+
+    fn read_key(origin: Origin, short: u8) -> Option<SupersedeKey> {
+        supersede_coalesce_key(&read(origin, short), BusId::default())
+    }
+
+    #[test]
+    fn an_operator_read_shares_its_key_with_the_next_read_of_the_same_short_only() {
+        let key = read_key(Origin::Api, 5);
+        assert!(key.is_some(), "an operator read was given no key, so nothing displaces it");
+        assert_eq!(key, read_key(Origin::Api, 5));
+        assert_ne!(key, read_key(Origin::Api, 6), "a read of another short displaced this one");
+    }
+
+    #[test]
+    fn a_read_nobody_cancelled_keeps_its_place() {
+        assert_eq!(read_key(Origin::Poller, 5), None, "a poller read awaits its own outcome");
     }
 
     #[test]
