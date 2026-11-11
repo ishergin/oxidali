@@ -654,6 +654,7 @@ pub struct WireActivity {
     start: std::time::Instant,
     last_ms: core::sync::atomic::AtomicU32,
     arrivals: [core::sync::atomic::AtomicU32; YIELDABLE_PRIORITIES],
+    queued: core::sync::atomic::AtomicU32,
 }
 
 const YIELDABLE_PRIORITIES: usize = 2;
@@ -673,7 +674,35 @@ impl WireActivity {
                 core::sync::atomic::AtomicU32::new(0),
                 core::sync::atomic::AtomicU32::new(0),
             ],
+            queued: core::sync::atomic::AtomicU32::new(0),
         }
+    }
+
+    pub fn note_queue_depth(&self, depth: usize) {
+        let depth = u32::try_from(depth).unwrap_or(u32::MAX);
+        self.queued.store(depth, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn queue_depth(&self) -> u32 {
+        self.queued.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn reserve_queue_place(&self, depth: u32) -> bool {
+        self.queued
+            .fetch_update(
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+                |queued| (queued < depth).then_some(queued + 1),
+            )
+            .is_ok()
+    }
+
+    pub fn release_queue_place(&self) {
+        let _ = self.queued.fetch_update(
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+            |queued| queued.checked_sub(1),
+        );
     }
 
     fn now_ms(&self) -> u32 {
@@ -866,6 +895,20 @@ mod wire_activity_tests {
         let gate = Arc::new(WireActivity::new());
         gate.note_arrival(WirePriority::Interactive);
         assert!(!lease(&gate, WirePriority::Unattended).should_yield());
+    }
+
+    #[test]
+    fn a_queue_place_is_reserved_below_the_depth_only_and_a_count_rewrites_it() {
+        let gate = WireActivity::new();
+        assert!(gate.reserve_queue_place(2));
+        assert!(gate.reserve_queue_place(2));
+        assert!(!gate.reserve_queue_place(2), "a third place out of two");
+        gate.release_queue_place();
+        assert_eq!(gate.queue_depth(), 1);
+        gate.note_queue_depth(0);
+        gate.release_queue_place();
+        assert_eq!(gate.queue_depth(), 0, "a release below zero wrapped");
+        assert!(gate.reserve_queue_place(2));
     }
 
     #[test]

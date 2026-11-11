@@ -33,7 +33,8 @@ how workers wait â†’ [02](02-runtime-and-threading.md); DALI worker priorities â
   queued: a command then dropped at a full ingress has still been announced, which costs
   at most one spurious yield. It exists because the DALI worker cannot see a command it
   has not dequeued; the operator-arrival signal ([09](09-dali-protocol-rules.md)) is
-  raised there.
+  raised there, and so is the refusal of a command the DALI worker's queue has no room
+  for (*Overload and rejection*), which is never announced.
 - The backend is `std_mpsc` on host and ESP-IDF `std` builds, behind the generic
   `Sender<T>` / `Receiver<T>` traits of `dali2rust-bus::channels`.
 
@@ -58,6 +59,7 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 | Commands / events / confirmations ingress | 128 / 64 / 32 |
 | Pending confirmation slots (HTTP bridge) | 24 |
 | DALI worker commands | 128 |
+| DALI worker: operator's background commands admitted | `OPERATOR_BACKGROUND_QUEUE_DEPTH` (one per short address), plus any in transit at a take |
 | Registry funnel | 64 |
 | Operation tracker: commands / events / confirmations | 16 / 64 / 32 |
 | Apply orchestrator: commands / events | 4 / 64 |
@@ -90,6 +92,23 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   itself full (`delivery_rejected_dropped`). It may overtake real confirmations queued
   earlier, which is safe: a rejected command never produces one. If at least one
   declared subscriber accepted, a sibling's overflow is only counted.
+- **A full DALI queue:** the DALI worker moves its whole inbox into its own queue before
+  every command, so that its priority choice sees every `Interactive` command; the inbox
+  depth therefore bounds nothing by itself. An operator's background command
+  (`Origin::Api`, not `Interactive`) takes a place when the bus admits it, and the arrival
+  observer refuses it once `OPERATOR_BACKGROUND_QUEUE_DEPTH` places are taken. A command
+  the full ingress then drops gives its place back, and at every take the worker rewrites
+  the count from the operator's commands its queue holds after supersede, so a place
+  nobody fills does not stay taken; the count lives in the `WireActivity` the worker
+  shares with the observer. The depth is an admission limit: a command still between
+  admission and the worker's queue at a take loses its place there, so the worker can hold
+  the depth plus what was in transit: the commands ingress, the router's frame and what
+  reached the inbox during the take. The
+  refused publish returns `DroppedIngressFull` and counts on the commands channel's
+  `ingress_overflow`; the route answers it as an ingress refusal, and the apply
+  orchestrator, which publishes on the operator's behalf, backs off on it until its
+  backoff runs out and the cell fails. `Interactive` commands and other origins (poller,
+  HCL, rules, Home Assistant) take no place and are never refused there.
 - **Events and confirmations:** a full inbox drops the delivery to that subscriber only.
 - The HTTP bridge turns a rejection into `503` and a missing confirmation into `504`
   ([04](04-contracts-and-api-bridge.md)).

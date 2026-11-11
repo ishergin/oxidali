@@ -198,6 +198,10 @@ fn park_for_a_hold(publisher: &BusPublisher) -> HeldEventsIngress {
     held
 }
 
+pub fn hold_the_router(publisher: &BusPublisher) -> HeldEventsIngress {
+    park_for_a_hold(publisher)
+}
+
 pub fn hold_the_events_ingress_full(publisher: &BusPublisher) -> HeldEventsIngress {
     let held = park_for_a_hold(publisher);
     fill_until_refused(publisher);

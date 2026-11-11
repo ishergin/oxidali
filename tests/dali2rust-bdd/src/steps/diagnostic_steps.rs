@@ -11,7 +11,9 @@ use dali2rust_api::contracts::dali::{
 use dali2rust_api::contracts::BufferBytes;
 
 use crate::steps::wire::{assert_frame_before, assert_nothing_between_frames};
-use dali2rust_adapters::dali::transport::mock::BusFrameSource;
+use dali2rust_adapters::dali::transport::mock::{BusFrameSource, NO_HELD_SEND};
+use dali2rust_test_support::wait_until;
+use std::sync::atomic::Ordering;
 use crate::DaliWorld;
 use dali2rust_bus::BusConfig;
 
@@ -301,11 +303,20 @@ async fn then_response_arrives_within(world: &mut DaliWorld, max_ms: u64) {
     );
 }
 
-// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082 COMM-097 COMM-104 INP-098 INP-099 STATS-005 PD-306
+// SYS-247 SYS-248 PD-038 SYS-050 COMM-090 SCN-065 SCN-082 COMM-097 COMM-104 INP-098 INP-099 STATS-005 PD-306 PD-318
 #[given("the DALI transport blocks indefinitely")]
 async fn given_transport_blocks(world: &mut DaliWorld) {
     world.dali_mock().lock().unwrap().block_next_send();
 }
+
+// PD-318
+#[then("the DALI transport eventually holds an exchange")]
+async fn then_transport_holds_an_exchange(world: &mut DaliWorld) {
+    let held = world.held_send();
+    wait_until(|| held.load(Ordering::Acquire) != NO_HELD_SEND, HELD_EXCHANGE_BUDGET);
+}
+
+const HELD_EXCHANGE_BUDGET: Duration = Duration::from_secs(5);
 
 // SYS-230 SYS-231 SYS-232 SYS-233 SYS-234 PD-316 PD-317
 #[given(regex = r"^the DALI transport parks the next exchange for (\d+) milliseconds$")]
@@ -313,7 +324,7 @@ async fn given_transport_parks_for(world: &mut DaliWorld, ms: u64) {
     world.dali_mock().lock().unwrap().block_next_send_for(ms);
 }
 
-// SYS-050 SCN-065 COMM-097 COMM-104 INP-098 INP-099 STATS-005 PD-306
+// SYS-050 SCN-065 COMM-097 COMM-104 INP-098 INP-099 STATS-005 PD-306 PD-318
 #[when("the DALI transport unblocks")]
 async fn when_transport_unblocks(world: &mut DaliWorld) {
     world.release_held_send();

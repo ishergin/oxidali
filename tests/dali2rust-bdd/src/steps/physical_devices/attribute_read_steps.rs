@@ -1,4 +1,4 @@
-use cucumber::{given, when};
+use cucumber::{given, then, when};
 use dali2rust_domain::dali::pres::standard::StandardCommand;
 use dali2rust_test_support::wait_until;
 use serde_json::Value;
@@ -288,7 +288,7 @@ pub(crate) fn read_groups_membership_from_gear(world: &mut DaliWorld, short: u8,
     );
 }
 
-// PD-159 PD-169 PD-164 SCN-085 SCN-096 PD-158 PD-270 PD-273 PD-309 PD-166 PD-168 PD-269 PD-256 PD-257 PD-258 PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303 PD-310 PD-311 PD-314 PD-316 PD-317
+// PD-159 PD-169 PD-164 SCN-085 SCN-096 PD-158 PD-270 PD-273 PD-309 PD-166 PD-168 PD-269 PD-256 PD-257 PD-258 PD-034 PD-156 POLICY-019 POLICY-020 POLICY-021 POLICY-022 PD-303 PD-310 PD-311 PD-314 PD-316 PD-317 PD-318
 #[when(regex = r#"^I start an attribute read for adapter 0 physical device 0 with attribute group "(\w+)" only$"#)]
 async fn when_start_single_group_attribute_read(world: &mut DaliWorld, group: String) {
     let body = format!(r#"{{"attribute_groups":["{group}"],"memory_banks":"none"}}"#);
@@ -334,6 +334,28 @@ async fn when_start_attribute_read(world: &mut DaliWorld) {
         Some(body),
         "application/json",
     );
+}
+
+const RUNTIME_STATUS_READ_BODY: &[u8] = br#"{"attribute_groups":["runtime_status"],"memory_banks":"none"}"#;
+
+// PD-318
+#[when(regex = r"^I start a runtime-status read of adapter 0's physical devices (\d+) to (\d+)$")]
+async fn when_start_runtime_reads_of_range(world: &mut DaliWorld, first: u8, last: u8) {
+    world.stored_responses.clear();
+    for short in first..=last {
+        let path = format!("{}/attribute-reads", physical_device_path(TEST_ADAPTER_ID, short));
+        world.send_http_request("POST", &path, Some(RUNTIME_STATUS_READ_BODY), "application/json");
+        let response = world.last_response().cloned().expect("no response");
+        world.stored_responses.push(response);
+    }
+}
+
+// PD-318
+#[then(regex = r"^every one of those reads should have been answered (\d+)$")]
+async fn then_every_read_answered(world: &mut DaliWorld, status: u16) {
+    let statuses: Vec<u16> = world.stored_responses.iter().map(|r| r.status).collect();
+    assert!(!statuses.is_empty(), "no read was sent");
+    assert!(statuses.iter().all(|s| *s == status), "statuses: {statuses:?}");
 }
 
 const FULL_ATTRIBUTE_READ_BODY: &[u8] = br#"{"attribute_groups":["runtime_status","common_102","dt8_color","dt6_led","extended","groups","scenes"]}"#;

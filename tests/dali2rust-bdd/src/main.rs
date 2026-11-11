@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -50,6 +50,7 @@ pub struct DaliWorld {
     last_response: Option<TestResponse>,
     dali_mock: Arc<Mutex<MockDaliTransport>>,
     mock_unblock_flag: Arc<AtomicBool>,
+    mock_held_send: Arc<AtomicUsize>,
     mqtt_mock: Arc<dali2rust_mqtt_runtime::MockMqttClient>,
     display_panel: Arc<Mutex<RecordingPanel>>,
     _runtime: Option<Box<BusStackRuntime>>,
@@ -83,6 +84,7 @@ impl DaliWorld {
     fn new() -> Self {
         let dali_mock = Arc::new(Mutex::new(MockDaliTransport::new()));
         let mock_unblock_flag = dali_mock.lock().unwrap().get_unblock_flag();
+        let mock_held_send = dali_mock.lock().unwrap().held_send();
         let mut world = Self {
             server_port: 0,
             stop: Arc::new(AtomicBool::new(false)),
@@ -91,6 +93,7 @@ impl DaliWorld {
             last_request_elapsed: None,
             dali_mock,
             mock_unblock_flag,
+            mock_held_send,
             mqtt_mock: dali2rust_mqtt_runtime::MockMqttClient::bundle().0,
             display_panel: Arc::new(Mutex::new(RecordingPanel::default())),
             _runtime: None,
@@ -158,6 +161,7 @@ impl DaliWorld {
     fn reset_mock_transport(&mut self) {
         let mock = MockDaliTransport::new();
         self.mock_unblock_flag = mock.get_unblock_flag();
+        self.mock_held_send = mock.held_send();
         self.dali_mock = Arc::new(Mutex::new(mock));
     }
 
@@ -377,6 +381,10 @@ impl DaliWorld {
 
     pub fn dali_mock(&self) -> &Arc<Mutex<MockDaliTransport>> {
         &self.dali_mock
+    }
+
+    pub fn held_send(&self) -> &Arc<AtomicUsize> {
+        &self.mock_held_send
     }
 
     pub fn release_held_send(&self) {

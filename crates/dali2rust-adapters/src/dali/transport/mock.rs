@@ -86,7 +86,7 @@ impl Default for MockInner {
             block_send: false,
             block_at_send: None,
             blocked: Arc::new(AtomicBool::new(false)),
-            block_timeout_ms: 60_000,
+            block_timeout_ms: INDEFINITE_BLOCK_MS,
             foreign_activity: 0,
             wire: super::bus_unit_wire::InjectedWire::default(),
             dtr: [0; 3],
@@ -98,6 +98,7 @@ impl Default for MockInner {
 }
 
 pub const NO_HELD_SEND: usize = usize::MAX;
+const INDEFINITE_BLOCK_MS: u64 = 60_000;
 
 #[derive(Debug)]
 pub struct MockDaliTransport {
@@ -311,6 +312,7 @@ impl MockDaliTransport {
     pub fn block_next_send(&self) {
         let mut g = self.inner.lock().unwrap();
         g.block_send = true;
+        g.block_timeout_ms = INDEFINITE_BLOCK_MS;
         g.blocked.store(true, Ordering::Release);
     }
 
@@ -809,6 +811,15 @@ mod tests {
         transport.clear_frame_answers();
         assert_eq!(transport.exchange_frame(0xFF9B, true).unwrap(), TransferOutcome::NoAnswer);
         assert_eq!(transport.sent_frames(), vec![0xFF9B, 0xFF9B]);
+    }
+
+    #[test]
+    fn an_indefinite_block_after_a_timed_park_takes_no_timeout_from_it() {
+        let mut transport = MockDaliTransport::new();
+        transport.block_next_send_for(1);
+        transport.exchange_frame(0x01FE, false).unwrap();
+        transport.block_next_send();
+        assert_eq!(transport.inner.lock().unwrap().block_timeout_ms, INDEFINITE_BLOCK_MS);
     }
 
     #[test]

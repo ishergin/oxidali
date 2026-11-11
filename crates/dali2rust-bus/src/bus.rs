@@ -207,7 +207,19 @@ impl AtomicBusTaskStats {
 }
 
 pub trait CommandArrivalObserver: Send + Sync {
+    fn admits_command(
+        &self,
+        meta: &dali2rust_contracts::msg::BusEnvelope,
+        payload: &dali2rust_contracts::msg::BusCommandPayload,
+    ) -> bool;
+
     fn observe_command(
+        &self,
+        meta: &dali2rust_contracts::msg::BusEnvelope,
+        payload: &dali2rust_contracts::msg::BusCommandPayload,
+    );
+
+    fn withdraw_command(
         &self,
         meta: &dali2rust_contracts::msg::BusEnvelope,
         payload: &dali2rust_contracts::msg::BusCommandPayload,
@@ -240,34 +252,51 @@ impl BusPublisher {
     }
 
     pub fn try_publish(&self, channel: BusChannel, frame: BusFrame) -> PublishResult {
-        let kind_ok = matches!(
-            (&channel, &frame),
-            (BusChannel::Commands, BusFrame::Command(_))
-                | (BusChannel::Confirmations, BusFrame::Confirmation(_))
-                | (BusChannel::Events, BusFrame::Event(_))
-        );
-        let ch = match channel {
+        let ch = self.channel_counters(channel);
+        ch.publish_attempted.fetch_add(1, Ordering::Relaxed);
+        if let Some(rejected) = shape_rejection(channel, &frame, ch) {
+            return rejected;
+        }
+        if !self.admits(&frame) {
+            ch.ingress_overflow.fetch_add(1, Ordering::Relaxed);
+            return PublishResult::DroppedIngressFull;
+        }
+        self.observe_arrival(&frame);
+        self.enqueue(channel, ch, frame)
+    }
+
+    fn channel_counters(&self, channel: BusChannel) -> &AtomicChannelCounters {
+        match channel {
             BusChannel::Commands => &self.inner.counters.commands,
             BusChannel::Confirmations => &self.inner.counters.confirmations,
             BusChannel::Events => &self.inner.counters.events,
-        };
-        ch.publish_attempted.fetch_add(1, Ordering::Relaxed);
-        if !kind_ok {
-            ch.kind_mismatch.fetch_add(1, Ordering::Relaxed);
-            return PublishResult::RejectedKindMismatch;
         }
-        if frame_exceeds_wire_limit(&frame) {
-            ch.oversize_rejected.fetch_add(1, Ordering::Relaxed);
-            return PublishResult::RejectedFrameTooLarge;
-        }
-        self.observe_arrival(&frame);
+    }
 
+    fn enqueue(&self, channel: BusChannel, ch: &AtomicChannelCounters, frame: BusFrame) -> PublishResult {
         let tx = match channel {
             BusChannel::Commands => &self.inner.cmd_ingress,
             BusChannel::Confirmations => &self.inner.conf_ingress,
             BusChannel::Events => &self.inner.event_ingress,
         };
-        queue_frame(tx, ch, frame)
+        match tx.try_send(frame) {
+            Ok(()) => {
+                ch.publish_queued.fetch_add(1, Ordering::Relaxed);
+                PublishResult::Queued
+            }
+            Err(frame) => {
+                self.withdraw(&frame);
+                ch.ingress_overflow.fetch_add(1, Ordering::Relaxed);
+                PublishResult::DroppedIngressFull
+            }
+        }
+    }
+
+    fn admits(&self, frame: &BusFrame) -> bool {
+        let (Some(observer), BusFrame::Command(ce)) = (&self.inner.command_arrival, frame) else {
+            return true;
+        };
+        observer.admits_command(&ce.meta, &ce.payload)
     }
 
     fn observe_arrival(&self, frame: &BusFrame) {
@@ -276,19 +305,35 @@ impl BusPublisher {
         };
         observer.observe_command(&ce.meta, &ce.payload);
     }
+
+    fn withdraw(&self, frame: &BusFrame) {
+        let (Some(observer), BusFrame::Command(ce)) = (&self.inner.command_arrival, frame) else {
+            return;
+        };
+        observer.withdraw_command(&ce.meta, &ce.payload);
+    }
 }
 
-fn queue_frame(tx: &BusSender, ch: &AtomicChannelCounters, frame: BusFrame) -> PublishResult {
-    match tx.try_send(frame) {
-        Ok(()) => {
-            ch.publish_queued.fetch_add(1, Ordering::Relaxed);
-            PublishResult::Queued
-        }
-        Err(_) => {
-            ch.ingress_overflow.fetch_add(1, Ordering::Relaxed);
-            PublishResult::DroppedIngressFull
-        }
+fn shape_rejection(
+    channel: BusChannel,
+    frame: &BusFrame,
+    ch: &AtomicChannelCounters,
+) -> Option<PublishResult> {
+    let kind_ok = matches!(
+        (&channel, frame),
+        (BusChannel::Commands, BusFrame::Command(_))
+            | (BusChannel::Confirmations, BusFrame::Confirmation(_))
+            | (BusChannel::Events, BusFrame::Event(_))
+    );
+    if !kind_ok {
+        ch.kind_mismatch.fetch_add(1, Ordering::Relaxed);
+        return Some(PublishResult::RejectedKindMismatch);
     }
+    if frame_exceeds_wire_limit(frame) {
+        ch.oversize_rejected.fetch_add(1, Ordering::Relaxed);
+        return Some(PublishResult::RejectedFrameTooLarge);
+    }
+    None
 }
 
 fn frame_exceeds_wire_limit(frame: &BusFrame) -> bool {
