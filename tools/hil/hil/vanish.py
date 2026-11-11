@@ -34,6 +34,7 @@ TAG_PREFIX = "hil-ws-vanish-"
 IPTABLES_CANDIDATES = ("iptables-legacy", "iptables")
 CHAINS = ("OUTPUT", "INPUT")
 INTERPRETER = "python3"
+FAILSAFE_ARMED = "armed"
 
 PACKET_FILTER_ENV = "HIL_ALLOW_WB_PACKET_FILTER"
 PACKET_FILTER_REFUSED = (
@@ -52,6 +53,9 @@ NEVER_FREED = "never freed"
 TOO_EARLY = "too early"
 TOO_LATE = "too late"
 IN_WINDOW = "in window"
+UNCLEAN = "unclean release"
+INCONCLUSIVE = (NEVER_COUNTED, NOISE, UNCLEAN)
+CLEAN_RELEASE = {"ev": "released", "failed": []}
 
 USAGE = """usage: python3 -m hil.vanish sweep
 
@@ -80,6 +84,7 @@ GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OP_TEXT, OP_CLOSE = 0x1, 0x8
 SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 DELETE_ATTEMPTS = 2
+ARM_S = 5.0
 state = {"sock": None, "deletes": [], "failsafe": None, "connected_at": None}
 
 
@@ -206,12 +211,37 @@ def commands(deadline):
         pending += chunk
 
 
-def vanish(cmd):
-    failsafe = subprocess.Popen(["sh", "-c", cmd["failsafe"]], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                start_new_session=True)
-    failsafe.wait()
+def disarm():
+    if state["failsafe"] is None:
+        return
+    try:
+        os.killpg(state["failsafe"], signal.SIGTERM)
+    except OSError:
+        pass
+    state["failsafe"] = None
+
+
+def arm_failsafe(cmd):
+    try:
+        failsafe = subprocess.Popen(cmd["failsafe"], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
+    except OSError as exc:
+        return "the failsafe did not start: %s" % exc
     state["failsafe"] = failsafe.pid
+    ready = select.select([failsafe.stdout], [], [], ARM_S)[0]
+    line = failsafe.stdout.readline() if ready else b""
+    failsafe.stdout.close()
+    if line.strip() != cmd["armed"].encode():
+        return "the failsafe did not report itself armed within %.0f s: %r" % (ARM_S, line)
+    return None
+
+
+def vanish(cmd):
+    why = arm_failsafe(cmd)
+    if why is not None:
+        disarm()
+        return {"ev": "error", "stage": "failsafe", "error": why}
     for insert, delete in zip(cmd["insert"], cmd["delete"]):
         state["deletes"].append(delete)
         code, err = run(insert)
@@ -229,13 +259,9 @@ def deleted(argv):
 
 def remove_rules():
     failed = [argv for argv in state["deletes"] if not deleted(argv)]
-    state["deletes"] = []
-    if not failed and state["failsafe"] is not None:
-        try:
-            os.killpg(state["failsafe"], signal.SIGTERM)
-        except OSError:
-            pass
-        state["failsafe"] = None
+    state["deletes"] = failed
+    if not failed:
+        disarm()
     return failed
 
 
@@ -338,8 +364,8 @@ def listing_argv(binary, chain):
 
 
 def failsafe_command(deletes, seconds):
-    inner = "; ".join(["sleep %d" % seconds] + [shlex.join(argv) for argv in deletes])
-    return "nohup sh -c %s </dev/null >/dev/null 2>&1 &" % shlex.quote(inner)
+    steps = ["echo %s" % FAILSAFE_ARMED, "exec >/dev/null 2>&1", "sleep %d" % seconds]
+    return ["nohup", "sh", "-c", "; ".join(steps + [shlex.join(argv) for argv in deletes])]
 
 
 def vanish_command(binary, peer, nonce, failsafe_s):
@@ -348,7 +374,8 @@ def vanish_command(binary, peer, nonce, failsafe_s):
     return {"cmd": "vanish",
             "insert": [insert_argv(binary, chain, spec) for chain, spec in specs],
             "delete": deletes,
-            "failsafe": failsafe_command(deletes, failsafe_s)}
+            "failsafe": failsafe_command(deletes, failsafe_s),
+            "armed": FAILSAFE_ARMED}
 
 
 def parse_event(line):
@@ -400,9 +427,24 @@ def watch_over(before, samples, earliest, latest):
     return freed >= earliest or at >= latest
 
 
-def judge(counted, before, samples, earliest, latest):
-    if not counted:
+def judge(before, counting, samples, window, released, settled):
+    if not counting or counting[-1] != before + 1:
         return NEVER_COUNTED, None
+    verdict, freed = slot_verdict(before, samples, *window)
+    return trusted(verdict, before, released, settled), freed
+
+
+def trusted(verdict, before, released, settled):
+    if verdict == NOISE:
+        return NOISE
+    if released != CLEAN_RELEASE:
+        return UNCLEAN
+    if settled != before:
+        return NOISE
+    return verdict
+
+
+def slot_verdict(before, samples, earliest, latest):
     freed = first_freed(before, samples)
     held = [n for at, n in samples if freed is None or at < freed]
     after = [n for at, n in samples if freed is not None and at >= freed]
@@ -429,6 +471,7 @@ class VanishingPeer:
         self.sent_rules = False
         self._events = queue.Queue()
         self._proc = None
+        self._reader = None
 
     def start(self):
         refusal = packet_filter_refusal(self.cfg)
@@ -442,7 +485,8 @@ class VanishingPeer:
                                           text=True, bufsize=1)
         except OSError as exc:
             raise VanishUnavailable("ssh to %s did not start: %s" % (self.cfg.wb_ssh, exc))
-        threading.Thread(target=self._read, daemon=True).start()
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
         event = self._next(START_TIMEOUT_S)
         if event is None or event["ev"] in TROUBLE:
             why = event if event is not None else "no answer in %.0f s" % START_TIMEOUT_S
@@ -484,6 +528,9 @@ class VanishingPeer:
         except subprocess.TimeoutExpired:
             self._proc.kill()
             self._proc.wait()
+        self._reader.join(REPLY_TIMEOUT_S)
+        while not self._events.empty():
+            self.seen.append(self._events.get_nowait())
 
     def _send(self, doc):
         self._proc.stdin.write(json.dumps(doc) + "\n")
@@ -529,11 +576,14 @@ def present_binaries(cfg, candidates=None):
 
 
 def listed(cfg, binary):
-    done = _remote(cfg, [listing_argv(binary, chain) for chain in CHAINS])
-    if done.returncode != 0:
-        raise VanishUnavailable("%s -S on the WB exited %d: %s"
-                                % (binary, done.returncode, done.stderr[-300:]))
-    return tagged_rules(done.stdout)
+    rules = []
+    for chain in CHAINS:
+        done = _remote(cfg, [listing_argv(binary, chain)])
+        if done.returncode != 0:
+            raise VanishUnavailable("%s -S %s on the WB exited %d: %s"
+                                    % (binary, chain, done.returncode, done.stderr[-300:]))
+        rules += tagged_rules(done.stdout)
+    return rules
 
 
 def sweep(cfg, candidates=None):

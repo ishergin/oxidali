@@ -594,22 +594,36 @@ def test_a_crawling_subscriber_costs_neither_its_neighbour_nor_rest(
 
 
 VANISH_POLL_S = 1.0
+COUNT_POLL_S = 0.5
+RELEASE_SETTLE_S = 5.0
 NO_KEEPALIVE = "took no keepalive"
+NOT_COMPLETED = "did not complete"
 SWEEP_HINT = "run `python3 -m hil.vanish sweep` from tools/hil"
 VANISH_VERDICTS = {
-    vanish.NEVER_COUNTED: (
-        "the WB-side client was never counted: websocket.clients did not reach %(before)d + 1 "
-        "within %(ack).0f s of its hello"),
     vanish.NEVER_FREED: (
         "the vanished client still held its slot %(waited).0f s after the DROP rules went in: "
         "keepalive did not reclaim it (ISSUE-211)"),
     vanish.TOO_EARLY: (
-        "the slot came back %(freed).1f s after the DROP rules went in, before keepalive can "
-        "abort (%(earliest).1f s: %(abort)d s after the client's last segment, which left at "
-        "most %(gap).1f s before the rules): something other than keepalive closed it"),
+        "websocket.clients fell back to %(before)d %(freed).1f s after the DROP rules went in, "
+        "before keepalive can abort (%(earliest).1f s: %(abort)d s after the client's last "
+        "segment, which left at most %(gap).1f s before the rules), and stayed there through "
+        "the release; this run cannot see what freed the slot"),
     vanish.TOO_LATE: (
         "the slot came back %(freed).1f s after the DROP rules went in, later than keepalive's "
         "%(abort)d s plus %(late).0f s of slack (%(latest).0f s)"),
+}
+VANISH_INCONCLUSIVE = {
+    vanish.NEVER_COUNTED: (
+        "websocket.clients went %(counting)r in the %(ack).0f s after the WB-side client's "
+        "hello and never settled on %(joined)d; a client coming or going (a web UI tab counts) "
+        "looks the same as a missed count"),
+    vanish.NOISE: (
+        "another WebSocket client came or went while the slot was watched (a web UI tab "
+        "counts): the count went %(samples)r, and read %(settled)r after the release "
+        "against %(before)d before"),
+    vanish.UNCLEAN: (
+        "the WB-side client did not release cleanly (%(released)r), so its ssh channel or its "
+        "reset may have freed the slot, not keepalive"),
 }
 
 
@@ -658,6 +672,16 @@ def _vanish_or_skip(peer):
         pytest.skip("INCONCLUSIVE, not a product failure: %s" % exc)
 
 
+def _clients_until(api, done, budget_s):
+    seen = []
+
+    def sampled():
+        seen.append(_clients(api))
+        return done(seen[-1])
+    wait_until(sampled, budget_s, interval_s=COUNT_POLL_S)
+    return seen
+
+
 def _watch(api, before, earliest, latest):
     samples, started = [], time.monotonic()
     while True:
@@ -667,34 +691,70 @@ def _watch(api, before, earliest, latest):
         time.sleep(VANISH_POLL_S)
 
 
+def _vanish_and_watch(api, peer, before, report):
+    gap = _vanish_or_skip(peer)["connected_to_rules_s"]
+    report["connected_to_rules_s"], report["window"] = gap, vanish.window(gap)
+    report["samples"] = _watch(api, before, *report["window"])
+
+
 def _vanished_run(api, hil_config, before, report):
     serial = seriallog.SerialLog(hil_config)
-    with _serial_window(serial) as log, _vanishing_peer(hil_config, report) as peer:
-        report["hello"] = _connect_or_skip(peer, before)
-        report["counted"] = bool(wait_until(lambda: _clients(api) == before + 1, ACK_BUDGET_S,
-                                            interval_s=0.5, desc="the WB-side client counted"))
-        if report["counted"]:
-            gap = _vanish_or_skip(peer)["connected_to_rules_s"]
-            report["connected_to_rules_s"], report["window"] = gap, vanish.window(gap)
-            report["samples"] = _watch(api, before, *report["window"])
+    with _serial_window(serial) as log:
+        with _vanishing_peer(hil_config, report) as peer:
+            report["hello"] = _connect_or_skip(peer, before)
+            report["counting"] = _clients_until(api, lambda n: n == before + 1, ACK_BUDGET_S)
+            if report["counting"][-1] == before + 1:
+                _vanish_and_watch(api, peer, before, report)
+        report["settled"] = _clients_until(api, lambda n: n < before, RELEASE_SETTLE_S)[-1]
         report["serial_lines"] = log.lines() if log is not None else None
+
+
+def _judged_run(api, hil_config, before, report):
+    overflow = api.diagnostics()["websocket"]["inbox_overflow_total"]
+    _vanished_run(api, hil_config, before, report)
+    report["inbox_overflow_grew"] = (
+        api.diagnostics()["websocket"]["inbox_overflow_total"] - overflow)
+    report["serial"] = _serial_evidence(report.pop("serial_lines"))
+    report["verdict"], report["freed_s"] = vanish.judge(
+        before, report["counting"], report["samples"], report["window"], report["released"],
+        report["settled"])
+
+
+def _attach_and_check_the_wb(report, test_artifacts):
+    test_artifacts.attach_json("vanish", report)
+    assert not report["left"], (
+        "rule(s) tagged %s are still on the WB: %r — %s"
+        % (vanish.TAG_PREFIX, report["left"], SWEEP_HINT))
 
 
 def _serial_evidence(lines):
     if not lines:
-        return {"checked": False, "unarmed": [],
+        return {"checked": False, "unarmed": [], "incomplete": [],
                 "why": "no evidence: the monitor is down or the log did not grow"}
     return {"checked": True, "lines": len(lines),
-            "unarmed": [line for line in lines if NO_KEEPALIVE in line]}
+            "unarmed": [line for line in lines if NO_KEEPALIVE in line],
+            "incomplete": [line for line in lines if NOT_COMPLETED in line]}
 
 
-def _verdict_facts(before, report, freed):
+def _verdict_facts(before, report):
     earliest, latest = report["window"]
     samples = report["samples"]
-    return {"before": before, "ack": ACK_BUDGET_S, "freed": freed or 0.0,
-            "waited": samples[-1][0] if samples else 0.0, "earliest": earliest or 0.0,
-            "latest": latest or 0.0, "gap": report.get("connected_to_rules_s", 0.0),
-            "abort": vanish.KEEPALIVE_ABORT_S, "late": vanish.LATE_SLACK_S}
+    return {"before": before, "joined": before + 1, "ack": ACK_BUDGET_S,
+            "freed": report["freed_s"] or 0.0, "waited": samples[-1][0] if samples else 0.0,
+            "earliest": earliest or 0.0, "latest": latest or 0.0,
+            "gap": report.get("connected_to_rules_s", 0.0), "abort": vanish.KEEPALIVE_ABORT_S,
+            "late": vanish.LATE_SLACK_S, "counting": report["counting"], "samples": samples,
+            "settled": report["settled"], "released": report["released"]}
+
+
+def _assert_the_verdict(before, report):
+    assert not report["serial"]["unarmed"], (
+        "the firmware logged that a WebSocket socket took no keepalive, so a vanished peer holds "
+        "its slot until reboot: %r" % report["serial"]["unarmed"])
+    verdict, facts = report["verdict"], _verdict_facts(before, report)
+    if verdict in vanish.INCONCLUSIVE:
+        pytest.skip("INCONCLUSIVE, not a product failure: " + VANISH_INCONCLUSIVE[verdict] % facts)
+    assert verdict == vanish.IN_WINDOW, VANISH_VERDICTS[verdict] % facts
 
 
 @pytest.mark.hil_id("HIL-WS-11")
@@ -708,26 +768,10 @@ def test_a_client_gone_from_the_network_is_reclaimed_by_keepalive(
     if before >= WS_CLIENT_LIMIT:
         pytest.skip("%d WebSocket clients are connected already (a web UI tab counts), and the "
                     "controller serves %d" % (before, WS_CLIENT_LIMIT))
-    overflow = api.diagnostics()["websocket"]["inbox_overflow_total"]
     report = {"clients_before": before, "samples": [], "window": (None, None), "left": []}
-    _vanished_run(api, hil_config, before, report)
-    report["inbox_overflow_grew"] = (
-        api.diagnostics()["websocket"]["inbox_overflow_total"] - overflow)
-    report["serial"] = _serial_evidence(report.pop("serial_lines"))
-    verdict, freed = vanish.judge(report["counted"], before, report["samples"], *report["window"])
-    report["verdict"], report["freed_s"] = verdict, freed
-    test_artifacts.attach_json("vanish", report)
-
+    try:
+        _judged_run(api, hil_config, before, report)
+    finally:
+        _attach_and_check_the_wb(report, test_artifacts)
     ws_baseline["survived"]()
-    assert not report["left"], (
-        "rule(s) tagged %s are still on the WB: %r — %s"
-        % (vanish.TAG_PREFIX, report["left"], SWEEP_HINT))
-    assert not report["serial"]["unarmed"], (
-        "the firmware logged that a WebSocket socket took no keepalive, so a vanished peer holds "
-        "its slot until reboot: %r" % report["serial"]["unarmed"])
-    if verdict == vanish.NOISE:
-        pytest.skip("INCONCLUSIVE, not a product failure: another WebSocket client came or "
-                    "went while the slot was watched (a web UI tab counts): %r"
-                    % report["samples"])
-    assert verdict == vanish.IN_WINDOW, (
-        VANISH_VERDICTS[verdict] % _verdict_facts(before, report, freed))
+    _assert_the_verdict(before, report)

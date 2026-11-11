@@ -112,5 +112,6 @@ never called from a worker: it begins with an unlocked walk of the session table
   the one before it is a subscriber that reads a frame a second (`HIL-WS-10`): its own queue
   overflows either way, but the earlier image spent the block on the httpd task, so REST and
   the other subscriber paid for it, and here neither does. What the installation still cannot
-  judge is `HIL-WS-07`, which needs an image whose PHY interrupt sits at level 3, and the
-  keepalive reclaim of a vanished peer, which is ISSUE-211.
+  judge is `HIL-WS-07`, which needs an image whose PHY interrupt sits at level 3. The
+  keepalive reclaim of a vanished peer (ISSUE-211) is `HIL-WS-11`, which runs only with the
+  owner's go-ahead for the WB packet filter.
