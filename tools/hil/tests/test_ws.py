@@ -662,7 +662,8 @@ def _vanishing_peer(hil_config, report):
     try:
         yield peer
     finally:
-        report["released"] = peer.release()
+        if "released" not in report:
+            report["released"] = peer.release()
         peer.stop()
         report["events"] = peer.seen
         if peer.sent_rules:
@@ -719,6 +720,12 @@ def _vanish_and_watch(api, peer, before, report):
     report["samples"] = _watch(api, before, report["window"][1])
 
 
+def _release_and_settle(api, peer, before, report):
+    report["at_release"] = _clients(api)
+    report["released"] = peer.release()
+    report["settled"] = _settled(api, before)
+
+
 def _vanished_run(api, hil_config, before, report):
     serial = seriallog.SerialLog(hil_config)
     with _serial_window(serial) as log:
@@ -727,8 +734,7 @@ def _vanished_run(api, hil_config, before, report):
             report["counting"] = _clients_until(api, lambda n: n == before + 1, ACK_BUDGET_S)
             if report["counting"][-1] == before + 1:
                 _vanish_and_watch(api, peer, before, report)
-            report["at_release"] = _clients(api)
-        report["settled"] = _settled(api, before)
+            _release_and_settle(api, peer, before, report)
         report["serial_lines"] = log.lines() if log is not None else None
 
 

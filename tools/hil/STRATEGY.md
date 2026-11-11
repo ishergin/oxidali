@@ -225,8 +225,8 @@ HIL проверяет прошивку на настоящем проводе D
    правил. Выключенное правило владельца или ненулевой или
    отсутствующий `rules.continuations_pending` перед коммитом — скип, перед возвратом —
    правило выключается и ждёт `hil state restore`; сдвиг `continuations_dropped` красит тест.
-10. **iptables на WB** — с `HIL_ALLOW_WB_PACKET_FILTER=1` и отмашкой на прогон; остаток —
-    `hil.vanish sweep`.
+10. **iptables WB**: `HIL_ALLOW_WB_PACKET_FILTER=1`, отмашка на прогон; снять:
+    `python3 -m hil.vanish sweep` в tools/hil.
 
 ## 5. Цикл тестирования
 

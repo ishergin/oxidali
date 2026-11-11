@@ -133,6 +133,8 @@ def main(argv):
         counted(chain, rules)
     elif verb == "-I":
         code = inserted(chain, rest, rules, entry)
+    elif verb == "-C" and knob("check-fails"):
+        code = FAILED
     elif verb == "-C":
         code = 0 if ["-A", chain] + rest in [shlex.split(line) for line in rules] else 1
     else:
@@ -623,10 +625,13 @@ def test_a_delete_that_fails_once_is_tried_again(bench, controller):
         peer.stop()
 
 
-def test_a_rule_that_stays_keeps_its_failsafe_armed_after_the_client_ends(bench, controller):
+@pytest.mark.parametrize("knobs", [["refuse-delete"], ["refuse-delete", "check-fails"]])
+def test_a_rule_that_stays_keeps_its_failsafe_armed_after_the_client_ends(bench, controller,
+                                                                          knobs):
     peer = _vanished(bench, controller)
     try:
-        bench.knob("refuse-delete")
+        for knob in knobs:
+            bench.knob(knob)
         released = peer.release()
         assert [argv[3:5] for argv in released["failed"]] == [["-D", "OUTPUT"], ["-D", "INPUT"]]
     finally:
@@ -828,7 +833,7 @@ class World:
 class StubPeer:
     def __init__(self, world, script):
         self.world, self.script = world, script
-        self.sent_rules, self.seen, self.connected = False, [], None
+        self.sent_rules, self.seen, self.connected, self.releases = False, [], None, 0
 
     def start(self):
         self.world.clients += 1 if self.script.get("counted", True) else 0
@@ -846,12 +851,13 @@ class StubPeer:
         return {"ev": vanish.VANISHED, "connected_to_rules_s": 0.5, "nudged": True}
 
     def release(self):
+        self.releases += 1
         late = self.script.get("reads_to_release", 0)
         self.world.due += [0] * late + [self.script.get("at_release", 0)]
         return self.script.get("released", EVIDENT)
 
     def stop(self):
-        pass
+        self.world.clients += self.script.get("joins_at_stop", 0)
 
 
 class SerialStub:
@@ -877,7 +883,7 @@ class Hardware:
         self.world, self.artifacts = World(BEFORE), Artifacts()
         self.sweeps, self.survived, self.window = [], [], (0.0, QUICK_S * 4)
         self.swept, self.left, self.unlisted, self.unreachable = [], [], [], False
-        self.serial = None
+        self.serial, self.peer = None, None
         monkeypatch.setattr(vanish, "window", lambda gap: self.window)
         monkeypatch.setattr(test_ws.seriallog, "SerialLog", lambda cfg: SerialStub(self.serial))
 
@@ -888,7 +894,8 @@ class Hardware:
         return list(self.swept), list(self.left), list(self.unlisted)
 
     def run(self, script):
-        self.monkeypatch.setattr(vanish, "VanishingPeer", lambda cfg: StubPeer(self.world, script))
+        self.peer = StubPeer(self.world, script)
+        self.monkeypatch.setattr(vanish, "VanishingPeer", lambda cfg: self.peer)
         self.monkeypatch.setattr(vanish, "sweep", self.sweep)
         test_ws.test_a_client_gone_from_the_network_is_reclaimed_by_keepalive(
             self.world, STUB_CONFIG, {"survived": lambda: self.survived.append(True)},
@@ -1023,3 +1030,16 @@ def test_the_serial_log_of_the_run_is_judged(hardware, line, said):
     with pytest.raises(AssertionError, match=said):
         hardware.run({"at_vanish": -1})
     assert hardware.report["serial"]["checked"]
+
+
+def test_a_client_back_after_the_release_does_not_hide_the_reset_that_freed_the_slot(hardware):
+    with pytest.raises(pytest.skip.Exception, match="came or went"):
+        hardware.run({"watch": [-1], "at_release": -1, "joins_at_stop": 1})
+    assert hardware.report["settled"] == BEFORE - 1
+    assert hardware.peer.releases == 1
+
+
+def test_a_client_that_joins_after_the_release_does_not_make_never_freed_stuck(hardware):
+    with pytest.raises(AssertionError, match="keepalive did not reclaim it"):
+        hardware.run({"at_release": -1, "joins_at_stop": 1})
+    assert hardware.report["verdict"] == vanish.NEVER_FREED
