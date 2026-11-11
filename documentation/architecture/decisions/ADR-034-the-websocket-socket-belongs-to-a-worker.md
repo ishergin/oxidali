@@ -113,5 +113,5 @@ never called from a worker: it begins with an unlocked walk of the session table
   overflows either way, but the earlier image spent the block on the httpd task, so REST and
   the other subscriber paid for it, and here neither does. What the installation still cannot
   judge is `HIL-WS-07`, which needs an image whose PHY interrupt sits at level 3. The
-  keepalive reclaim of a vanished peer (ISSUE-211) is `HIL-WS-11`, which runs only with the
-  owner's go-ahead for the WB packet filter.
+  keepalive reclaim of a vanished peer (ISSUE-211) is `HIL-WS-11`, run under
+  [`tools/hil/STRATEGY.md`](../../../tools/hil/STRATEGY.md) §4.10.

@@ -18,9 +18,11 @@ KEEPALIVE_ABORT_S = KEEPALIVE_IDLE_S + KEEPALIVE_INTERVAL_S * KEEPALIVE_PROBES
 EARLY_SLACK_S = 5.0
 LATE_SLACK_S = 30.0
 OVERRUN_S = 30.0
+REJOIN_S = 20.0
 
 HOLD_S = 240
 FAILSAFE_S = 360
+FAILSAFE_ARM_S = 5.0
 CONNECT_TIMEOUT_S = 10.0
 START_TIMEOUT_S = 30.0
 REPLY_TIMEOUT_S = 20.0
@@ -33,6 +35,7 @@ WS_PATH = "/api/v1/ws"
 TAG_PREFIX = "hil-ws-vanish-"
 IPTABLES_CANDIDATES = ("iptables-legacy", "iptables")
 CHAINS = ("OUTPUT", "INPUT")
+NUDGED, PROBED = CHAINS
 INTERPRETER = "python3"
 FAILSAFE_ARMED = "armed"
 
@@ -53,17 +56,21 @@ NEVER_FREED = "never freed"
 TOO_EARLY = "too early"
 TOO_LATE = "too late"
 IN_WINDOW = "in window"
+STUCK = "stuck"
 UNCLEAN = "unclean release"
-INCONCLUSIVE = (NEVER_COUNTED, NOISE, UNCLEAN)
-CLEAN_RELEASE = {"ev": "released", "failed": []}
+UNPROVEN = "unproven rules"
+INCONCLUSIVE = (NEVER_COUNTED, NOISE, UNCLEAN, UNPROVEN)
+RELEASED = "released"
 
 USAGE = """usage: python3 -m hil.vanish sweep
 
 Deletes every iptables rule on the WB whose comment starts with %s. HIL-WS-11
 inserts two such rules and removes them itself; this is the manual recovery after a
-killed session. Exits 0 when no tagged rule is left, 1 otherwise.""" % TAG_PREFIX
+killed session. A binary that cannot list its rules is reported and skipped. Exits 0
+when every binary was listed and no tagged rule is left, 1 otherwise.""" % TAG_PREFIX
 
 Tuple4 = collections.namedtuple("Tuple4", "local_ip local_port peer_ip peer_port")
+Ending = collections.namedtuple("Ending", "released at_release settled")
 
 
 class VanishUnavailable(RuntimeError):
@@ -84,8 +91,10 @@ GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OP_TEXT, OP_CLOSE = 0x1, 0x8
 SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 DELETE_ATTEMPTS = 2
-ARM_S = 5.0
-state = {"sock": None, "deletes": [], "failsafe": None, "connected_at": None}
+ABSENT = 1
+NUDGE = bytes([0x89, 0x80])
+state = {"sock": None, "rules": [], "failsafe": None, "connected_at": None, "count": [],
+         "tag": None}
 
 
 def emit(doc):
@@ -105,8 +114,8 @@ def run(argv):
         done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, universal_newlines=True)
     except OSError as exc:
-        return 127, str(exc)
-    return done.returncode, (done.stderr or "").strip()[-300:]
+        return 127, "", str(exc)
+    return done.returncode, done.stdout or "", (done.stderr or "").strip()[-300:]
 
 
 def pick_iptables():
@@ -115,7 +124,7 @@ def pick_iptables():
         found = shutil.which(name)
         if not found:
             continue
-        code, err = run([found, "-w", WAIT_S, "-S", "OUTPUT"])
+        code, _, err = run([found, "-w", WAIT_S, "-S", "OUTPUT"])
         if code == 0:
             return found, None
         why = "%s -S OUTPUT exited %d: %s" % (found, code, err)
@@ -229,12 +238,20 @@ def arm_failsafe(cmd):
     except OSError as exc:
         return "the failsafe did not start: %s" % exc
     state["failsafe"] = failsafe.pid
-    ready = select.select([failsafe.stdout], [], [], ARM_S)[0]
+    ready = select.select([failsafe.stdout], [], [], cmd["arm_s"])[0]
     line = failsafe.stdout.readline() if ready else b""
     failsafe.stdout.close()
     if line.strip() != cmd["armed"].encode():
-        return "the failsafe did not report itself armed within %.0f s: %r" % (ARM_S, line)
+        return "the failsafe did not report itself armed within %.1f s: %r" % (cmd["arm_s"], line)
     return None
+
+
+def nudge():
+    try:
+        state["sock"].sendall(NUDGE + os.urandom(4))
+    except OSError:
+        return False
+    return True
 
 
 def vanish(cmd):
@@ -242,27 +259,38 @@ def vanish(cmd):
     if why is not None:
         disarm()
         return {"ev": "error", "stage": "failsafe", "error": why}
-    for insert, delete in zip(cmd["insert"], cmd["delete"]):
-        state["deletes"].append(delete)
-        code, err = run(insert)
+    state["count"], state["tag"] = cmd["count"], cmd["tag"]
+    for insert, delete, check in zip(cmd["insert"], cmd["delete"], cmd["check"]):
+        state["rules"].append({"delete": delete, "check": check})
+        code, _, err = run(insert)
         if code != 0:
-            state["deletes"].pop()
             return {"ev": "error", "stage": "rules",
                     "error": "%s exited %d: %s" % (" ".join(insert), code, err)}
-    return {"ev": "vanished",
+    return {"ev": "vanished", "nudged": nudge(),
             "connected_to_rules_s": round(time.monotonic() - state["connected_at"], 3)}
 
 
-def deleted(argv):
-    return any(run(argv)[0] == 0 for _ in range(DELETE_ATTEMPTS))
+def gone(rule):
+    if any(run(rule["delete"])[0] == 0 for _ in range(DELETE_ATTEMPTS)):
+        return True
+    return run(rule["check"])[0] == ABSENT
 
 
 def remove_rules():
-    failed = [argv for argv in state["deletes"] if not deleted(argv)]
-    state["deletes"] = failed
+    failed = [rule for rule in state["rules"] if not gone(rule)]
+    state["rules"] = failed
     if not failed:
         disarm()
-    return failed
+    return [rule["delete"] for rule in failed]
+
+
+def counters():
+    found = {}
+    for chain, argv in state["count"]:
+        code, out, _ = run(argv)
+        lines = out.splitlines() if code == 0 else []
+        found[chain] = [line for line in lines if state["tag"] in line]
+    return found
 
 
 def abort_socket():
@@ -277,9 +305,10 @@ def abort_socket():
 
 
 def release():
+    counted = counters()
     failed = remove_rules()
     abort_socket()
-    return {"ev": "released", "failed": failed}
+    return {"ev": "released", "failed": failed, "counters": counted}
 
 
 def serve(binary):
@@ -359,8 +388,16 @@ def delete_argv(binary, chain, spec):
     return [binary, "-w", str(XTABLES_WAIT_S), "-D", chain, *spec]
 
 
+def check_argv(binary, chain, spec):
+    return [binary, "-w", str(XTABLES_WAIT_S), "-C", chain, *spec]
+
+
 def listing_argv(binary, chain):
     return [binary, "-w", str(XTABLES_WAIT_S), "-S", chain]
+
+
+def counter_argv(binary, chain):
+    return [binary, "-w", str(XTABLES_WAIT_S), "-L", chain, "-v", "-x", "-n"]
 
 
 def failsafe_command(deletes, seconds):
@@ -374,8 +411,12 @@ def vanish_command(binary, peer, nonce, failsafe_s):
     return {"cmd": "vanish",
             "insert": [insert_argv(binary, chain, spec) for chain, spec in specs],
             "delete": deletes,
+            "check": [check_argv(binary, chain, spec) for chain, spec in specs],
+            "count": [[chain, counter_argv(binary, chain)] for chain in CHAINS],
+            "tag": tag(peer.local_port, nonce),
             "failsafe": failsafe_command(deletes, failsafe_s),
-            "armed": FAILSAFE_ARMED}
+            "armed": FAILSAFE_ARMED,
+            "arm_s": FAILSAFE_ARM_S}
 
 
 def parse_event(line):
@@ -393,7 +434,7 @@ def tuple4(event):
                   str(event["peer_ip"]), int(event["peer_port"]))
 
 
-def tagged_rules(listing):
+def tagged_rules(listing, prefix=TAG_PREFIX):
     rules = []
     for line in listing.splitlines():
         try:
@@ -403,9 +444,24 @@ def tagged_rules(listing):
         if len(words) < 2 or words[0] != "-A":
             continue
         comments = [value for flag, value in zip(words, words[1:]) if flag == "--comment"]
-        if any(value.startswith(TAG_PREFIX) for value in comments):
+        if any(value.startswith(prefix) for value in comments):
             rules.append((words[1], words[2:]))
     return rules
+
+
+def released_cleanly(released):
+    return (isinstance(released, dict) and released.get("ev") == RELEASED
+            and released.get("failed") == [])
+
+
+def dropped(released, chain):
+    lines = released.get("counters", {}).get(chain) if isinstance(released, dict) else None
+    if not lines:
+        return None
+    try:
+        return sum(int(line.split()[0]) for line in lines)
+    except (ValueError, IndexError, AttributeError):
+        return None
 
 
 def window(connected_to_rules_s):
@@ -417,31 +473,40 @@ def first_freed(before, samples):
     return next((at for at, clients in samples if clients <= before), None)
 
 
-def watch_over(before, samples, earliest, latest):
+def watch_over(before, samples, latest):
     at, clients = samples[-1]
-    if clients > before + 1 or clients < before:
-        return True
     freed = first_freed(before, samples)
+    if clients not in (before, before + 1) or (freed is not None and clients != before):
+        return True
     if freed is None:
         return at >= latest + OVERRUN_S
-    return freed >= earliest or at >= latest
+    return at >= max(latest, freed + REJOIN_S)
 
 
-def judge(before, counting, samples, window, released, settled):
+def judge(before, counting, samples, window, ending):
     if not counting or counting[-1] != before + 1:
         return NEVER_COUNTED, None
     verdict, freed = slot_verdict(before, samples, *window)
-    return trusted(verdict, before, released, settled), freed
+    return trusted(verdict, before, ending), freed
 
 
-def trusted(verdict, before, released, settled):
+def trusted(verdict, before, ending):
     if verdict == NOISE:
         return NOISE
-    if released != CLEAN_RELEASE:
+    if not released_cleanly(ending.released):
         return UNCLEAN
-    if settled != before:
+    if not (dropped(ending.released, NUDGED) or 0) > 0:
+        return UNPROVEN
+    return counted_out(verdict, before, ending)
+
+
+def counted_out(verdict, before, ending):
+    held = verdict == NEVER_FREED
+    if ending.at_release != (before + 1 if held else before):
         return NOISE
-    return verdict
+    if held and ending.settled == before + 1:
+        return STUCK
+    return verdict if ending.settled == before else NOISE
 
 
 def slot_verdict(before, samples, earliest, latest):
@@ -506,6 +571,9 @@ class VanishingPeer:
         if event is None or event["ev"] != VANISHED:
             raise VanishUnavailable("the WB did not black-hole the connection: %r" % (event,))
         return event
+
+    def own_tag(self):
+        return tag(self.connected["local_port"], self.nonce)
 
     def release(self):
         if self._proc is None or self._proc.poll() is not None:
@@ -575,37 +643,46 @@ def present_binaries(cfg, candidates=None):
     return [line.strip() for line in _remote(cfg, probe).stdout.splitlines() if line.strip()]
 
 
-def listed(cfg, binary):
+def listed(cfg, binary, prefix=TAG_PREFIX):
     rules = []
     for chain in CHAINS:
         done = _remote(cfg, [listing_argv(binary, chain)])
         if done.returncode != 0:
             raise VanishUnavailable("%s -S %s on the WB exited %d: %s"
                                     % (binary, chain, done.returncode, done.stderr[-300:]))
-        rules += tagged_rules(done.stdout)
+        rules += tagged_rules(done.stdout, prefix)
     return rules
 
 
-def sweep(cfg, candidates=None):
-    removed, left = [], []
+def sweep(cfg, candidates=None, prefix=TAG_PREFIX):
+    removed, left, unlisted = [], [], []
     for binary in present_binaries(cfg, candidates):
-        for chain, spec in listed(cfg, binary):
-            _remote(cfg, [delete_argv(binary, chain, spec)])
-            removed.append((binary, chain, spec))
-        left += [(binary, chain, spec) for chain, spec in listed(cfg, binary)]
-    return removed, left
+        try:
+            for chain, spec in listed(cfg, binary, prefix):
+                if _remote(cfg, [delete_argv(binary, chain, spec)]).returncode == 0:
+                    removed.append((binary, chain, spec))
+            left += [(binary, chain, spec) for chain, spec in listed(cfg, binary, prefix)]
+        except VanishUnavailable as exc:
+            unlisted.append((binary, str(exc)))
+    return removed, left, unlisted
 
 
 def main(argv):
     if argv[1:] != ["sweep"]:
         print(USAGE, file=sys.stderr)
         return 64
-    removed, left = sweep(config.load())
+    try:
+        removed, left, unlisted = sweep(config.load())
+    except VanishUnavailable as exc:
+        print("UNREACHED: %s" % exc)
+        return 1
     for binary, chain, spec in removed:
         print("removed: %s" % shlex.join(delete_argv(binary, chain, spec)))
     for binary, chain, spec in left:
         print("LEFT: %s -A %s %s" % (binary, chain, shlex.join(spec)))
-    return 1 if left else 0
+    for binary, why in unlisted:
+        print("UNLISTED: %s: %s" % (binary, why))
+    return 1 if left or unlisted else 0
 
 
 if __name__ == "__main__":

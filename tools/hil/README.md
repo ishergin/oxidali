@@ -268,9 +268,8 @@ hil-slow` wrap the cwd.
   and the smoke tier by the firmware's `HTTP access: GET /api/v1/health …` line, so that
   line is part of the firmware's contract with the toolkit.
 - Markers: see `pyproject.toml`.
-- HIL-WS-11 (`-m slow -k keepalive`) needs a go-ahead, `HIL_ALLOW_WB_PACKET_FILTER=1`:
-  it puts two `DROP` rules for its client on the WB and removes them;
-  `python3 -m hil.vanish sweep` clears leftovers.
+- HIL-WS-11 (`-m slow -k keepalive`) puts two `DROP` rules for its client on the WB and
+  removes them itself; its go-ahead and the cleanup after a killed session: STRATEGY §4.10.
 - Whatever `-m` says, collection deselects a `light` test unless `HIL_LAMP_SHORTS` names
   a lamp and `HIL_LAMPS_READ_ONLY=0`, and a test that commits the rules document
   (it requests `rules_guard`) unless `HIL_ALLOW_RULE_COMMITS=1`.
