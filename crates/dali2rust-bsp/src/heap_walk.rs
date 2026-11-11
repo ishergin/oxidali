@@ -20,7 +20,7 @@ fn store() -> Option<&'static Mutex<PsramBox<BootCensusLog>>> {
 }
 
 fn new_store() -> Option<PsramBox<BootCensusLog>> {
-    // SAFETY: all-u32 fields, so a zeroed place is the empty log; `write_bytes` writes all of it once.
+    // SAFETY: all-integer fields, so a zeroed place is the empty log; `write_bytes` writes all of it once.
     unsafe {
         PsramBox::try_new_with(|place: &mut MaybeUninit<BootCensusLog>| {
             place.as_mut_ptr().write_bytes(0, 1);
@@ -47,7 +47,8 @@ pub fn flush_boot_census(max_lines: usize) {
     let Some(store) = store() else {
         return;
     };
-    for _ in 0..max_lines {
+    let mut spoken = 0;
+    while spoken < max_lines {
         let Ok(mut log) = store.lock() else {
             return;
         };
@@ -57,6 +58,7 @@ pub fn flush_boot_census(max_lines: usize) {
         let text = line_of(record, at);
         if !matches!(text, CensusText::Nothing) {
             log::warn!("{text}");
+            spoken += 1;
         }
     }
 }
@@ -72,6 +74,13 @@ fn fill(record: &mut StageRecord) {
     record.info_us = elapsed_us(opened, armed);
     record.census.rank_top();
     note_rust_share(record);
+    name_stack_owners(&mut record.census);
+}
+
+fn name_stack_owners(census: &mut HeapCensus) {
+    crate::task_registry::for_each_stack_start(|name, start| {
+        census.name_owner(start, name.to_bytes());
+    });
 }
 
 fn walk_into(census: &mut HeapCensus) -> i64 {
@@ -116,6 +125,7 @@ unsafe extern "C" fn tally(
     };
     let opened = census.spans_seen;
     census.record(span, block.size as u32, block.used);
+    census.note_large(block.ptr as u32, block.size as u32, block.used);
     if census.spans_seen != opened {
         census.stamp_span_open(now_us() as u32);
         return true;

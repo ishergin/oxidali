@@ -407,17 +407,7 @@ fn check_heap_integrity() {}
 
 #[cfg(target_os = "espidf")]
 fn log_task_stack_census() {
-    const KERNEL_TASKS: &[&core::ffi::CStr] = &[
-        c"IDLE0",
-        c"IDLE1",
-        c"ipc0",
-        c"ipc1",
-        c"esp_timer",
-        c"Tmr Svc",
-        c"tiT",
-        c"sys_evt",
-    ];
-    dali2rust_bsp::task_registry::refresh_kernel_tasks(KERNEL_TASKS);
+    dali2rust_bsp::task_registry::refresh_kernel_tasks(dali2rust_bsp::task_registry::KERNEL_TASKS);
     let mut rows = Vec::new();
     dali2rust_bsp::task_registry::snapshot_stack_free(&mut rows);
     let mut line = String::new();

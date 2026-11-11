@@ -1,3 +1,6 @@
+import pathlib
+import re
+
 from hil import heap_census
 
 STAMP = "2026-11-08T05:00:0%d.000 W (%d) dali2rust_bsp::heap_walk: "
@@ -229,3 +232,241 @@ def test_an_empty_window_says_not_measured_rather_than_reporting_zeroes():
 
     assert len(report) == 1
     assert "not measured" in report[0]
+
+
+def _with_large(lines, stage, entries, seen=None):
+    kept = len(entries)
+    seen = kept if seen is None else seen
+    out = [
+        text.replace("off=0/0", "off=%d/%d" % (seen, sum(size for _, size, _ in entries)))
+        if "census [" in text else text
+        for text in lines
+    ]
+    chunks = [entries[at:at + 2] for at in range(0, max(kept, 1), 2)] or [[]]
+    for at, chunk in enumerate(chunks):
+        spelled = "".join(
+            " %x+%d%s" % (addr, size, ":" + owner if owner else "")
+            for addr, size, owner in chunk
+        )
+        out.append(
+            "boot heap large [%s] %d/%d seen=%d kept=%d:%s"
+            % (stage, at, len(chunks), seen, kept, spelled)
+        )
+    return out
+
+
+RESERVE = (0x4FF30000, 32768, "")
+MAIN = (0x4FF21000, 12800, "main")
+TIMER = (0x4FF40000, 4096, "Tmr_Svc")
+
+
+def test_large_blocks_are_read_back_with_their_addresses_and_owners():
+    entry = _only(_with_large(FIRST, "composition start", [RESERVE, MAIN, TIMER]))
+
+    assert entry.large == {
+        (0x4FF30000, 32768): "",
+        (0x4FF21000, 12800): "main",
+        (0x4FF40000, 4096): "Tmr_Svc",
+    }
+    assert (entry.large_seen, entry.large_kept, entry.large_chunks_total) == (3, 3, 2)
+    assert heap_census.large_verdicts(entry) == []
+    assert heap_census.believable(entry)
+
+
+def test_a_dropped_large_line_is_named_rather_than_read_as_fewer_blocks():
+    lines = _with_large(FIRST, "composition start", [RESERVE, MAIN, TIMER])
+    entry = _only([text for text in lines if "large [" not in text or " 1/2 " not in text])
+
+    notes = heap_census.large_verdicts(entry)
+    assert len(entry.large) == 2
+    assert any("a large-block line is missing" in note for note in notes), notes
+
+
+def test_more_large_blocks_than_the_table_holds_is_reported():
+    entry = _only(_with_large(FIRST, "composition start", [RESERVE, MAIN], seen=40))
+
+    notes = heap_census.large_verdicts(entry)
+    assert any("more large blocks than the table holds (40 seen, 2 kept)" in note
+               for note in notes), notes
+
+
+def test_a_header_whose_kept_count_the_lines_do_not_carry_is_named():
+    lines = _with_large(FIRST, "composition start", [RESERVE, MAIN, TIMER])
+    entry = _only([text.replace("kept=3:", "kept=4:") for text in lines])
+
+    notes = heap_census.large_verdicts(entry)
+    assert any("the large-block lines carry 3 blocks, their header says 4 kept" in note
+               for note in notes), notes
+
+
+def test_a_cut_heap_hides_large_blocks():
+    lines = _with_large(FIRST, "composition start", [RESERVE])
+    entry = _only([text.replace("cut=0", "cut=1") if "spans [" in text else text
+                   for text in lines])
+
+    assert heap_census.large_verdicts(entry) == ["a cut heap traversal hides its blocks"]
+
+
+def test_a_raced_walk_lends_none_of_its_large_blocks():
+    lines = _with_large(FIRST, "composition start", [RESERVE])
+    entry = _only([text.replace("ref=10/10", "ref=10/11") if "census [" in text else text
+                   for text in lines])
+
+    assert heap_census.large_verdicts(entry) == ["the heap moved during the walk"]
+
+
+def test_the_report_names_each_large_block_by_the_stage_that_first_shows_it():
+    first = _with_large(FIRST, "composition start", [RESERVE, MAIN])
+    second = _with_large(SECOND, "after hydrate", [MAIN, TIMER])
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(first, second))))
+
+    assert "composition_start  4ff30000  32768  (unnamed)  gone after composition_start" in report
+    assert "composition_start  4ff21000  12800  main\n" in report
+    assert "after_hydrate      4ff40000   4096  Tmr_Svc" in report
+    assert "***" not in report.split("large blocks")[1], report
+
+
+def test_a_boot_whose_firmware_spells_no_large_line_says_so_and_stays_believable():
+    boots = heap_census.parse_boots(_log(FIRST, SECOND))
+    report = "\n".join(heap_census.report_lines(boots))
+
+    assert "large blocks: no stage reported its blocks past 1020 B" in report
+    assert heap_census.believable(boots[-1][1]["after_hydrate"])
+
+
+def test_a_size_family_arriving_between_two_stages_is_named_with_its_count():
+    grown = [
+        text.replace("0/3: 232x14", "0/3: 768x45 232x15") if "top [" in text else text
+        for text in SECOND
+    ]
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(FIRST, grown))))
+
+    assert "composition_start -> after_hydrate  768x+45 (new in top)" in report
+    assert "232x" not in report.split("top-size arrivals")[1], report
+
+
+def test_a_stage_with_a_lost_large_line_lends_none_of_its_blocks_to_the_table():
+    first = _with_large(FIRST, "composition start", [RESERVE, MAIN, TIMER])
+    first = [text for text in first if "large [" not in text or " 1/2 " not in text]
+    second = _with_large(SECOND, "after hydrate", [RESERVE, MAIN, TIMER])
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(first, second))))
+
+    assert "after_hydrate      4ff30000  32768  (unnamed)" in report
+    assert "after_hydrate      4ff40000   4096  Tmr_Svc" in report
+    assert "composition_start  " not in report.split("first whole stage")[1].split("***")[0]
+    assert "*** composition_start: a large-block line is missing" in report
+
+
+def test_a_stage_whose_every_large_table_is_partial_reports_no_table():
+    lines = _with_large(FIRST, "composition start", [RESERVE, MAIN], seen=40)
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(lines))))
+
+    assert "no stage carried its whole large-block table" in report
+    assert "*** composition_start: more large blocks than the table holds" in report
+
+
+FULL_TOP = [(232, 14)] + [(400 + 4 * at, 10) for at in range(heap_census.TOP_EXACT_COUNT - 1)]
+
+
+def _with_top(lines, entries):
+    spelled = ["".join(" %dx%d" % entry for entry in entries[at:at + 8]) for at in (0, 8, 16)]
+    out = []
+    for text in lines:
+        for chunk in range(3):
+            if "top [" in text and " %d/3:" % chunk in text:
+                text = text.split(" %d/3:" % chunk)[0] + " %d/3:%s" % (chunk, spelled[chunk])
+        out.append(text)
+    return out
+
+
+def _arrival_report(before, after):
+    return "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(before, after))))
+
+
+def test_a_size_that_climbs_into_a_full_top_is_not_read_as_wholly_new():
+    climbed = FULL_TOP[1:] + [(512, 7)]
+    report = _arrival_report(_with_top(FIRST, FULL_TOP), _with_top(SECOND, climbed))
+
+    assert "512x+" not in report, report
+
+
+def test_a_size_that_entered_a_full_top_counts_only_what_it_must_have_gained():
+    entered = FULL_TOP[1:] + [(1000, 5)]
+    report = _arrival_report(_with_top(FIRST, FULL_TOP), _with_top(SECOND, entered))
+
+    assert "1000x+2 (entered the top: at least)" in report, report
+
+
+def test_a_size_absent_from_a_top_with_room_had_no_blocks_and_counts_whole():
+    report = _arrival_report(FIRST, _with_top(SECOND, [(232, 14), (512, 7)]))
+
+    assert "composition_start -> after_hydrate  512x+7 (new in top)" in report, report
+
+
+def test_the_top_capacity_matches_the_firmware_table():
+    source = pathlib.Path(__file__).resolve().parents[3] / "crates/dali2rust-bsp/src/heap_census.rs"
+    spelled = re.search(r"pub const TOP_EXACT_COUNT: usize = (\d+);", source.read_text())
+
+    assert spelled and int(spelled.group(1)) == heap_census.TOP_EXACT_COUNT
+
+
+def test_a_lost_top_line_leaves_the_pair_uncompared_rather_than_inventing_an_arrival():
+    grown = [text.replace("0/3: 232x14", "0/3: 232x14 768x45") if "top [" in text else text
+             for text in SECOND]
+    first = [text for text in FIRST if "top [" not in text or " 1/3:" not in text]
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(first, grown))))
+
+    assert ("composition_start -> after_hydrate  not compared: "
+            "composition_start: a top-size line is missing from the log (2 of 3)") in report
+    assert "768x+" not in report
+
+
+def test_a_top_line_lost_from_the_later_stage_also_leaves_the_pair_uncompared():
+    grown = [text.replace("0/3: 232x14", "0/3: 232x14 768x45") if "top [" in text else text
+             for text in SECOND]
+    grown = [text for text in grown if "top [" not in text or " 2/3:" not in text]
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(FIRST, grown))))
+
+    assert ("composition_start -> after_hydrate  not compared: "
+            "after_hydrate: a top-size line is missing from the log (2 of 3)") in report
+    assert "768x+" not in report
+
+
+def test_a_cut_walk_leaves_its_pair_uncompared_rather_than_inventing_an_arrival():
+    cut = [text.replace("cut=0", "cut=1") if "spans [" in text else text for text in FIRST]
+    cut = [text.replace("0/3: 232x14", "0/3: 232x2") if "top [" in text else text for text in cut]
+    report = _arrival_report(cut, SECOND)
+
+    assert ("composition_start -> after_hydrate  not compared: "
+            "composition_start: a cut heap traversal hides its blocks") in report, report
+    assert "232x+" not in report
+
+
+def test_a_raced_walk_leaves_its_pair_uncompared():
+    raced = [text.replace("ref=14/14", "ref=14/15") if "census [" in text else text
+             for text in _with_top(SECOND, [(232, 14), (768, 45)])]
+    report = _arrival_report(FIRST, raced)
+
+    assert "after_hydrate: the heap moved during the walk" in report, report
+    assert "768x+" not in report
+
+
+def test_a_stage_whose_every_large_line_was_lost_is_named_not_skipped():
+    before = _with_large(FIRST, "composition start", [RESERVE])
+    middle = [text for text in _with_large(SECOND, "after hydrate", [RESERVE, TIMER])
+              if "large [" not in text]
+    after = _with_large(_stage_lines("before httpd", 14, 5000, {0: (6, 96), 5: (4, 904),
+                                                                9: (4, 4000)}),
+                        "before httpd", [RESERVE, TIMER])
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(before, middle, after))))
+
+    assert "before_httpd       4ff40000   4096  Tmr_Svc" in report
+    assert "*** after_hydrate: no large-block line reached the log for this stage" in report
+
+
+def test_the_large_table_names_the_earliest_whole_stage_it_starts_from():
+    first = _with_large(FIRST, "composition start", [RESERVE])
+    second = _with_large(SECOND, "after hydrate", [RESERVE, TIMER])
+    report = "\n".join(heap_census.report_lines(heap_census.parse_boots(_log(first, second))))
+
+    assert "those under composition_start were there before it:" in report

@@ -4,6 +4,19 @@ use std::sync::Mutex;
 
 const OBSERVATION_STALE_MS: u32 = 120_000;
 
+pub const KERNEL_TASKS: &[&CStr] = &[
+    c"IDLE0",
+    c"IDLE1",
+    c"ipc0",
+    c"ipc1",
+    c"esp_timer",
+    c"Tmr Svc",
+    c"tiT",
+    c"sys_evt",
+];
+
+pub const STACK_OWNING_IDF_TASKS: &[&CStr] = &[c"emac_rx"];
+
 struct ObservationSlot {
     sequence: AtomicU32,
     instance: AtomicU32,
@@ -180,18 +193,63 @@ fn monotonic_ms() -> u32 {
 }
 
 pub fn refresh_kernel_tasks(names: &[&'static CStr]) {
-    refresh_kernel_tasks_with(names, |name| {
-        #[cfg(target_os = "espidf")]
-        {
-            // SAFETY: a NUL-terminated name; the kernel returns NULL for a task it does not have.
-            unsafe { esp_idf_svc::sys::xTaskGetHandle(name.as_ptr()) as usize }
+    refresh_kernel_tasks_with(names, handle_of);
+}
+
+fn handle_of(name: &CStr) -> usize {
+    #[cfg(target_os = "espidf")]
+    {
+        // SAFETY: a NUL-terminated name; the kernel returns NULL for a task it does not have.
+        unsafe { esp_idf_svc::sys::xTaskGetHandle(name.as_ptr()) as usize }
+    }
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let _ = name;
+        0
+    }
+}
+
+pub fn for_each_stack_start(mut f: impl FnMut(&CStr, u32)) {
+    {
+        let t = table();
+        for task in t.iter().filter(|task| !task.kernel) {
+            f(task.name, stack_start(task.handle));
         }
-        #[cfg(not(target_os = "espidf"))]
-        {
-            let _ = name;
-            0
+    }
+    for &name in KERNEL_TASKS.iter().chain(STACK_OWNING_IDF_TASKS) {
+        let handle = handle_of(name);
+        if handle != 0 {
+            f(name, stack_start(handle));
         }
-    });
+    }
+    name_own_stack(&mut f);
+}
+
+fn name_own_stack(f: &mut impl FnMut(&CStr, u32)) {
+    #[cfg(target_os = "espidf")]
+    {
+        // SAFETY: the calling task's own handle and name, which live while it runs this; the name is NUL-terminated.
+        let (handle, name) = unsafe {
+            let handle = esp_idf_svc::sys::xTaskGetCurrentTaskHandle();
+            (handle as usize, CStr::from_ptr(esp_idf_svc::sys::pcTaskGetName(handle)))
+        };
+        f(name, stack_start(handle));
+    }
+    #[cfg(not(target_os = "espidf"))]
+    let _ = f;
+}
+
+fn stack_start(handle: usize) -> u32 {
+    #[cfg(target_os = "espidf")]
+    {
+        // SAFETY: listed threads outlive the table lock; kernel tasks and `emac_rx` never exit; the caller is running.
+        unsafe { esp_idf_svc::sys::pxTaskGetStackStart(handle as esp_idf_svc::sys::TaskHandle_t) as u32 }
+    }
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let _ = handle;
+        0
+    }
 }
 
 fn refresh_kernel_tasks_with(names: &[&'static CStr], resolve: impl Fn(&'static CStr) -> usize) {
