@@ -154,6 +154,7 @@ fn frame_priority_key(frame: &BusFrame, adapter_id: BusId) -> u8 {
 enum SupersedeKind {
     TargetState,
     RecallScene { scene_id: u8 },
+    OperatorRead { groups: u16, banks: dali2rust_contracts::msg::MemoryBankReadPreset },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -173,30 +174,54 @@ fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<Superse
         return None;
     }
     match &ce.payload {
-        BusCommandPayload::DaliSetTargetStateCommand(ts) => {
-            let identity = match ts.scope {
-                DaliTargetScope::Short => ts.short_address,
-                DaliTargetScope::VirtualLamp => ts.virtual_lamp_id,
-                DaliTargetScope::Group => ts.group_id,
-                _ => return None,
-            };
-            Some(SupersedeKey {
-                kind: SupersedeKind::TargetState,
-                adapter: ts.registry_adapter_id,
-                scope: ts.scope as u8,
-                identity,
-                hold_hcl: ts.hold_hcl,
-            })
+        BusCommandPayload::DaliSetTargetStateCommand(ts) => target_state_key(ts),
+        BusCommandPayload::DaliRecallSceneCommand(rc) => Some(recall_key(rc)),
+        BusCommandPayload::DaliReadAttributesCommand(ar) if ce.meta.origin == Origin::Api => {
+            Some(operator_read_key(ar))
         }
-        BusCommandPayload::DaliRecallSceneCommand(rc) => Some(SupersedeKey {
-            kind: SupersedeKind::RecallScene { scene_id: rc.scene_id },
-            adapter: rc.registry_adapter_id,
-            scope: rc.scope as u8,
-            identity: recall_identity(rc),
-            hold_hcl: rc.hold_hcl,
-        }),
         _ => None,
     }
+}
+
+fn recall_key(rc: &dali2rust_contracts::msg::DaliRecallSceneCommand) -> SupersedeKey {
+    SupersedeKey {
+        kind: SupersedeKind::RecallScene { scene_id: rc.scene_id },
+        adapter: rc.registry_adapter_id,
+        scope: rc.scope as u8,
+        identity: recall_identity(rc),
+        hold_hcl: rc.hold_hcl,
+    }
+}
+
+fn operator_read_key(ar: &dali2rust_contracts::msg::DaliReadAttributesCommand) -> SupersedeKey {
+    SupersedeKey {
+        kind: SupersedeKind::OperatorRead {
+            groups: ar.attribute_groups_mask,
+            banks: ar.memory_banks,
+        },
+        adapter: ar.registry_adapter_id,
+        scope: DaliTargetScope::Short as u8,
+        identity: ar.short_address,
+        hold_hcl: false,
+    }
+}
+
+fn target_state_key(
+    ts: &dali2rust_contracts::msg::DaliSetTargetStateCommand,
+) -> Option<SupersedeKey> {
+    let identity = match ts.scope {
+        DaliTargetScope::Short => ts.short_address,
+        DaliTargetScope::VirtualLamp => ts.virtual_lamp_id,
+        DaliTargetScope::Group => ts.group_id,
+        _ => return None,
+    };
+    Some(SupersedeKey {
+        kind: SupersedeKind::TargetState,
+        adapter: ts.registry_adapter_id,
+        scope: ts.scope as u8,
+        identity,
+        hold_hcl: ts.hold_hcl,
+    })
 }
 
 fn recall_identity(rc: &dali2rust_contracts::msg::DaliRecallSceneCommand) -> u8 {
@@ -389,7 +414,7 @@ fn settle_batch(
 
 #[cfg(test)]
 mod tests {
-    use dali2rust_contracts::msg::PowerState;
+    use dali2rust_contracts::msg::{DaliAttributeGroup, MemoryBankReadPreset, PowerState};
 
     use super::*;
 
@@ -431,6 +456,54 @@ mod tests {
         let (kept, superseded) = settle_batch(batch, &[true, false], &[]);
         assert_eq!(shape(&kept), vec![(Some(SECOND), vec![])]);
         assert_eq!(superseded, vec![RIDER, FIRST]);
+    }
+
+    const RUNTIME_STATUS: u16 = DaliAttributeGroup::RuntimeStatus.mask_bit();
+    const GROUPS: u16 = DaliAttributeGroup::Groups.mask_bit();
+    const NO_BANKS: MemoryBankReadPreset = MemoryBankReadPreset::None;
+
+    fn read(origin: Origin, short: u8, groups: u16, banks: MemoryBankReadPreset) -> BusFrame {
+        BusFrame::command(dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            FIRST,
+            BusId::default().0,
+            Some(origin),
+            dali2rust_contracts::msg::DaliReadAttributesCommand {
+                registry_adapter_id: 0,
+                short_address: short,
+                attribute_groups_mask: groups,
+                memory_banks: banks,
+            },
+        ))
+    }
+
+    fn read_key_of(groups: u16, banks: MemoryBankReadPreset) -> Option<SupersedeKey> {
+        supersede_coalesce_key(&read(Origin::Api, 5, groups, banks), BusId::default())
+    }
+
+    fn read_key(origin: Origin, short: u8) -> Option<SupersedeKey> {
+        supersede_coalesce_key(&read(origin, short, RUNTIME_STATUS, NO_BANKS), BusId::default())
+    }
+
+    #[test]
+    fn an_operator_read_shares_its_key_with_the_next_read_of_the_same_short_only() {
+        let key = read_key(Origin::Api, 5);
+        assert!(key.is_some(), "an operator read was given no key, so nothing displaces it");
+        assert_eq!(key, read_key(Origin::Api, 5));
+        assert_ne!(key, read_key(Origin::Api, 6), "a read of another short displaced this one");
+    }
+
+    #[test]
+    fn a_read_that_asks_for_more_is_never_displaced_by_one_that_asks_for_less() {
+        let key = read_key_of(RUNTIME_STATUS | GROUPS, NO_BANKS);
+        assert_ne!(key, read_key_of(RUNTIME_STATUS, NO_BANKS), "its groups were dropped");
+        assert_ne!(key, read_key_of(RUNTIME_STATUS | GROUPS, MemoryBankReadPreset::All),
+            "a read of other memory banks displaced it");
+    }
+
+    #[test]
+    fn a_read_nobody_cancelled_keeps_its_place() {
+        assert_eq!(read_key(Origin::Poller, 5), None, "a poller read awaits its own outcome");
     }
 
     #[test]

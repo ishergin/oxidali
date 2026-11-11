@@ -397,3 +397,37 @@ Feature: Physical-device attribute reads
     When I POST JSON {"attribute_groups":["groups"],"memory_bank":"all"} to "/api/v1/adapters/0/physical-devices/0/attribute-reads"
     Then the response status should be 400
     And the JSON error should be "unknown_field"
+
+  @id:PD-316
+  Scenario: A read the operator superseded before it started never reaches the wire
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    And the DALI mock answers every query with 5
+    And the DALI transport parks the next exchange for 500 milliseconds
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the forward frame "0191" should have reached the wire 2 times
+
+  @id:PD-317
+  Scenario: A queued read of other attribute groups is never displaced by the next read
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    And the DALI mock answers every query with 5
+    And the DALI transport parks the next exchange for 500 milliseconds
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "groups" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the forward frame "0191" should have reached the wire 3 times
