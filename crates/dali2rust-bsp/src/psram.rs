@@ -115,6 +115,7 @@ mod esp {
 
     // SAFETY: an owned, never-aliased heap allocation, as Send and Sync as the `T` it owns, exactly like `Box`.
     unsafe impl<T: Send> Send for PsramPtr<T> {}
+    // SAFETY: same.
     unsafe impl<T: Sync> Sync for PsramPtr<T> {}
 
     impl<T> PsramPtr<T> {

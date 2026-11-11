@@ -32,6 +32,14 @@ impl BusFrame {
         Self::Event(Arc::new(env))
     }
 
+    pub fn payload_name(&self) -> &'static str {
+        match self {
+            Self::Command(cmd) => cmd.payload.variant_name(),
+            Self::Confirmation(_) => "confirmation",
+            Self::Event(ev) => ev.payload.variant_name(),
+        }
+    }
+
     pub fn event_for(&self, bus_id: BusId) -> Option<&EventEnvelope> {
         match self {
             Self::Event(ev) if BusId(ev.meta.target_adapter_id) == bus_id => Some(ev.as_ref()),

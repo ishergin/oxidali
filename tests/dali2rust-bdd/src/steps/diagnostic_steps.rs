@@ -15,7 +15,7 @@ use dali2rust_adapters::dali::transport::mock::BusFrameSource;
 use crate::DaliWorld;
 use dali2rust_bus::BusConfig;
 
-// BUS-013 BUS-014 BUS-016 CONT-001 SYS-247 DIAG-102 DIAG-104 DIAG-108 DIAG-112 DIAG-113 DIAG-114 DIAG-115 DIAG-117 DIAG-150 DIAG-031 SYS-001 SYS-002 SYS-003 SYS-004 SYS-005 SYS-007 SYS-011 SYS-012 SYS-017 DIAG-120 DIAG-121 DIAG-122 DIAG-130 DIAG-131 DIAG-132 DIAG-140 DIAG-151 DIAG-400 DIAG-401 DIAG-404 STATS-003 STATS-010 WS-044
+// BUS-013 BUS-014 BUS-016 CONT-001 SYS-247 DIAG-102 DIAG-104 DIAG-108 DIAG-112 DIAG-113 DIAG-114 DIAG-115 DIAG-117 DIAG-150 DIAG-031 SYS-001 SYS-002 SYS-003 SYS-004 SYS-005 SYS-007 SYS-011 SYS-012 SYS-017 DIAG-120 DIAG-121 DIAG-122 DIAG-130 DIAG-131 DIAG-132 DIAG-140 DIAG-400 DIAG-401 DIAG-404 STATS-003 STATS-010 WS-044
 #[given(regex = r"a DALI mock transport with response (\d+)")]
 async fn given_mock_transport_with_response(world: &mut DaliWorld, response: u64) {
     world.dali_mock().lock().unwrap().clear();
@@ -87,7 +87,7 @@ fn parse_json_response(world: &DaliWorld) -> Value {
     serde_json::from_slice(&resp.body).expect("failed to parse JSON response")
 }
 
-// BUS-014 DIAG-102 DIAG-103 DIAG-108 DIAG-109 DIAG-112 DIAG-113 DIAG-115 DIAG-116 DIAG-117 DIAG-152 SYS-003 SYS-005 SYS-006 SYS-007 SYS-011 SYS-017 SYS-018 DIAG-140 DIAG-150 DIAG-154
+// BUS-014 DIAG-102 DIAG-103 DIAG-108 DIAG-109 DIAG-112 DIAG-113 DIAG-115 DIAG-116 DIAG-117 DIAG-151 DIAG-152 SYS-003 SYS-005 SYS-006 SYS-007 SYS-011 SYS-017 SYS-018 DIAG-140 DIAG-150 DIAG-154
 #[then(regex = r"the JSON DaliCommandResponse success should be (true|false)")]
 async fn dali_response_success(world: &mut DaliWorld, expected: String) {
     let val = parse_json_response(world);
@@ -134,7 +134,39 @@ async fn dali_mock_two_frames_order(world: &mut DaliWorld, first_hex: String, se
     assert_frame_before(&frames, first, second);
 }
 
-// DIAG-151 DIAG-152 DIAG-153 DIAG-213
+// DIAG-151
+#[given(
+    regex = r"^the extended frame 0x([0-9a-fA-F]+) after prelude 0x([0-9a-fA-F]+) collides once, then both go through$"
+)]
+async fn given_extended_frame_collides_once(
+    world: &mut DaliWorld,
+    frame_hex: String,
+    prelude_hex: String,
+) {
+    let prelude = u16::from_str_radix(&prelude_hex, 16).expect("prelude hex frame");
+    let extended = u16::from_str_radix(&frame_hex, 16).expect("extended hex frame");
+    let mock = world.dali_mock().lock().expect("mock lock");
+    mock.clear();
+    mock.expect_forward_frame(prelude);
+    mock.expect_forward_frame_collision(extended);
+    mock.expect_forward_frame(prelude);
+    mock.expect_forward_frame(extended);
+}
+
+// DIAG-151
+#[then(
+    regex = r"^the DALI mock transport should have sent exactly the forward frames ((?:0x[0-9a-fA-F]+ ?)+)$"
+)]
+async fn dali_mock_exact_frames(world: &mut DaliWorld, listed: String) {
+    let wanted: Vec<u16> = listed
+        .split_whitespace()
+        .map(|hex| u16::from_str_radix(hex.trim_start_matches("0x"), 16).expect("hex frame"))
+        .collect();
+    let frames = world.dali_mock().lock().expect("mock lock").sent_frames();
+    assert_eq!(frames, wanted, "forward frames on the wire");
+}
+
+// DIAG-152 DIAG-153 DIAG-213
 #[then(
     regex = r"forward frame 0x([0-9a-fA-F]+) should be immediately followed by 0x([0-9a-fA-F]+)"
 )]
@@ -586,7 +618,7 @@ fn assert_no_script_errors(world: &DaliWorld) {
     assert_eq!(mock.script_error(), None, "unexpected mock script error");
 }
 
-// GRP-066 PD-030 PD-034 PD-040 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 VL-020 VL-054 PD-169 MQTT-012 MQTT-017 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 SCN-083 SCN-084 SCN-085 COMM-010 COMM-034 COMM-038 COMM-080 COMM-081 COMM-092 PD-037 PD-164 PD-165 PD-166 PD-167 PD-168 PD-170 PD-171 PD-189 PD-190 PD-191 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 SCN-060 SCN-092 SCN-093 SYS-234 PD-267 PD-268 POLICY-010 POLICY-011 COMM-099 PD-271 COMM-100 COMM-101 PD-272 PD-273 RULE-030 PD-285 COMM-110 SCN-095 SCN-096 SCN-097 PD-256 PD-257 PD-258 PD-269 PD-270 POLICY-007 PD-286 PD-287 PD-288 PD-289 PD-290 PD-291 PD-292 PD-293 PD-294 PD-295 PD-296 PD-297 PD-298 PD-299 POLICY-017 POLICY-018 POLICY-023 PD-300 PD-301 PD-302 PD-303 PD-305 PD-306 PD-307 PD-309 PD-310 PD-311 PD-312 PD-314 PD-315 DIAG-154
+// GRP-066 PD-030 PD-034 PD-040 PD-102 PD-103 PD-104 PD-105 PD-106 PD-107 PD-150 PD-155 PD-156 PD-157 PD-158 PD-159 PD-163 VL-020 VL-054 PD-169 MQTT-012 MQTT-017 PD-181 PD-183 PD-184 PD-185 PD-186 PD-188 SCN-083 SCN-084 SCN-085 COMM-010 COMM-034 COMM-038 COMM-080 COMM-081 COMM-092 PD-037 PD-164 PD-165 PD-166 PD-167 PD-168 PD-170 PD-171 PD-189 PD-190 PD-191 PD-194 PD-195 PD-196 PD-197 PD-198 PD-199 PD-240 PD-241 PD-242 PD-243 PD-250 PD-251 PD-252 PD-253 PD-254 SCN-060 SCN-092 SCN-093 SYS-234 PD-267 PD-268 POLICY-010 POLICY-011 COMM-099 PD-271 COMM-100 COMM-101 PD-272 PD-273 RULE-030 PD-285 COMM-110 SCN-095 SCN-096 SCN-097 PD-256 PD-257 PD-258 PD-269 PD-270 POLICY-007 PD-286 PD-287 PD-288 PD-289 PD-290 PD-291 PD-292 PD-293 PD-294 PD-295 PD-296 PD-297 PD-298 PD-299 POLICY-017 POLICY-018 POLICY-023 PD-300 PD-301 PD-302 PD-303 PD-305 PD-306 PD-307 PD-309 PD-310 PD-311 PD-312 PD-314 PD-315 DIAG-151 DIAG-154
 #[then("all scripted DALI exchanges should be consumed without errors")]
 async fn then_all_scripted_exchanges_consumed(world: &mut DaliWorld) {
     assert_no_script_errors(world);

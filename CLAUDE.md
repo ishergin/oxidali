@@ -340,7 +340,7 @@ just bdd                 # the BDD suite (= cargo bdd)
 just clippy              # -D warnings plus allow reasons and SAFETY comments
 just verify              # every merge gate
 just ci                  # clippy, test, bdd, verify, esp-check, gear-sim-check
-just esp-check           # cargo check of the firmware on the P4 triple
+just esp-check           # clippy of the firmware on the P4 triple: compiles, SAFETY on every unsafe
 just gc                  # sweep stale .o files; just gc-status counts them
 cargo fw                 # build the firmware image
 cargo run --target aarch64-apple-darwin -p dali2rust-adapters --example host_dev_server

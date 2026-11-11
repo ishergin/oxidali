@@ -135,6 +135,7 @@ pub struct EthLink {
 
 // SAFETY: both pointers are opaque ESP-IDF handles with thread-safe APIs; this type only reads through them.
 unsafe impl Send for EthLink {}
+// SAFETY: same.
 unsafe impl Sync for EthLink {}
 
 impl NetworkLink for EthLink {

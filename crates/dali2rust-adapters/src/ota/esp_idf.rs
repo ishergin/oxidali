@@ -217,8 +217,8 @@ fn open_slot(partition: *const esp_partition_t) -> Result<esp_ota_handle_t, Firm
     flash_gate::set_firmware_write_open(true);
     let _gate = flash_gate::hold();
     let mut handle: esp_ota_handle_t = 0;
-    // SAFETY: `partition` is non-null and `handle` is a live out-parameter.
     let size = OTA_WITH_SEQUENTIAL_WRITES as usize;
+    // SAFETY: `partition` is non-null and `handle` is a live out-parameter.
     if let Err(e) = esp!(unsafe { esp_ota_begin(partition, size, &mut handle) }) {
         flash_gate::set_firmware_write_open(false);
         log::error!("ota: esp_ota_begin failed: {e:?}");

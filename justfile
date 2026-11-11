@@ -130,9 +130,9 @@ verify-release:
 contracts-check:
     bash scripts/verify_contracts_codegen.sh
 
-[doc("Type-check the firmware for the ESP32-P4 target.")]
+[doc("Type-check the firmware for the ESP32-P4 target; every unsafe block in its crates carries SAFETY.")]
 esp-check:
-    cargo check -p dali2rust-firmware --target {{p4_target}}
+    cargo clippy -p dali2rust-firmware --target {{p4_target}} -- -A clippy::all -D clippy::undocumented_unsafe_blocks
 
 [doc("Type-check the gear emulator against the crates it shares.")]
 gear-sim-check:
