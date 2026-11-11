@@ -160,7 +160,7 @@ pub fn incomplete_reception_verdict(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxAttemptOutcome {
-    Sent { pre_idle_ticks: u16 },
+    Sent { pre_idle_ticks: u16, sniff_seq: u32 },
     Collision,
     BusBusy,
 }
@@ -176,9 +176,10 @@ pub enum TxEventCause {
 
 pub fn classify_tx_event(event: &SessionEvent) -> (Option<TxAttemptOutcome>, TxEventCause) {
     match event {
-        SessionEvent::TxComplete { pre_idle_ticks } => (
+        SessionEvent::TxComplete { pre_idle_ticks, sniff_seq } => (
             Some(TxAttemptOutcome::Sent {
                 pre_idle_ticks: *pre_idle_ticks,
+                sniff_seq: *sniff_seq,
             }),
             TxEventCause::Completed,
         ),
@@ -553,12 +554,12 @@ mod outcome_classification_tests {
     }
 
     #[test]
-    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks() {
-        for ticks in [0u16, 1, 40, u16::MAX] {
+    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks_and_capture_count() {
+        for (ticks, sniff_seq) in [(0u16, 0u32), (1, 1), (40, 7), (u16::MAX, u32::MAX)] {
             assert_eq!(
-                classified_tx(SessionEvent::TxComplete { pre_idle_ticks: ticks }),
+                classified_tx(SessionEvent::TxComplete { pre_idle_ticks: ticks, sniff_seq }),
                 (
-                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks }),
+                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks, sniff_seq }),
                     TxEventCause::Completed
                 )
             );

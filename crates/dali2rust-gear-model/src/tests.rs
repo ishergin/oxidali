@@ -1646,6 +1646,27 @@ fn a_repeated_arc_power_frame_is_not_a_pair() {
     assert_eq!(fleet.stats().send_twice_split_by_interloper, 0);
 }
 
+// IEC 62386-101 §9.3
+#[test]
+fn an_extended_pair_re_run_after_an_interloper_executes_once() {
+    let mut fleet = GearFleet::demo_bus();
+    let enable_led = special(SpecialCommand::EnableDeviceType(DeviceType::Led.code()));
+    let reference_system_power = dt6(0, Dt6Command::ReferenceSystemPower);
+    exchange(&mut fleet, enable_led, false);
+    exchange(&mut fleet, reference_system_power, false);
+    exchange(&mut fleet, standard(3, StandardCommand::QueryStatus), true);
+    exchange(&mut fleet, reference_system_power, false);
+    exchange(&mut fleet, enable_led, false);
+    exchange(&mut fleet, reference_system_power, false);
+    exchange(&mut fleet, reference_system_power, false);
+
+    assert_eq!(
+        fleet.stats().send_twice_pairs_executed,
+        1,
+        "the re-run's prelude separates the stray half, so only the re-run pairs"
+    );
+}
+
 #[test]
 fn a_held_first_half_is_not_a_violation_until_something_else_arrives() {
     let mut fleet = GearFleet::demo_bus();

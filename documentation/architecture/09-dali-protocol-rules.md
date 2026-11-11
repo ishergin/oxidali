@@ -124,6 +124,15 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   and the unit is re-run as `BusBusy`. An address change that sent its pair but cannot
   prove the move therefore asks the target before it fails; one that never sent the pair
   never asks.
+- A capture between the halves — another master's frame, a backward frame no session
+  took, a violation — is an active state between them, so they are no pair (101 §9.3):
+  the pair is split, counted and re-run as `BusBusy`. The transport reports
+  the captures ([08](08-dali-phy-and-transport.md) §Receive); without that report only
+  the settling is judged.
+- A split pair's second half may open a new pair (101 §9.3), so our next frame identical
+  to it waits out Table 20's 105 ms and opens a new transaction, shielded as the one it
+  waited in; any other frame of ours, such as the prelude or DTR arming that opens a
+  re-run, keeps them apart already.
 - A 16-bit frame sent on its own (`send_raw`) is retried frame by frame on the same
   outcomes, at priority 1 inside a started transaction, except inside a unit; a frame that
   expected no answer reads anything in its window as no answer.

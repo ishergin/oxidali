@@ -630,6 +630,10 @@ pub trait DaliTransport {
         None
     }
 
+    fn captures_between_last_two_tx(&self) -> Option<u32> {
+        None
+    }
+
     fn set_observed_frame_sender(&mut self, _sender: ObservedFrameSender) {}
 
     fn set_sniffer_counters(&mut self, _sink: std::sync::Arc<PhySnifferCounters>) {}

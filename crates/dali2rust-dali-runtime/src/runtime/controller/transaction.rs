@@ -55,15 +55,18 @@ impl<T: DaliTransport + Send> DaliController<T> {
 
     // IEC 62386-103 §9.9.1, §9.9.3
     pub(super) fn held_by(&self) -> Option<HoldCause> {
-        let inside_a_started_unit = self.tx.depth > 0 && self.tx.first_frame_sent;
-        if inside_a_started_unit || (self.step_depth > 0 && !self.at_step_boundary) {
+        if self.shielded() || (self.step_depth > 0 && !self.at_step_boundary) {
             return None;
         }
         self.hold.as_ref()?.held()
     }
 
+    fn shielded(&self) -> bool {
+        self.tx.depth > 0 && (self.tx.first_frame_sent || self.tx.shielded_across_release)
+    }
+
     pub(super) fn must_yield(&self) -> bool {
-        if self.tx.depth > 0 && self.tx.first_frame_sent {
+        if self.shielded() {
             return false;
         }
         let Some(lease) = self.lease.as_ref() else {
@@ -169,5 +172,12 @@ impl<T: DaliTransport + Send> DaliController<T> {
             .lock()
             .expect("DaliController: transport mutex poisoned (previous panic in transport code)")
             .last_tx_settle_ticks()
+    }
+
+    pub(super) fn captures_between_last_two_tx(&self) -> Option<u32> {
+        self.transport
+            .lock()
+            .expect("DaliController: transport mutex poisoned (previous panic in transport code)")
+            .captures_between_last_two_tx()
     }
 }

@@ -144,7 +144,12 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
   decoded. The other lengths are decoded by the drain.
 - Every capture pushed to the sniffer ring, or dropped because it was full, moves
-  `sniff_seq`, and the capture carries it; our own frames do not move it. The bus epoch
+  `sniff_seq`, and the capture carries it; our own frames and a backward-length capture a
+  waiting session took do not move it. A frame of ours reports the `sniff_seq` of the tick
+  it completed on (`SessionEvent::TxComplete`), so the transport tells how many captures
+  came between its last two frames (`captures_between_last_two_tx`), synchronously and
+  whatever the sniffer has drained; a send-twice pair is judged by it
+  ([09](09-dali-protocol-rules.md) §Transactions). The bus epoch
   moves on every forward capture and every forward frame we start that does not yield
   before its first edge, and a backward capture carries it unchanged, so the drain sees
   from a capture's epoch that a frame of ours passed before it.
