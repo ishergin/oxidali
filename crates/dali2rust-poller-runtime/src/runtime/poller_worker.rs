@@ -176,8 +176,13 @@ pub fn spawn_poller_worker(
     )
 }
 
+#[inline(never)]
+fn boot_state(settings: PollerSettingsView) -> Box<PollerState> {
+    Box::new(PollerState::boot(settings))
+}
+
 fn run_loop(ev_rx: BusSubscriberRx, conf_rx: BusSubscriberRx, deps: PollerWiring) {
-    let mut state = PollerState::boot(deps.read_port.poller_settings_view());
+    let mut state = boot_state(deps.read_port.poller_settings_view());
     loop {
         if Instant::now() >= state.next_cycle {
             start_cycle(&mut state, &deps);
@@ -273,6 +278,7 @@ fn stand_down_power_cycle_watch(state: &mut PollerState) {
     state.power_cycles = PowerCycleWatch::default();
 }
 
+#[inline(never)]
 fn publish_health_probe(state: &mut PollerState, deps: &PollerWiring) {
     let Some(adapter_id) = state.probe_due.pop_front() else {
         return;
@@ -498,6 +504,7 @@ fn charge_wire_time(state: &mut PollerState, cost: Duration) {
         .max(Instant::now() + charged * BACKGROUND_WIRE_REST_MULTIPLE);
 }
 
+#[inline(never)]
 fn publish_read(state: &mut PollerState, deps: &PollerWiring, target: PollTarget) {
     let correlation_id = deps.correlation.next_id();
     let cmd = command_envelope(
