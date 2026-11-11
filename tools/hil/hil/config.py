@@ -86,6 +86,8 @@ class HilConfig:
     lamp_shorts: str = field(default_factory=lambda: _env("HIL_LAMP_SHORTS", ""))
     lamps_read_only: bool = field(
         default_factory=lambda: _env("HIL_LAMPS_READ_ONLY", "1").strip() != "0")
+    allow_wb_packet_filter: bool = field(
+        default_factory=lambda: _env("HIL_ALLOW_WB_PACKET_FILTER", "").strip() == "1")
 
     def lamp_short_set(self) -> frozenset:
         if not self.lamp_shorts.strip():
