@@ -267,9 +267,10 @@ hil-slow` wrap the cwd.
 - `hil preflight` judges the serial channel by the log growing after a health request
   and the smoke tier by the firmware's `HTTP access: GET /api/v1/health …` line, so that
   line is part of the firmware's contract with the toolkit.
-- Markers: `smoke`, `optical`, `sniffer`, `serial`, `foreign` (the WB master),
-  `ha_bridge`, `redundancy`, `slow`, `destructive`, `needs_capability(name)`,
-  `virtual_gear` (the gear the peer emulates), `light` (can change what a lamp shows).
+- Markers: `pyproject.toml` lists them.
+- HIL-WS-11 (`-m slow tests/test_ws.py -k keepalive`) puts two iptables `DROP` rules on
+  the WB matching its client's 4-tuple and removes them; `python3 -m hil.vanish sweep`
+  clears a killed session's.
 - Whatever `-m` says, collection deselects a `light` test unless `HIL_LAMP_SHORTS` names
   a lamp and `HIL_LAMPS_READ_ONLY=0`, and a test that commits the rules document
   (it requests `rules_guard`) unless `HIL_ALLOW_RULE_COMMITS=1`.
