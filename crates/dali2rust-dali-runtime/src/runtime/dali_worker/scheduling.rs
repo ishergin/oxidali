@@ -154,7 +154,7 @@ fn frame_priority_key(frame: &BusFrame, adapter_id: BusId) -> u8 {
 enum SupersedeKind {
     TargetState,
     RecallScene { scene_id: u8 },
-    OperatorRead,
+    OperatorRead { groups: u16, banks: dali2rust_contracts::msg::MemoryBankReadPreset },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -175,23 +175,34 @@ fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<Superse
     }
     match &ce.payload {
         BusCommandPayload::DaliSetTargetStateCommand(ts) => target_state_key(ts),
-        BusCommandPayload::DaliRecallSceneCommand(rc) => Some(SupersedeKey {
-            kind: SupersedeKind::RecallScene { scene_id: rc.scene_id },
-            adapter: rc.registry_adapter_id,
-            scope: rc.scope as u8,
-            identity: recall_identity(rc),
-            hold_hcl: rc.hold_hcl,
-        }),
+        BusCommandPayload::DaliRecallSceneCommand(rc) => Some(recall_key(rc)),
         BusCommandPayload::DaliReadAttributesCommand(ar) if ce.meta.origin == Origin::Api => {
-            Some(SupersedeKey {
-                kind: SupersedeKind::OperatorRead,
-                adapter: ar.registry_adapter_id,
-                scope: DaliTargetScope::Short as u8,
-                identity: ar.short_address,
-                hold_hcl: false,
-            })
+            Some(operator_read_key(ar))
         }
         _ => None,
+    }
+}
+
+fn recall_key(rc: &dali2rust_contracts::msg::DaliRecallSceneCommand) -> SupersedeKey {
+    SupersedeKey {
+        kind: SupersedeKind::RecallScene { scene_id: rc.scene_id },
+        adapter: rc.registry_adapter_id,
+        scope: rc.scope as u8,
+        identity: recall_identity(rc),
+        hold_hcl: rc.hold_hcl,
+    }
+}
+
+fn operator_read_key(ar: &dali2rust_contracts::msg::DaliReadAttributesCommand) -> SupersedeKey {
+    SupersedeKey {
+        kind: SupersedeKind::OperatorRead {
+            groups: ar.attribute_groups_mask,
+            banks: ar.memory_banks,
+        },
+        adapter: ar.registry_adapter_id,
+        scope: DaliTargetScope::Short as u8,
+        identity: ar.short_address,
+        hold_hcl: false,
     }
 }
 
@@ -403,7 +414,7 @@ fn settle_batch(
 
 #[cfg(test)]
 mod tests {
-    use dali2rust_contracts::msg::PowerState;
+    use dali2rust_contracts::msg::{DaliAttributeGroup, MemoryBankReadPreset, PowerState};
 
     use super::*;
 
@@ -447,7 +458,11 @@ mod tests {
         assert_eq!(superseded, vec![RIDER, FIRST]);
     }
 
-    fn read(origin: Origin, short: u8) -> BusFrame {
+    const RUNTIME_STATUS: u16 = DaliAttributeGroup::RuntimeStatus.mask_bit();
+    const GROUPS: u16 = DaliAttributeGroup::Groups.mask_bit();
+    const NO_BANKS: MemoryBankReadPreset = MemoryBankReadPreset::None;
+
+    fn read(origin: Origin, short: u8, groups: u16, banks: MemoryBankReadPreset) -> BusFrame {
         BusFrame::command(dali2rust_contracts::bus::command_envelope(
             SOURCE_ID_UNSPECIFIED,
             FIRST,
@@ -456,14 +471,18 @@ mod tests {
             dali2rust_contracts::msg::DaliReadAttributesCommand {
                 registry_adapter_id: 0,
                 short_address: short,
-                attribute_groups_mask: 1,
-                memory_banks: dali2rust_contracts::msg::MemoryBankReadPreset::None,
+                attribute_groups_mask: groups,
+                memory_banks: banks,
             },
         ))
     }
 
+    fn read_key_of(groups: u16, banks: MemoryBankReadPreset) -> Option<SupersedeKey> {
+        supersede_coalesce_key(&read(Origin::Api, 5, groups, banks), BusId::default())
+    }
+
     fn read_key(origin: Origin, short: u8) -> Option<SupersedeKey> {
-        supersede_coalesce_key(&read(origin, short), BusId::default())
+        supersede_coalesce_key(&read(origin, short, RUNTIME_STATUS, NO_BANKS), BusId::default())
     }
 
     #[test]
@@ -472,6 +491,14 @@ mod tests {
         assert!(key.is_some(), "an operator read was given no key, so nothing displaces it");
         assert_eq!(key, read_key(Origin::Api, 5));
         assert_ne!(key, read_key(Origin::Api, 6), "a read of another short displaced this one");
+    }
+
+    #[test]
+    fn a_read_that_asks_for_more_is_never_displaced_by_one_that_asks_for_less() {
+        let key = read_key_of(RUNTIME_STATUS | GROUPS, NO_BANKS);
+        assert_ne!(key, read_key_of(RUNTIME_STATUS, NO_BANKS), "its groups were dropped");
+        assert_ne!(key, read_key_of(RUNTIME_STATUS | GROUPS, MemoryBankReadPreset::All),
+            "a read of other memory banks displaced it");
     }
 
     #[test]

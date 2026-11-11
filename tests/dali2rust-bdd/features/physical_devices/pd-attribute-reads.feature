@@ -407,8 +407,27 @@ Feature: Physical-device attribute reads
     And the DALI mock answers every query with 5
     And the DALI transport parks the next exchange for 500 milliseconds
     When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
-    And I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
-    And I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
     Then the response status should be 202
     And the last operation eventually succeeds
-    And the forward frame "0190" should have reached the wire 2 times
+    And the forward frame "0191" should have reached the wire 2 times
+
+  @id:PD-317
+  Scenario: A queued read of other attribute groups is never displaced by the next read
+    Given a golden control-gear discovery script for short address 0
+    When I start a discovery run for adapter 0
+    Then the last operation eventually succeeds
+    Given the DALI mock transport trace is cleared
+    And the DALI mock answers every query with 5
+    And the DALI transport parks the next exchange for 500 milliseconds
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "groups" only
+    Then the response status should be 202
+    When I start an attribute read for adapter 0 physical device 0 with attribute group "runtime_status" only
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the forward frame "0191" should have reached the wire 3 times
