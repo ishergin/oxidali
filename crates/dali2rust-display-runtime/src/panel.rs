@@ -26,6 +26,10 @@ impl RecordingPanel {
     pub fn shows_row_starting_with(&self, prefix: &str) -> bool {
         self.powered && self.rows.iter().any(|row| row.starts_with(prefix))
     }
+
+    pub fn shows_row_ending_with(&self, suffix: &str) -> bool {
+        self.powered && self.rows.iter().any(|row| row.ends_with(suffix))
+    }
 }
 
 impl DisplayPanel for RecordingPanel {

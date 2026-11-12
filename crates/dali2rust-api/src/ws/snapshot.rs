@@ -1,10 +1,24 @@
 use crate::http::diagnostics_state::{DiagnosticsDto, DiagnosticsHttpState};
+use crate::http::health_state::HealthHttpState;
 use crate::http::stats_state::{StatsHttpState, StatsReportDto};
 use crate::ws::protocol::{event_frame_reserving, Channel};
 
 pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8608;
 
 pub const STATS_SNAPSHOT_CEILING_BYTES: usize = 6336;
+
+pub const HEALTH_SNAPSHOT_CEILING_BYTES: usize = 256;
+
+// IEC 62386-103 §9.9.3
+pub fn health_snapshot_frame(state: &dyn HealthHttpState, ts_ms: u64) -> String {
+    event_frame_reserving(
+        "HealthSnapshot",
+        Channel::Health,
+        ts_ms,
+        state.health_dto(),
+        HEALTH_SNAPSHOT_CEILING_BYTES,
+    )
+}
 
 pub fn stats_snapshot_frame(state: &dyn StatsHttpState, ts_ms: u64) -> String {
     let dto = boxed_stats(state);
@@ -71,6 +85,41 @@ mod tests {
              the DTO or argue the ceiling in a PR",
             frame.len(),
             STATS_SNAPSHOT_CEILING_BYTES
+        );
+        assert!(
+            frame.capacity() <= frame.len() + ENVELOPE_RESERVE_BYTES,
+            "envelope capacity {} B for a {} B frame: the buffer grew instead of being reserved",
+            frame.capacity(),
+            frame.len()
+        );
+    }
+
+    struct WorstHealth;
+    impl HealthHttpState for WorstHealth {
+        fn health_dto(&self) -> crate::http::health_state::HealthDto {
+            crate::http::health_state::HealthDto {
+                status: "degraded",
+                uptime_seconds: u64::MAX,
+                version: "255.255.4294967295+0123abcd.dirty.1231T2359",
+                role: Some("standby"),
+                quiescent: Some(false),
+            }
+        }
+    }
+
+    #[test]
+    fn the_health_snapshot_worst_case_is_measured_and_frozen() {
+        let frame = health_snapshot_frame(&WorstHealth, u64::MAX);
+        eprintln!(
+            "worst-case HealthSnapshot: {} B of {} B ceiling",
+            frame.len(),
+            HEALTH_SNAPSHOT_CEILING_BYTES
+        );
+        assert!(
+            frame.len() <= HEALTH_SNAPSHOT_CEILING_BYTES,
+            "worst-case HealthSnapshot measures {} B against the frozen {} B ceiling",
+            frame.len(),
+            HEALTH_SNAPSHOT_CEILING_BYTES
         );
         assert!(
             frame.capacity() <= frame.len() + ENVELOPE_RESERVE_BYTES,

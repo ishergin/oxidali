@@ -139,7 +139,7 @@ pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
         Arc::new(dali2rust_dali_runtime::StdClock::new());
     let controller_summary = controller_summary_source(&booted, rest.gauges.link.clone());
     let (workers, read_models) =
-        spawn_fleet(transport, hardware_display, &mut booted, &rest, &clock);
+        spawn_fleet(version, transport, hardware_display, &mut booted, &rest, &clock);
     let rules = rules_http_deps(&booted);
     let router = assemble_router(
         RouterParts {
@@ -168,6 +168,7 @@ pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
 }
 
 fn spawn_fleet<T: DaliTransport + Send + 'static>(
+    version: &'static str,
     transport: Arc<Mutex<T>>,
     hardware_display: HardwareDisplay,
     booted: &mut BootedStack,
@@ -184,6 +185,7 @@ fn spawn_fleet<T: DaliTransport + Send + 'static>(
     let (mut workers, counter_handles) = spawn_bus_workers(transport, inputs);
     registry_init::log_internal_free("after workers");
     let read_models = boot_read_models(
+        version,
         booted,
         rest,
         counter_handles,
@@ -195,6 +197,7 @@ fn spawn_fleet<T: DaliTransport + Send + 'static>(
 }
 
 fn boot_read_models(
+    version: &'static str,
     booted: &mut BootedStack,
     rest: &PostBootOptions,
     counter_handles: RuntimeCounterHandles,
@@ -202,6 +205,8 @@ fn boot_read_models(
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
 ) -> ReadModelPorts {
     read_model_ports(ReadModelArgs {
+        version,
+        role: Arc::clone(&booted.registry.http.role_port),
         clock: Arc::clone(clock),
         publisher: booted.bus.publisher.clone(),
         slots: Arc::clone(&booted.diagnostics_slots),
@@ -363,6 +368,7 @@ fn spawn_websocket_worker(
         WsWorkerPorts {
             stats: Arc::clone(&read_models.stats),
             diagnostics: Arc::clone(&read_models.diagnostics),
+            health: Arc::clone(&read_models.health),
         },
         Arc::new(dali2rust_platform::dali::wall_clock_millis),
     )
@@ -612,6 +618,8 @@ fn bus_wiring(
 }
 
 struct ReadModelArgs {
+    version: &'static str,
+    role: Arc<dyn dali2rust_api::http::role::ControllerRolePort>,
     clock: Arc<dyn dali2rust_platform::clock::Clock>,
     publisher: dali2rust_bus::BusPublisher,
     slots: Arc<dali2rust_api::confirmation_bridge::PendingConfirmationSlots>,
@@ -651,6 +659,10 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
         firmware: Arc::new(http_bridges::FirmwareBridge::new(
             args.ota.state,
             args.firmware_port,
+        )),
+        health: Arc::new(dali2rust_api::http::health_state::HealthView::new(
+            dali2rust_domain::health::HealthService::new(uptime.clone(), args.version),
+            Some(args.role),
         )),
         uptime,
     }
@@ -714,6 +726,9 @@ mod tests {
         let (_host, publisher, ()) = BusHost::spawn(BusConfig::default(), |_registry| ());
         let store = Arc::new(RegistryStore::with_adapter_count(1));
         let ports = read_model_ports(ReadModelArgs {
+            version: "0.1.0-test",
+            role: Arc::new(http_bridges::RoleBridge::new(Arc::clone(&store)
+                as Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>)),
             clock: Arc::clone(&clock) as Arc<dyn Clock>,
             publisher,
             slots: Arc::new(PendingConfirmationSlots::new()),

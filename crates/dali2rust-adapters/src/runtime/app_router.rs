@@ -89,6 +89,7 @@ pub(crate) struct ReadModelPorts {
     pub diagnostics: Arc<dyn dali2rust_api::http::diagnostics_state::DiagnosticsHttpState>,
     pub stats: Arc<dyn StatsHttpState>,
     pub redundancy: Arc<dyn dali2rust_api::http::redundancy_state::RedundancyHttpState>,
+    pub health: Arc<dyn dali2rust_api::http::health_state::HealthHttpState>,
     pub firmware: Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
     pub uptime: Uptime,
 }
@@ -285,7 +286,8 @@ pub(super) fn build_app_router(
     let (bus, registry, adapter_count) = (&parts.dispatch, &parts.registry_http, parts.adapter_count);
     let redundancy_read = Arc::clone(&parts.read_models.redundancy);
     let uptime = parts.read_models.uptime.clone();
-    let base = AppBuilder::new(parts.version, uptime.clone()).with_role_port(Arc::clone(&registry.role_port));
+    let base = AppBuilder::new(Arc::clone(&parts.read_models.health))
+        .with_role_port(Arc::clone(&registry.role_port));
     let builder = wire_read_models(base, parts.read_models, bus);
     let summary = parts.controller_summary;
     let builder = wire_controller_and_adapters(builder, parts.version, adapter_count, bus, registry, uptime, summary);

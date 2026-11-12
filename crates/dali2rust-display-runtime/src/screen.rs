@@ -266,13 +266,17 @@ fn row_address(state: &ScreenState) -> ScreenRow {
     };
     ScreenRow {
         text: spread(&addr, &role_and_uptime(role, state.uptime_s)),
-        invert: !state.sample.controller_active,
+        invert: !state.sample.controller_active || state.sample.controller_quiescent,
         bar: None,
         spark: false,
     }
 }
 
+// IEC 62386-103 §9.9.3
 fn role_letter(sample: &DisplaySample) -> Option<char> {
+    if sample.controller_quiescent {
+        return Some('Q');
+    }
     if !sample.redundancy_enabled {
         return None;
     }
@@ -821,6 +825,34 @@ mod tests {
     }
 
     #[test]
+    fn quiescent_mode_takes_the_role_letter_whether_or_not_the_pair_is_configured() {
+        let mut state = busy_state();
+        state.sample.controller_quiescent = true;
+        let rows = render(&state);
+        assert!(rows[0].text.contains('Q'), "{:?}", rows[0].text);
+        assert!(rows[0].invert, "a wire that takes nothing of ours is not business as usual");
+        state.sample.redundancy_enabled = true;
+        state.sample.controller_active = true;
+        let rows = render(&state);
+        assert!(rows[0].text.contains('Q'), "an active controller held quiet still says so");
+        assert!(rows[0].invert, "and the row still says the wire takes nothing of ours");
+    }
+
+    #[test]
+    fn the_network_page_names_quiescent_mode_over_the_role() {
+        let mut state = busy_state();
+        state.sample.redundancy_enabled = true;
+        state.sample.controller_active = true;
+        state.sample.controller_quiescent = true;
+        let rows = page_rows(&state, DisplayPage::Network);
+        assert!(rows[1].text.ends_with(" QUIESCENT"), "{:?}", rows[1].text);
+        assert!(rows[1].invert);
+        state.sample.redundancy_enabled = false;
+        let alone = page_rows(&state, DisplayPage::Network);
+        assert!(alone[1].text.ends_with(" QUIESCENT"), "{:?}", alone[1].text);
+    }
+
+    #[test]
     fn the_network_page_inverts_what_needs_a_look() {
         let mut state = busy_state();
         state.ip = None;
@@ -902,6 +934,8 @@ mod tests {
         let rows = render(&state);
         assert!(rows[0].invert && rows[4].invert, "standby and NO SAVE stay on show");
         assert!(!has_live_fault(&state), "neither keeps the screen saver away");
+        state.sample.controller_quiescent = true;
+        assert!(!has_live_fault(&state), "nor does another controller's quiescent mode");
     }
 
     #[test]

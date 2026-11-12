@@ -23,6 +23,7 @@ const V1_CHANNELS: &[&str] = &[
     "input",
     "rules",
     "logs",
+    "health",
 ];
 
 const COUNTER_SETTLE: Duration = Duration::from_secs(3);
@@ -83,7 +84,7 @@ async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009 POLICY-022
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009 POLICY-022 WS-060 WS-061
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -166,7 +167,7 @@ async fn when_subscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).subscribe(&channels);
 }
 
-// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052 PERS-008 POLICY-022
+// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052 PERS-008 POLICY-022 WS-060 WS-061
 #[given(regex = r#"^the WebSocket client is subscribed to "([^"]+)"$"#)]
 async fn given_subscribed(world: &mut DaliWorld, channels: String) {
     let c = last_client(world);
@@ -226,7 +227,7 @@ async fn then_error_code(world: &mut DaliWorld, code: String) {
     assert_eq!(frame["error"]["code"], code.as_str(), "frame was {frame}");
 }
 
-// WS-003 WS-010 WS-030 WS-046 WS-013 WS-059 INP-006 WS-052 WS-053 PERS-008
+// WS-003 WS-010 WS-030 WS-046 WS-013 WS-059 INP-006 WS-052 WS-053 PERS-008 WS-061
 #[then(regex = r#"^the WebSocket client should receive a "([^"]+)" frame on channel "([^"]+)"$"#)]
 async fn then_receive_event(world: &mut DaliWorld, event_type: String, channel: String) {
     let frame = last_client(world)
@@ -252,6 +253,43 @@ async fn then_receive_event_naming(
         })
         .unwrap_or_else(|| panic!("no {event_type} on {channel} with {field} {value}"));
     world.remembered_json = Some(frame);
+}
+
+// WS-060
+#[given("the WebSocket client drops the frames it has already received")]
+async fn given_forget_received(world: &mut DaliWorld) {
+    last_client(world).forget_received();
+}
+
+// WS-060
+#[then(regex = r#"^the WebSocket client should receive a "([^"]+)" frame on channel "([^"]+)" whose payload "([a-z_]+)" is (true|false)$"#)]
+async fn then_receive_event_flagging(
+    world: &mut DaliWorld,
+    event_type: String,
+    channel: String,
+    field: String,
+    value: bool,
+) {
+    let frame = last_client(world)
+        .wait_for(|v| {
+            v.get("type").and_then(Value::as_str) == Some(event_type.as_str())
+                && v.get("channel").and_then(Value::as_str) == Some(channel.as_str())
+                && v["payload"][field.as_str()].as_bool() == Some(value)
+        })
+        .unwrap_or_else(|| panic!("no {event_type} on {channel} with {field} {value}"));
+    world.remembered_json = Some(frame);
+}
+
+// WS-061
+#[then(regex = r#"^the frame payload should carry the same answer as "([^"]+)"$"#)]
+async fn then_payload_matches_resource(world: &mut DaliWorld, path: String) {
+    let frame = world.remembered_json.clone().expect("no remembered frame");
+    let mut sent = frame["payload"].as_object().expect("payload is an object").clone();
+    let resource = crate::steps::get_json(world, &path);
+    let mut served = resource.as_object().expect("resource is an object").clone();
+    assert!(sent.remove("uptime_seconds").is_some(), "the frame carries no uptime_seconds");
+    assert!(served.remove("uptime_seconds").is_some(), "{path} carries no uptime_seconds");
+    assert_eq!(sent, served, "{path} and its frame answer differently");
 }
 
 // WS-032

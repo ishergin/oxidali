@@ -471,6 +471,7 @@ impl RegistryStore {
                 .is_some_and(|r| r.enabled),
             redundancy_enabled: g.redundancy_settings.enabled,
             controller_active: g.dali_settings.application_active,
+            controller_quiescent: g.dali_settings.quiescent_remaining_ms(Instant::now()).is_some(),
             display: g.display_settings.0,
         }
     }
@@ -521,6 +522,7 @@ pub struct DisplaySampleParts {
     pub adapter_enabled: bool,
     pub redundancy_enabled: bool,
     pub controller_active: bool,
+    pub controller_quiescent: bool,
     pub display: dali2rust_domain::registry::DisplaySettingsView,
 }
 

@@ -65,6 +65,12 @@ impl WsTestClient {
         self.reading = false;
     }
 
+    pub fn forget_received(&mut self) {
+        self.require_observing("forget_received");
+        self.drain();
+        self.pending.clear();
+    }
+
     fn require_observing(&self, what: &str) {
         assert!(
             self.reading,

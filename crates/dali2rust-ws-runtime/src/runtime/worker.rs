@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 
 use crate::runtime::coalesce::BurstCoalescer;
 use dali2rust_api::ws::{
-    diagnostics_snapshot_frame, event_channels, log_batch_frame, log_batch_prefix,
-    project_event_where, sniffer_batch_frame, stats_snapshot_frame, Channel,
+    diagnostics_snapshot_frame, event_channels, health_snapshot_frame, log_batch_frame,
+    log_batch_prefix, project_event_where, sniffer_batch_frame, stats_snapshot_frame, Channel,
     SnifferDecoderState,
 };
 use dali2rust_api::http::diagnostics_state::DiagnosticsHttpState;
+use dali2rust_api::http::health_state::HealthHttpState;
 use dali2rust_api::http::stats_state::StatsHttpState;
 use dali2rust_bus::{BusFrame, BusSubscriberRx, EventInboxProbe};
 use dali2rust_bsp::log_ring::LogRing;
@@ -36,10 +37,12 @@ const LOGS_BATCH_MAX: usize = 16;
 
 const STATS_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 const DIAGNOSTICS_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
+const HEALTH_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct WsWorkerPorts {
     pub stats: Arc<dyn StatsHttpState>,
     pub diagnostics: Arc<dyn DiagnosticsHttpState>,
+    pub health: Arc<dyn HealthHttpState>,
 }
 
 struct Timers {
@@ -47,6 +50,7 @@ struct Timers {
     logs_flush: Instant,
     stats: Instant,
     diagnostics: Instant,
+    health: Instant,
 }
 
 impl Timers {
@@ -56,6 +60,7 @@ impl Timers {
             logs_flush: now,
             stats: now,
             diagnostics: now,
+            health: now,
         }
     }
 
@@ -73,6 +78,7 @@ impl Timers {
             (self.logs_flush, LOGS_FLUSH_INTERVAL),
             (self.stats, STATS_SNAPSHOT_INTERVAL),
             (self.diagnostics, DIAGNOSTICS_SNAPSHOT_INTERVAL),
+            (self.health, HEALTH_SNAPSHOT_INTERVAL),
         ]
         .into_iter()
         .map(|(slot, every)| every.saturating_sub(now.duration_since(slot)))
@@ -265,17 +271,27 @@ fn tick(
     if Timers::due(&mut timers.logs_flush, now, LOGS_FLUSH_INTERVAL) {
         flush_logs(hub, &mut drains.logs, clock_ms);
     }
-    if Timers::due(&mut timers.stats, now, STATS_SNAPSHOT_INTERVAL)
-        && hub.any_subscriber(Channel::Stats)
-    {
-        let frame = stats_snapshot_frame(ports.stats.as_ref(), clock_ms());
-        hub.broadcast(Channel::Stats, &frame);
-    }
-    if Timers::due(&mut timers.diagnostics, now, DIAGNOSTICS_SNAPSHOT_INTERVAL)
-        && hub.any_subscriber(Channel::Diagnostics)
-    {
-        let frame = diagnostics_snapshot_frame(ports.diagnostics.as_ref(), clock_ms());
-        hub.broadcast(Channel::Diagnostics, &frame);
+    snapshot_if_due(hub, &mut timers.stats, now, STATS_SNAPSHOT_INTERVAL, Channel::Stats, || {
+        stats_snapshot_frame(ports.stats.as_ref(), clock_ms())
+    });
+    snapshot_if_due(hub, &mut timers.diagnostics, now, DIAGNOSTICS_SNAPSHOT_INTERVAL, Channel::Diagnostics, || {
+        diagnostics_snapshot_frame(ports.diagnostics.as_ref(), clock_ms())
+    });
+    snapshot_if_due(hub, &mut timers.health, now, HEALTH_SNAPSHOT_INTERVAL, Channel::Health, || {
+        health_snapshot_frame(ports.health.as_ref(), clock_ms())
+    });
+}
+
+fn snapshot_if_due(
+    hub: &WsHub,
+    slot: &mut Instant,
+    now: Instant,
+    every: Duration,
+    channel: Channel,
+    frame: impl FnOnce() -> String,
+) {
+    if Timers::due(slot, now, every) && hub.any_subscriber(channel) {
+        hub.broadcast(channel, &frame());
     }
 }
 
@@ -434,6 +450,7 @@ mod tests {
         timers.sniffer_flush = now + Duration::from_secs(60);
         timers.stats = now + Duration::from_secs(60);
         timers.diagnostics = now + Duration::from_secs(60);
+        timers.health = now + Duration::from_secs(60);
         assert!(
             timers.next_wait(now) <= LOGS_FLUSH_INTERVAL,
             "the logs timer is not in `next_wait`"

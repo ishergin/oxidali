@@ -8,6 +8,7 @@ pub mod dispatcher;
 pub mod group_state;
 pub mod hcl_state;
 pub mod handler;
+pub mod health_state;
 pub mod handlers;
 pub mod lenient;
 pub mod input_device_state;

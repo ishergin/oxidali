@@ -14,5 +14,5 @@ pub use project::{
     WS_PROJECTED_EVENTS,
 };
 pub use logs::{log_batch_frame, log_batch_prefix};
-pub use snapshot::{diagnostics_snapshot_frame, stats_snapshot_frame};
+pub use snapshot::{diagnostics_snapshot_frame, health_snapshot_frame, stats_snapshot_frame};
 pub use sniffer::{sniffer_batch_frame, SnifferDecoderState};
