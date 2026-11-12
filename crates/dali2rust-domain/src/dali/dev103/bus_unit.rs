@@ -774,7 +774,7 @@ impl Step<'_> {
     }
 }
 
-// IEC 62386-103 §9.14.3
+// IEC 62386-103 §9.14.3, §11.10.1, §11.10.11, §11.10.12, Table 64
 const fn stops_identification(command: Special103Command) -> bool {
     !matches!(
         command,
@@ -1477,33 +1477,79 @@ mod tests {
         assert_eq!(bench.broadcast(Device103Command::QueryContentDtr0), TableLookup::Answer(0x21));
     }
 
+    fn start_identification(bench: &mut Bench) {
+        bench.effects = UnitEffects::default();
+        bench.device(Device103Address::Short(2), Device103Command::IdentifyDevice);
+        assert_eq!(bench.effects.identify, Some(true));
+    }
+
     #[test]
-    fn identification_runs_ten_seconds_and_any_other_instruction_stops_it() {
+    fn identification_runs_ten_seconds_and_reports_the_stop_it_was_given() {
         let mut bench = Bench::hydrated(at(2));
-        let identify = |bench: &mut Bench| {
-            bench.effects = UnitEffects::default();
-            bench.device(Device103Address::Short(2), Device103Command::IdentifyDevice);
-            assert_eq!(bench.effects.identify, Some(true));
-        };
-        identify(&mut bench);
+        start_identification(&mut bench);
         let started = bench.now_ms;
+        assert_eq!(bench.unit.tick(started + IDENTIFY_MS - 1, &mut || ENTROPY).identify, None);
         assert_eq!(bench.unit.tick(started + IDENTIFY_MS, &mut || ENTROPY).identify, Some(false));
-        identify(&mut bench);
-        bench.special(Special103Command::Initialise, INITIALISE_ALL);
-        bench.special(Special103Command::Compare, 0);
-        bench.send(Device103Command::QueryDeviceStatus.frame(Device103Address::Short(2)).as_bytes());
-        assert!(bench.unit.identifying(), "INITIALISE and queries leave it running");
+        start_identification(&mut bench);
         bench.special(Special103Command::Dtr0, 1);
-        assert_eq!(bench.effects.identify, Some(false));
+        assert_eq!(bench.effects.identify, Some(false), "a stop is an effect, not only a lapsed timer");
         assert!(!bench.unit.identifying());
-        for stop in [Special103Command::Terminate, Special103Command::SearchAddrH] {
-            identify(&mut bench);
-            bench.special(stop, 0);
-            assert!(!bench.unit.identifying(), "{stop:?}");
+    }
+
+    // IEC 62386-103 §9.14.3, §11.6.1, §11.10.11, §11.10.12, Table 64
+    #[test]
+    fn identification_is_not_stopped_by_initialise_compare_a_query_or_a_16_bit_frame() {
+        let mut bench = Bench::hydrated(at(2));
+        for (command, data, source) in [
+            (Special103Command::Initialise, INITIALISE_ALL, "§9.14.3 names it, Table 64 i=1"),
+            (Special103Command::Compare, 0, "Table 64 i=2, over §11.10.5 calling it an instruction"),
+            (Special103Command::VerifyShortAddress, 2, "§11.10.11 calls it a query"),
+            (Special103Command::QueryShortAddress, 0, "§11.10.12 calls it a query"),
+        ] {
+            start_identification(&mut bench);
+            bench.special(command, data);
+            assert!(bench.unit.identifying(), "{command:?}: {source}");
         }
-        identify(&mut bench);
-        bench.send(ForwardFrame24::from_bytes([DTR1_DTR0, 0, 0]).as_bytes());
-        assert!(!bench.unit.identifying(), "DTR1:DTR0");
+        start_identification(&mut bench);
+        bench.twice(Device103Command::QueryDeviceStatus.frame(Device103Address::Short(2)).as_bytes());
+        assert!(bench.unit.identifying(), "Table 64 i=3: §11.6.1 calls it a query, repeat or not");
+        start_identification(&mut bench);
+        bench.unit.feed(UnitFrame::Other, bench.now_ms, &mut || ENTROPY);
+        assert!(bench.unit.identifying(), "Table 64 i=0: PING is a 16-bit frame, §3.19");
+    }
+
+    // IEC 62386-103 §9.14.3, §11.10.1, Table 64
+    #[test]
+    fn identification_stops_on_every_other_instruction_received() {
+        let mut bench = Bench::hydrated(at(2));
+        for (command, data, source) in [
+            (Special103Command::Terminate, 0, "§11.4.2 aborts on it"),
+            (Special103Command::Withdraw, 0, "§11.4.2 aborts on it, §11.10.6 ignores it here"),
+            (Special103Command::SearchAddrH, 0, "§11.10.7 calls it an instruction and ignores it here"),
+            (Special103Command::WriteMemoryLocation, 0xAA, "101 §3.30: it changes a variable, so §11.10.1 holds"),
+        ] {
+            start_identification(&mut bench);
+            bench.special(command, data);
+            assert!(!bench.unit.identifying(), "{command:?}: {source}");
+        }
+        start_identification(&mut bench);
+        bench.device(Device103Address::Short(2), Device103Command::AddToDeviceGroups0To15);
+        assert!(!bench.unit.identifying(), "Table 64 j=2: a device instruction stops it");
+    }
+
+    // IEC 62386-103 §9.14.3, §11.10.1
+    #[test]
+    fn identification_stops_on_a_frame_that_carries_its_own_operand() {
+        let mut bench = Bench::hydrated(at(2));
+        for (frame, source) in [
+            ([DIRECT_WRITE_MEMORY, 0x20, 0xAA], "§11.10.18 DIRECT WRITE MEMORY"),
+            ([DTR1_DTR0, 0, 0], "§11.10.19 DTR1:DTR0"),
+            ([DTR2_DTR1, 0, 0], "§11.10.20 DTR2:DTR1"),
+        ] {
+            start_identification(&mut bench);
+            bench.send(ForwardFrame24::from_bytes(frame).as_bytes());
+            assert!(!bench.unit.identifying(), "{source}: §11.10.1 makes it an instruction");
+        }
     }
 
     #[test]

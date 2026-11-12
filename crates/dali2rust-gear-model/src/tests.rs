@@ -2377,36 +2377,41 @@ fn a_query_leaves_identification_running_and_an_instruction_stops_it() {
 }
 
 #[test]
-fn table_93_special_instructions_stop_identification() {
+fn a_special_instruction_stops_identification() {
     for stopper in [
         SpecialCommand::Terminate,
         SpecialCommand::Withdraw,
         SpecialCommand::Dtr0(2),
+        SpecialCommand::WriteMemoryLocation(0xAA),
     ] {
         let mut fleet = GearFleet::demo_bus();
         config(&mut fleet, standard(0, StandardCommand::IdentifyDevice));
         exchange(&mut fleet, special(stopper), false);
         assert!(
             !fleet.gears()[0].identifying,
-            "102 §11.4.7: {stopper:?} is an instruction other than the four that continue it"
+            "102 §9.14.3.1, §11.7.1: {stopper:?} is an instruction other than the four that continue it"
         );
     }
 }
 
 #[test]
-fn table_93_ping_initialise_and_compare_leave_identification_running() {
-    for bystander in [
-        SpecialCommand::Ping,
-        SpecialCommand::Initialise(0x01),
-        SpecialCommand::Compare,
+fn identification_is_not_stopped_by_initialise_ping_compare_or_a_query() {
+    for (bystander, source) in [
+        (SpecialCommand::Ping, "Table 93 i=2"),
+        (SpecialCommand::Initialise(0x01), "§9.14.3.1 names it, Table 93 i=3"),
+        (SpecialCommand::Compare, "§11.7.6 calls it a query, Table 93 i=4"),
+        (SpecialCommand::VerifyShortAddress(0x01), "§11.7.12 calls it a query"),
+        (SpecialCommand::QueryShortAddress, "§11.7.13 calls it a query"),
     ] {
         let mut fleet = GearFleet::demo_bus();
         config(&mut fleet, standard(0, StandardCommand::IdentifyDevice));
-        exchange(&mut fleet, special(bystander), bystander == SpecialCommand::Compare);
-        assert!(
-            fleet.gears()[0].identifying,
-            "102 Table 93: {bystander:?} must not stop the procedure"
-        );
+        let frame = special(bystander);
+        if fleet.frame_pairs_now(frame) {
+            config(&mut fleet, frame);
+        } else {
+            exchange(&mut fleet, frame, bystander.expects_backward());
+        }
+        assert!(fleet.gears()[0].identifying, "{bystander:?}: {source}");
     }
 }
 
