@@ -49,6 +49,14 @@ Feature: Settings — DALI: the controller as a Part 103 bus unit
     Then the response status should be 200
     And the DALI mock transport should have received 1 forward frame
 
+  @id:SET-DALI-024
+  Scenario: Another controller's IDENTIFY DEVICE lights the panel
+    Then the display panel should eventually show a row starting with "GEAR "
+    When another controller sends IDENTIFY DEVICE to every unit
+    Then the display panel should eventually show a row starting with "IDENTIFY"
+    When a 24-bit frame C1 00 00 is observed on the bus
+    Then the display panel should show a row starting with "GEAR " within 3000 ms
+
   @id:SET-DALI-023
   Scenario: Another controller's quiescent mode reaches the panel
     When I PATCH JSON {"pages":["network"]} to "/api/v1/settings/display"

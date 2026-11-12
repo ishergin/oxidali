@@ -65,8 +65,9 @@
 - чужие команды конфигурации, адресованные контроллеру как блоку Part 103, исполняет
   модель блока в драйне `dali-sniff`; каждое изменение её NVM-переменных приходит
   транслятору свидетельством рядом с кадрами и уходит в реестр как
-  `BusUnitNvmObservedEvent`, а начало и конец quiescent mode — как
-  `BusUnitQuiescenceObservedEvent`
+  `BusUnitNvmObservedEvent`, начало и конец quiescent mode — как
+  `BusUnitQuiescenceObservedEvent`, а начало и конец идентификации — как
+  `BusUnitIdentificationObservedEvent`
   ([ADR-030](../../../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md));
 - прочие команды считаются: командный путь Part 103 принадлежит `DaliWorker`.
 

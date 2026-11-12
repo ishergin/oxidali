@@ -6,7 +6,7 @@ use dali2rust_domain::registry::DisplaySettingsView;
 
 use crate::panel::{DisplayPanel, PanelSetup};
 use crate::screen::{
-    has_live_fault, render_row, ScreenRow, ScreenState, SCREEN_ROWS, SPARK_COLS,
+    holds_the_panel_awake, render_row, ScreenRow, ScreenState, SCREEN_ROWS, SPARK_COLS,
 };
 
 pub const PAGE_DWELL: Duration = Duration::from_secs(5);
@@ -119,7 +119,7 @@ impl PanelDriver {
         settings: DisplaySettingsView,
         now: Instant,
     ) -> bool {
-        if self.noticed(state, activity) || has_live_fault(state) {
+        if self.noticed(state, activity) || holds_the_panel_awake(state) {
             self.active_at = now;
         }
         let timeout = Duration::from_secs(u64::from(settings.screensaver_timeout_s));
@@ -317,6 +317,31 @@ mod tests {
         driver.drive(&hardware, &state, 0, start);
         driver.drive(&hardware, &state, 0, start + Duration::from_secs(u64::from(TIMEOUT_S)));
         assert!(!powered(&panel), "standby is a role, not a fault");
+    }
+
+    // IEC 62386-103 §9.14.3
+    #[test]
+    fn identification_wakes_a_sleeping_panel_in_the_same_tick_and_lets_it_sleep_after() {
+        let (panel, hardware) = recorder();
+        let mut state = quiet_state(saver(TIMEOUT_S));
+        let start = Instant::now();
+        let slept = start + Duration::from_secs(u64::from(TIMEOUT_S));
+        let mut driver = PanelDriver::new(start);
+        driver.drive(&hardware, &state, 0, start);
+        driver.drive(&hardware, &state, 0, slept);
+        assert!(!powered(&panel), "a quiet panel sleeps");
+        state.sample.controller_identifying = true;
+        driver.drive(&hardware, &state, 0, slept + Duration::from_millis(1));
+        let found = panel.lock().expect("panel");
+        assert!(found.powered && found.rows[0] == "IDENTIFY", "{found:?}");
+        drop(found);
+        driver.drive(&hardware, &state, 0, slept + Duration::from_secs(u64::from(TIMEOUT_S) * 6));
+        assert!(powered(&panel), "the procedure holds the panel for as long as it runs");
+        state.sample.controller_identifying = false;
+        let after = slept + Duration::from_secs(u64::from(TIMEOUT_S) * 12);
+        driver.drive(&hardware, &state, 0, after);
+        driver.drive(&hardware, &state, 0, after + Duration::from_secs(u64::from(TIMEOUT_S)));
+        assert!(!powered(&panel), "and lets go when it ends");
     }
 
     #[test]

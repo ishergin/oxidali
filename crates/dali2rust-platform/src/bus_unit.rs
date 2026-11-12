@@ -23,6 +23,7 @@ pub struct BusUnitSnapshot {
     pub revision: u32,
     pub acknowledged_wire_sequence: u32,
     pub acknowledged_quiescence: u32,
+    pub acknowledged_identification: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,13 @@ pub struct BusUnitEvidence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BusUnitQuiescence {
+    pub sequence: u32,
+    pub remaining_ms: Option<u32>,
+}
+
+// IEC 62386-103 §9.14.3
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BusUnitIdentification {
     pub sequence: u32,
     pub remaining_ms: Option<u32>,
 }

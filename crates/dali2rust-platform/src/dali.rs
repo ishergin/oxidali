@@ -37,6 +37,7 @@ pub enum ObservedItem {
     Frame(ObservedRawFrame),
     BusUnit(crate::bus_unit::BusUnitEvidence),
     BusUnitQuiescence(crate::bus_unit::BusUnitQuiescence),
+    BusUnitIdentification(crate::bus_unit::BusUnitIdentification),
     BusUnitTestFrame { data: u8, dtr: [u8; 3] },
     BusUnitPowerNotification(crate::bus_unit::PowerNotice),
 }
@@ -45,7 +46,7 @@ impl ObservedItem {
     #[must_use]
     pub const fn resent_until_acknowledged(&self) -> bool {
         match self {
-            Self::BusUnit(_) | Self::BusUnitQuiescence(_) => true,
+            Self::BusUnit(_) | Self::BusUnitQuiescence(_) | Self::BusUnitIdentification(_) => true,
             Self::Frame(_) | Self::BusUnitTestFrame { .. } | Self::BusUnitPowerNotification(_) => false,
         }
     }

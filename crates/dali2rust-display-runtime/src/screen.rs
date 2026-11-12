@@ -15,6 +15,7 @@ const AGE_SECONDS_MAX: u32 = 99;
 const AGE_MINUTES_MAX_SECONDS: u32 = 5999;
 const TWO_DIGIT_MAX: u32 = 99;
 const BAR_FULL_PERMILLE: u32 = 1000;
+const IDENTIFY_WORD: &str = "IDENTIFY";
 pub const SPARK_COLS: usize = 16;
 pub const SPARK_H: u8 = 6;
 const COLS_WITH_SPARK: usize = SCREEN_COLS - 3;
@@ -227,12 +228,25 @@ pub struct ScreenState {
 }
 
 pub fn render_row(state: &ScreenState, row: usize) -> ScreenRow {
+    if state.sample.controller_identifying {
+        return identify_row(row);
+    }
     pages::page_row(state, row)
+}
+
+// IEC 62386-103 §9.14.3
+fn identify_row(row: usize) -> ScreenRow {
+    let text = if row == 0 { clip(IDENTIFY_WORD) } else { RowText::new() };
+    ScreenRow { text, invert: true, bar: None, spark: false }
 }
 
 pub fn has_live_fault(state: &ScreenState) -> bool {
     state.ip.is_none()
         || (state.sample.adapter_enabled && (state.bus.is_alarm() || state.sample.gear_faulted > 0))
+}
+
+pub fn holds_the_panel_awake(state: &ScreenState) -> bool {
+    has_live_fault(state) || state.sample.controller_identifying
 }
 
 fn summary_row(state: &ScreenState, row: usize) -> ScreenRow {
@@ -803,11 +817,14 @@ mod tests {
         state.sample.redundancy_enabled = true;
         state.sample.persistence_failed = 3;
         state.sample.wire_load_permille = 1000;
-        for page in DisplayPage::ALL {
-            for (i, row) in page_rows(&state, page).iter().enumerate() {
-                let budget = if row.spark { COLS_WITH_SPARK } else { SCREEN_COLS };
-                let cols = row.text.chars().count();
-                assert!(cols <= budget, "{page:?} row {i} is {cols} of {budget}: {:?}", row.text);
+        for identifying in [false, true] {
+            state.sample.controller_identifying = identifying;
+            for page in DisplayPage::ALL {
+                for (i, row) in page_rows(&state, page).iter().enumerate() {
+                    let budget = if row.spark { COLS_WITH_SPARK } else { SCREEN_COLS };
+                    let cols = row.text.chars().count();
+                    assert!(cols <= budget, "{page:?} row {i} is {cols} of {budget}: {:?}", row.text);
+                }
             }
         }
     }
@@ -822,6 +839,30 @@ mod tests {
         assert!(rows[4].text.ends_with(" CONNECTED"));
         assert!(rows[5].text.starts_with("WS CLIENTS ") && rows[5].text.ends_with(" 4"));
         assert!(rows[6].text.ends_with(" OK") && !rows[6].invert);
+    }
+
+    #[test]
+    fn identification_takes_the_whole_screen_and_holds_the_panel_awake() {
+        let mut state = busy_state();
+        state.bus = BusReading::Clear;
+        state.sample.gear_faulted = 0;
+        state.sample.controller_identifying = true;
+        let rows = render(&state);
+        assert_eq!(rows[0].text, "IDENTIFY");
+        assert!(rows.iter().all(|row| row.invert), "the panel lights up to be found");
+        assert!(rows[1..].iter().all(|row| row.text.as_str().is_empty()), "{:?}", rows[1].text);
+        assert!(holds_the_panel_awake(&state), "a screen nobody can see identifies nothing");
+        state.sample.controller_identifying = false;
+        assert!(!holds_the_panel_awake(&state), "and it lets go when the gear's own procedure ends");
+    }
+
+    #[test]
+    fn identification_outranks_every_page() {
+        let mut state = busy_state();
+        state.sample.controller_identifying = true;
+        for page in DisplayPage::ALL {
+            assert_eq!(page_rows(&state, page)[0].text, "IDENTIFY", "{page:?}");
+        }
     }
 
     #[test]
@@ -933,9 +974,9 @@ mod tests {
         state.sample.persistence_failed = 1;
         let rows = render(&state);
         assert!(rows[0].invert && rows[4].invert, "standby and NO SAVE stay on show");
-        assert!(!has_live_fault(&state), "neither keeps the screen saver away");
+        assert!(!holds_the_panel_awake(&state), "neither keeps the screen saver away");
         state.sample.controller_quiescent = true;
-        assert!(!has_live_fault(&state), "nor does another controller's quiescent mode");
+        assert!(!holds_the_panel_awake(&state), "nor does another controller's quiescent mode");
     }
 
     #[test]

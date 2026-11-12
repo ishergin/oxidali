@@ -214,6 +214,12 @@ impl Device103Unit {
         self.identify_until_ms.is_some()
     }
 
+    // IEC 62386-103 §9.14.3
+    #[must_use]
+    pub fn identify_remaining_ms(&self, now_ms: u32) -> Option<u32> {
+        self.identify_until_ms.and_then(|until| remaining_until(until, now_ms))
+    }
+
     #[must_use]
     pub const fn wire_sequence(&self) -> u32 {
         self.wire_sequence
@@ -956,7 +962,13 @@ mod tests {
     }
 
     fn snapshot(nvm: BusUnitNvm, revision: u32, acknowledged_wire_sequence: u32) -> BusUnitSnapshot {
-        BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence, acknowledged_quiescence: 0 }
+        BusUnitSnapshot {
+            nvm,
+            revision,
+            acknowledged_wire_sequence,
+            acknowledged_quiescence: 0,
+            acknowledged_identification: 0,
+        }
     }
 
     fn at(short: u8) -> BusUnitNvm {

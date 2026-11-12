@@ -6,7 +6,9 @@ use dali2rust_dali_phy::PHY_TICK_US;
 use dali2rust_domain::dali::dev103::bus_unit::{Device103Unit, TestFrame, UnitFrame};
 use dali2rust_platform::answer_table::AnswerTableImage;
 use dali2rust_platform::arbitration::AnswerInputs;
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitIdentity, BusUnitNvm, BusUnitQuiescence, PowerNotice};
+use dali2rust_platform::bus_unit::{
+    BusUnitEvidence, BusUnitIdentification, BusUnitIdentity, BusUnitNvm, BusUnitQuiescence, PowerNotice,
+};
 use dali2rust_platform::dali::{
     ObservedFrameSender, ObservedItem, ObservedRawFrame, ObservedRawFrameKind,
 };
@@ -21,6 +23,7 @@ const MAC_AT: usize = 2;
 pub struct UnitReports {
     pub nvm: Option<BusUnitEvidence>,
     pub quiescence: Option<BusUnitQuiescence>,
+    pub identification: Option<BusUnitIdentification>,
     pub test_frame: Option<TestFrame>,
     pub power_notification: Option<PowerNotice>,
 }
@@ -29,19 +32,43 @@ impl UnitReports {
     pub fn items(self) -> impl Iterator<Item = ObservedItem> {
         let nvm = self.nvm.into_iter().map(ObservedItem::BusUnit);
         let quiescence = self.quiescence.into_iter().map(ObservedItem::BusUnitQuiescence);
+        let identification = self.identification.into_iter().map(ObservedItem::BusUnitIdentification);
         let test_frame =
             self.test_frame.into_iter().map(|t| ObservedItem::BusUnitTestFrame { data: t.data, dtr: t.dtr });
         let power_notification =
             self.power_notification.into_iter().map(ObservedItem::BusUnitPowerNotification);
-        nvm.chain(quiescence).chain(test_frame).chain(power_notification)
+        nvm.chain(quiescence).chain(identification).chain(test_frame).chain(power_notification)
     }
 }
 
 #[derive(Debug, Default)]
-struct QuiescenceReport {
+struct DeadlineReport {
     sequence: u32,
     unacknowledged: bool,
     reported_at_ms: u32,
+}
+
+impl DeadlineReport {
+    fn report(&mut self, at_ms: u32) -> u32 {
+        self.sequence = self.sequence.wrapping_add(1);
+        self.unacknowledged = true;
+        self.reported_at_ms = at_ms;
+        self.sequence
+    }
+
+    fn due_again(&mut self, now_ms: u32) -> Option<u32> {
+        let resend = self.unacknowledged && due(self.reported_at_ms, now_ms);
+        resend.then(|| {
+            self.reported_at_ms = now_ms;
+            self.sequence
+        })
+    }
+
+    fn acknowledged(&mut self, sequence: u32) {
+        if sequence == self.sequence {
+            self.unacknowledged = false;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -50,7 +77,8 @@ pub struct BusUnitWire {
     adopted: Option<BusUnitNvm>,
     unacknowledged: Option<BusUnitEvidence>,
     reported_at_ms: u32,
-    quiescence: QuiescenceReport,
+    quiescence: DeadlineReport,
+    identification: DeadlineReport,
     entropy: fn() -> u32,
 }
 
@@ -62,7 +90,8 @@ impl BusUnitWire {
             adopted: None,
             unacknowledged: None,
             reported_at_ms: 0,
-            quiescence: QuiescenceReport::default(),
+            quiescence: DeadlineReport::default(),
+            identification: DeadlineReport::default(),
             entropy,
         }
     }
@@ -74,6 +103,7 @@ impl BusUnitWire {
         UnitReports {
             nvm: if effects.nvm_changed { self.report_nvm(at_ms) } else { None },
             quiescence: effects.quiescent.map(|_| self.report_quiescence(at_ms)),
+            identification: effects.identify.map(|_| self.report_identification(at_ms)),
             test_frame: effects.test_frame,
             power_notification: effects.power_notification,
         }
@@ -86,9 +116,15 @@ impl BusUnitWire {
         let entropy = self.entropy;
         let effects = self.unit.tick(now_ms, &mut || entropy());
         let lapsed = effects.quiescent.is_some();
+        let stopped = effects.identify.is_some();
         UnitReports {
             nvm: self.resend_nvm(now_ms),
             quiescence: if lapsed { Some(self.report_quiescence(now_ms)) } else { self.resend_quiescence(now_ms) },
+            identification: if stopped {
+                Some(self.report_identification(now_ms))
+            } else {
+                self.resend_identification(now_ms)
+            },
             test_frame: effects.test_frame,
             power_notification: effects.power_notification,
         }
@@ -108,22 +144,24 @@ impl BusUnitWire {
 
     // IEC 62386-103 §9.9.3
     fn report_quiescence(&mut self, at_ms: u32) -> BusUnitQuiescence {
-        self.quiescence.sequence = self.quiescence.sequence.wrapping_add(1);
-        self.quiescence.unacknowledged = true;
-        self.quiescence_at(at_ms)
+        let sequence = self.quiescence.report(at_ms);
+        BusUnitQuiescence { sequence, remaining_ms: self.unit.quiescent_remaining_ms(at_ms) }
     }
 
     fn resend_quiescence(&mut self, now_ms: u32) -> Option<BusUnitQuiescence> {
-        let resend = self.quiescence.unacknowledged && due(self.quiescence.reported_at_ms, now_ms);
-        resend.then(|| self.quiescence_at(now_ms))
+        let sequence = self.quiescence.due_again(now_ms)?;
+        Some(BusUnitQuiescence { sequence, remaining_ms: self.unit.quiescent_remaining_ms(now_ms) })
     }
 
-    fn quiescence_at(&mut self, at_ms: u32) -> BusUnitQuiescence {
-        self.quiescence.reported_at_ms = at_ms;
-        BusUnitQuiescence {
-            sequence: self.quiescence.sequence,
-            remaining_ms: self.unit.quiescent_remaining_ms(at_ms),
-        }
+    // IEC 62386-103 §9.14.3
+    fn report_identification(&mut self, at_ms: u32) -> BusUnitIdentification {
+        let sequence = self.identification.report(at_ms);
+        BusUnitIdentification { sequence, remaining_ms: self.unit.identify_remaining_ms(at_ms) }
+    }
+
+    fn resend_identification(&mut self, now_ms: u32) -> Option<BusUnitIdentification> {
+        let sequence = self.identification.due_again(now_ms)?;
+        Some(BusUnitIdentification { sequence, remaining_ms: self.unit.identify_remaining_ms(now_ms) })
     }
 
     pub fn lost_capture(&mut self) {
@@ -142,9 +180,8 @@ impl BusUnitWire {
         if snapshot.acknowledged_wire_sequence == self.unit.wire_sequence() {
             self.unacknowledged = None;
         }
-        if snapshot.acknowledged_quiescence == self.quiescence.sequence {
-            self.quiescence.unacknowledged = false;
-        }
+        self.quiescence.acknowledged(snapshot.acknowledged_quiescence);
+        self.identification.acknowledged(snapshot.acknowledged_identification);
         if self.unit.hydrate(&snapshot) {
             self.adopted = Some(self.unit.nvm());
         }
@@ -399,7 +436,8 @@ mod tests {
     use std::time::Duration;
 
     use dali2rust_domain::dali::dev103::bus_unit::{
-        FACTORY_NVM, POWER_NOTIFICATION_EARLIEST_MS, POWER_NOTIFICATION_LATEST_MS, QUIESCENT_MS,
+        FACTORY_NVM, IDENTIFY_MS, POWER_NOTIFICATION_EARLIEST_MS, POWER_NOTIFICATION_LATEST_MS,
+        QUIESCENT_MS,
     };
     use dali2rust_domain::dali::dev103::{Device103Address, Device103Command, Special103Command};
     use dali2rust_platform::bus_unit::BusUnitSnapshot;
@@ -432,7 +470,7 @@ mod tests {
 
     fn inputs_at(nvm: BusUnitNvm, revision: u32, acknowledged_wire_sequence: u32) -> AnswerInputs {
         let inputs = AnswerInputs::new();
-        inputs.publish_bus_unit(BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence, acknowledged_quiescence: 0 });
+        inputs.publish_bus_unit(BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence, acknowledged_quiescence: 0, acknowledged_identification: 0 });
         inputs
     }
 
@@ -516,12 +554,64 @@ mod tests {
             nvm: operator_nvm(),
             revision: ADOPTED_REVISION,
             acknowledged_wire_sequence: 0,
-            acknowledged_quiescence: sequence,
+            acknowledged_quiescence: sequence, acknowledged_identification: 0,
         });
     }
 
     const fn quiescence(sequence: u32, remaining_ms: Option<u32>) -> Option<BusUnitQuiescence> {
         Some(BusUnitQuiescence { sequence, remaining_ms })
+    }
+
+    fn acknowledge_identification(inputs: &AnswerInputs, sequence: u32) {
+        inputs.publish_bus_unit(BusUnitSnapshot {
+            nvm: operator_nvm(),
+            revision: ADOPTED_REVISION,
+            acknowledged_wire_sequence: 0,
+            acknowledged_quiescence: 0,
+            acknowledged_identification: sequence,
+        });
+    }
+
+    const fn identification(sequence: u32, remaining_ms: Option<u32>) -> Option<BusUnitIdentification> {
+        Some(BusUnitIdentification { sequence, remaining_ms })
+    }
+
+    // IEC 62386-103 §9.14.3
+    #[test]
+    fn identification_reports_its_deadline_and_resends_what_is_left_until_acknowledged() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        let reported = send(&mut wire, Device103Command::IdentifyDevice, START_MS);
+        assert_eq!(reported, UnitReports { identification: identification(1, Some(IDENTIFY_MS)), ..UnitReports::default() });
+        let started = START_MS + PAIR_GAP_MS;
+        assert_eq!(wire.poll(Some(&inputs), started + BUS_UNIT_RESEND_MS - 1).identification, None);
+        let left = IDENTIFY_MS - BUS_UNIT_RESEND_MS;
+        assert_eq!(wire.poll(Some(&inputs), started + BUS_UNIT_RESEND_MS).identification, identification(1, Some(left)));
+        acknowledge_identification(&inputs, 1);
+        assert_eq!(wire.poll(Some(&inputs), started + 2 * BUS_UNIT_RESEND_MS).identification, None);
+    }
+
+    #[test]
+    fn an_acknowledged_start_leaves_the_identification_stop_resending() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        send(&mut wire, Device103Command::IdentifyDevice, START_MS);
+        let stopped_at = START_MS + 2 * PAIR_GAP_MS;
+        let stop = wire.observe(UnitFrame::Forward24(Special103Command::Terminate.frame(0).as_bytes()), stopped_at);
+        assert_eq!(stop.identification, identification(2, None));
+        acknowledge_identification(&inputs, 1);
+        assert_eq!(wire.poll(Some(&inputs), stopped_at + BUS_UNIT_RESEND_MS).identification, identification(2, None));
+    }
+
+    #[test]
+    fn identification_lapsing_reports_the_end_under_a_new_sequence() {
+        let inputs = inputs_at(operator_nvm(), ADOPTED_REVISION, 0);
+        let mut wire = hydrated(&inputs);
+        send(&mut wire, Device103Command::IdentifyDevice, START_MS);
+        acknowledge_identification(&inputs, 1);
+        let started = START_MS + PAIR_GAP_MS;
+        assert_eq!(wire.poll(Some(&inputs), started + IDENTIFY_MS - 1).identification, None);
+        assert_eq!(wire.poll(Some(&inputs), started + IDENTIFY_MS).identification, identification(2, None));
     }
 
     #[test]
@@ -571,9 +661,11 @@ mod tests {
         let evidence = BusUnitEvidence { adopted: FACTORY_NVM, adopted_revision: 1, observed: FACTORY_NVM, wire_sequence: 1 };
         let test_frame = TestFrame { data: 0x5A, dtr: [1, 2, 3] };
         let notice = PowerNotice { short_address: Some(OPERATOR_SHORT), device_groups: 0 };
+        let identification = BusUnitIdentification { sequence: 1, remaining_ms: Some(IDENTIFY_MS) };
         let reports = UnitReports {
             nvm: Some(evidence),
             quiescence: quiescence(1, None),
+            identification: Some(identification),
             test_frame: Some(test_frame),
             power_notification: Some(notice),
         };
@@ -581,6 +673,7 @@ mod tests {
         assert_eq!(items, [
             ObservedItem::BusUnit(evidence),
             ObservedItem::BusUnitQuiescence(quiescence(1, None).unwrap()),
+            ObservedItem::BusUnitIdentification(identification),
             ObservedItem::BusUnitTestFrame { data: test_frame.data, dtr: test_frame.dtr },
             ObservedItem::BusUnitPowerNotification(notice),
         ]);
@@ -617,7 +710,7 @@ mod tests {
             nvm: later,
             revision: ADOPTED_REVISION + 1,
             acknowledged_wire_sequence: 0,
-            acknowledged_quiescence: 0,
+            acknowledged_quiescence: 0, acknowledged_identification: 0,
         });
         let evidence = readdress(&mut wire).expect("the pair moved the address");
         assert_eq!((evidence.adopted, evidence.adopted_revision), (operator_nvm(), ADOPTED_REVISION));
@@ -675,7 +768,7 @@ mod tests {
             nvm: evidence.observed,
             revision: next,
             acknowledged_wire_sequence: evidence.wire_sequence,
-            acknowledged_quiescence: 0,
+            acknowledged_quiescence: 0, acknowledged_identification: 0,
         });
         assert_eq!(wire.poll(Some(&inputs), reported_at() + BUS_UNIT_RESEND_MS).nvm, None);
         let at_ms = reported_at() + 2 * BUS_UNIT_RESEND_MS;
@@ -757,7 +850,7 @@ mod tests {
             nvm: BusUnitNvm { short_address: Some(WIRE_SHORT), ..operator_nvm() },
             revision: ADOPTED_REVISION + 1,
             acknowledged_wire_sequence: 0,
-            acknowledged_quiescence: 0,
+            acknowledged_quiescence: 0, acknowledged_identification: 0,
         });
         assert_eq!(tap.short_address(&inputs, false), Some(OPERATOR_SHORT));
         assert_eq!(tap.short_address(&inputs, true), Some(WIRE_SHORT));

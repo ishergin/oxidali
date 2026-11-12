@@ -13,7 +13,9 @@ use dali2rust_contracts::msg::{
     LevelTransition, ManualConfigSource, ObservedKind, Origin,
 };
 use dali2rust_fanout_runtime::{spawn_sniffer_translator_worker, SnifferTranslatorCounters};
-use dali2rust_platform::bus_unit::{BusUnitEvidence, BusUnitNvm, BusUnitQuiescence, PowerNotice};
+use dali2rust_platform::bus_unit::{
+    BusUnitEvidence, BusUnitIdentification, BusUnitNvm, BusUnitQuiescence, PowerNotice,
+};
 use dali2rust_platform::dali::{ObservedItem, ObservedRawFrame, ObservedRawFrameKind};
 use dali2rust_test_support::{
     recv_command_matching, recv_event_matching, try_recv_event_matching_envelope, wait_until,
@@ -840,6 +842,23 @@ fn a_quiescence_report_is_published_as_the_registry_s_fact() {
         unreachable!("predicate selected this variant");
     };
     assert_eq!((body.sequence, body.remaining_ms), (6, Some(899_000)));
+    assert_eq!(ev.meta.origin, Origin::Sniffer);
+    assert_eq!(harness.counters.bus_unit_reports.load(Relaxed), 1);
+}
+
+// IEC 62386-103 §9.14.3
+#[test]
+fn an_identification_report_is_published_as_the_registry_s_fact() {
+    let harness = spawn_harness();
+    let identification = BusUnitIdentification { sequence: 4, remaining_ms: Some(9_000) };
+    harness.tx.0.send(ObservedItem::BusUnitIdentification(identification)).expect("send");
+    let ev = recv_event_matching(&harness.ev_tap, Duration::from_secs(1), |payload| {
+        matches!(payload, BusEventPayload::BusUnitIdentificationObservedEvent(_))
+    });
+    let BusEventPayload::BusUnitIdentificationObservedEvent(body) = &ev.payload else {
+        unreachable!("predicate selected this variant");
+    };
+    assert_eq!((body.sequence, body.remaining_ms), (4, Some(9_000)));
     assert_eq!(ev.meta.origin, Origin::Sniffer);
     assert_eq!(harness.counters.bus_unit_reports.load(Relaxed), 1);
 }

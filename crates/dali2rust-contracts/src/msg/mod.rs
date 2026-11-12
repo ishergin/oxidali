@@ -120,7 +120,8 @@ pub use events::{
 };
 pub use events::{ConfigSlicePersistedEvent, PeerConfigChangedEvent};
 pub use events::{
-    BusHealthVerdict, BusUnitNvmObservedEvent, BusUnitQuiescenceObservedEvent, DaliLevelTransitionAppliedEvent,
+    BusHealthVerdict, BusUnitIdentificationObservedEvent, BusUnitNvmObservedEvent,
+    BusUnitQuiescenceObservedEvent, DaliLevelTransitionAppliedEvent,
     Dali103ApplicationControlObservedEvent,
     Dali103InstanceConfiguredEvent,
     Dali103ScanProgressEvent,

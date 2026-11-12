@@ -159,6 +159,15 @@ dali2rust_contracts::dispatch_bus_events! {
             );
         }
     },
+    BusUnitIdentificationObservedEvent(body) => {
+        if store.apply_bus_unit_identification(body, std::time::Instant::now()) {
+            log::info!(
+                "registry: another controller {} identification (sequence {})",
+                if body.remaining_ms.is_some() { "started" } else { "stopped" },
+                body.sequence
+            );
+        }
+    },
     BusUnitNvmObservedEvent(body) => {
         if let Some(applied) = store.apply_bus_unit_evidence(body) {
             counters.bus_unit_evidence_applied.fetch_add(1, Ordering::Relaxed);
