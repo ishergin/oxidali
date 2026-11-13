@@ -46,7 +46,7 @@ HclSchedulePointDto HclSchedulePoint
 HclSchedulerDto HclSchedulerCounters
 HclSchedulesListBody HclScheduleList
 HclTargetDto HclTarget
-HealthResponseJson Health
+HealthDto Health
 HomeAssistantSettingsDto HomeAssistantSettings
 ImplementedPartsDto ImplementedParts
 InputDeviceDto InputDeviceDetail

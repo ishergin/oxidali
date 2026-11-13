@@ -44,7 +44,11 @@ fn net_address(state: &ScreenState) -> ScreenRow {
     }
 }
 
+// IEC 62386-103 §9.9.3
 fn role(s: &DisplaySample) -> ScreenRow {
+    if s.controller_quiescent {
+        return alarm(spread("ROLE", "QUIESCENT"));
+    }
     if !s.redundancy_enabled {
         return ScreenRow::text(spread("ROLE", "SINGLE"));
     }

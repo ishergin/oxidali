@@ -22,6 +22,7 @@ pub enum Channel {
     Input,
     Rules,
     Logs,
+    Health,
 }
 
 pub const V1_CHANNELS: &[Channel] = &[
@@ -37,6 +38,7 @@ pub const V1_CHANNELS: &[Channel] = &[
     Channel::Input,
     Channel::Rules,
     Channel::Logs,
+    Channel::Health,
 ];
 
 impl Channel {
@@ -54,6 +56,7 @@ impl Channel {
             Self::Input => "input",
             Self::Rules => "rules",
             Self::Logs => "logs",
+            Self::Health => "health",
         }
     }
 
@@ -317,6 +320,7 @@ mod tests {
                 "input",
                 "rules",
                 "logs",
+                "health",
             ]
         );
     }

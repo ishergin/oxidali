@@ -2,7 +2,6 @@ use super::handler::ApiHandler;
 use super::handlers::health::HealthHandler;
 use super::router::{RouteSpec, Router};
 use super::types::HttpMethod;
-use dali2rust_platform::clock::Uptime;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -502,19 +501,17 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
 ];
 
 pub struct AppBuilder {
-    version: &'static str,
-    uptime: Uptime,
     handlers: HashMap<RouteKey, Box<dyn ApiHandler>>,
     role: Option<Arc<dyn crate::http::role::ControllerRolePort>>,
+    health: Arc<dyn crate::http::health_state::HealthHttpState>,
 }
 
 impl AppBuilder {
-    pub fn new(version: &'static str, uptime: Uptime) -> Self {
+    pub fn new(health: Arc<dyn crate::http::health_state::HealthHttpState>) -> Self {
         Self {
-            version,
-            uptime,
             handlers: HashMap::new(),
             role: None,
+            health,
         }
     }
 
@@ -533,11 +530,7 @@ impl AppBuilder {
 
     pub fn build(mut self) -> Router {
         let role = self.role.take();
-        let health = match role.as_ref() {
-            Some(port) => HealthHandler::new(self.uptime.clone(), self.version)
-                .with_role(Arc::clone(port)),
-            None => HealthHandler::new(self.uptime.clone(), self.version),
-        };
+        let health = HealthHandler::new(self.health);
         let mut router = match role {
             Some(role) => Router::new().with_role_port(role),
             None => Router::new(),
@@ -621,7 +614,7 @@ mod route_table_tests {
 
     #[test]
     fn full_route_table_registers_without_conflicts() {
-        let mut builder = AppBuilder::new("0.0.0-test", Uptime::start(Arc::new(FixedClock)));
+        let mut builder = AppBuilder::new(test_health());
         for (key, _, _) in ROUTE_TABLE {
             builder = builder.with_handler(*key, Box::new(NoopHandler));
         }
@@ -629,8 +622,14 @@ mod route_table_tests {
         assert_eq!(router.dispatch("GET", "/api/v1/health", &[]).status, 200);
     }
 
+    fn test_health() -> Arc<dyn crate::http::health_state::HealthHttpState> {
+        let uptime = dali2rust_platform::clock::Uptime::start(Arc::new(FixedClock));
+        let service = dali2rust_domain::health::HealthService::new(uptime, "0.0.0-test");
+        Arc::new(crate::http::health_state::HealthView::new(service, None))
+    }
+
     fn noop_router() -> Router {
-        let mut builder = AppBuilder::new("0.0.0-test", Uptime::start(Arc::new(FixedClock)));
+        let mut builder = AppBuilder::new(test_health());
         for (key, _, _) in ROUTE_TABLE {
             builder = builder.with_handler(*key, Box::new(NoopHandler));
         }

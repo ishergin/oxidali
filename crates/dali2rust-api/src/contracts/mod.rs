@@ -1,5 +1,4 @@
 pub mod dali;
-pub mod health;
 
 pub trait BufferBytes {
     fn inner_data(&self) -> &Vec<u8>;

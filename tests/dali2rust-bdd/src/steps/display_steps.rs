@@ -49,6 +49,13 @@ fn panel_shows(world: &mut DaliWorld, prefix: String) {
     assert!(reached, "panel never showed {prefix:?}: {}", panel_state(world));
 }
 
+// SET-DALI-023
+#[then(expr = "the display panel should eventually show a row ending with {string}")]
+fn panel_shows_tail(world: &mut DaliWorld, suffix: String) {
+    let reached = panel_reaches(world, |panel| panel.shows_row_ending_with(&suffix));
+    assert!(reached, "panel never showed a row ending {suffix:?}: {}", panel_state(world));
+}
+
 // SET-DISP-013
 #[then(expr = "the display panel should keep showing a row starting with {string} for {int} seconds")]
 fn panel_keeps_showing(world: &mut DaliWorld, prefix: String, seconds: u64) {

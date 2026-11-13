@@ -1,75 +1,43 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dali2rust_domain::health::{HealthService, HealthStatus};
-use dali2rust_platform::clock::Uptime;
-
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::common::json_stream_dto;
+use crate::http::health_state::HealthHttpState;
 use crate::http::types::HttpResponse;
 
-fn status_str(status: HealthStatus) -> &'static str {
-    match status {
-        HealthStatus::Ok => "ok",
-        HealthStatus::Degraded => "degraded",
-        HealthStatus::Down => "down",
-    }
-}
-
 pub struct HealthHandler {
-    service: HealthService,
-    role: Option<Arc<dyn crate::http::role::ControllerRolePort>>,
+    state: Arc<dyn HealthHttpState>,
 }
 
 impl HealthHandler {
-    pub fn new(uptime: Uptime, version: &'static str) -> Self {
-        Self {
-            service: HealthService::new(uptime, version),
-            role: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_role(mut self, role: Arc<dyn crate::http::role::ControllerRolePort>) -> Self {
-        self.role = Some(role);
-        self
+    pub fn new(state: Arc<dyn HealthHttpState>) -> Self {
+        Self { state }
     }
 }
 
 impl ApiHandler for HealthHandler {
     fn handle_request(
         &self,
-        _method: &str,
+        method: &str,
         _path: &str,
         _body: &[u8],
         _params: &HashMap<String, String>,
     ) -> HttpResponse {
-        if _method != "GET" {
+        if method != "GET" {
             return HttpResponse::method_not_allowed();
         }
-        let report = self.service.check();
-        let mut body = serde_json::json!({
-            "status": status_str(report.status),
-            "uptime_seconds": report.uptime_secs,
-            "version": report.version,
-        });
-        if let (Some(role), Some(map)) = (self.role.as_ref(), body.as_object_mut()) {
-            map.insert(
-                "role".to_string(),
-                serde_json::Value::String(crate::http::role::role_name(role.is_active()).into()),
-            );
-            map.insert("quiescent".to_string(), serde_json::Value::Bool(role.quiescent_remaining_ms().is_some()));
-        }
-        json_stream_dto(body)
+        json_stream_dto(self.state.health_dto())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dali2rust_platform::clock::Clock;
+    use crate::http::health_state::HealthView;
+    use dali2rust_domain::health::HealthService;
+    use dali2rust_platform::clock::{Clock, Uptime};
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
 
     struct FakeClock {
         now: AtomicU64,
@@ -89,10 +57,15 @@ mod tests {
         }
     }
 
+    fn handler_at(start_ms: u64, version: &'static str) -> HealthHandler {
+        let clock: Arc<dyn Clock> = Arc::new(FakeClock::new(start_ms));
+        let service = HealthService::new(Uptime::start(clock), version);
+        HealthHandler::new(Arc::new(HealthView::new(service, None)))
+    }
+
     #[test]
     fn health_handler_returns_ok() {
-        let clock: Arc<dyn Clock> = Arc::new(FakeClock::new(0));
-        let handler = HealthHandler::new(Uptime::start(clock), "0.1.0-test");
+        let handler = handler_at(0, "0.1.0-test");
         let resp = handler.handle_request("GET", "/api/v1/health", &[], &HashMap::new());
         assert_eq!(resp.status, 200);
         assert_eq!(resp.content_type, "application/json");
@@ -105,8 +78,7 @@ mod tests {
 
     #[test]
     fn health_handler_uptime_increases() {
-        let clock: Arc<dyn Clock> = Arc::new(FakeClock::new(0));
-        let handler = HealthHandler::new(Uptime::start(clock), "test");
+        let handler = handler_at(0, "test");
         let resp1 = handler.handle_request("GET", "/", &[], &HashMap::new());
         let r1: serde_json::Value =
             serde_json::from_slice(&resp1.into_body_bytes()).expect("parse");

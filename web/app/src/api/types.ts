@@ -227,6 +227,8 @@ export interface Health {
   status: 'ok' | 'degraded' | 'down'
   uptime_seconds: number
   version: string
+  role?: 'active' | 'standby'
+  quiescent?: boolean
 }
 
 export interface Adapter {

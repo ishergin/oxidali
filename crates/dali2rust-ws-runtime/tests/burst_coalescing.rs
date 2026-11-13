@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dali2rust_api::http::diagnostics_state::{DiagnosticsDto, DiagnosticsHttpState};
+use dali2rust_api::http::health_state::{HealthDto, HealthHttpState};
 use dali2rust_api::http::stats_state::{StatsHttpState, StatsReportDto};
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, PublishResult};
 use dali2rust_platform::dali::SnifferTap;
@@ -33,6 +34,18 @@ struct NullDiagnostics;
 impl DiagnosticsHttpState for NullDiagnostics {
     fn diagnostics_dto(&self) -> DiagnosticsDto {
         DiagnosticsDto::default()
+    }
+}
+struct NullHealth;
+impl HealthHttpState for NullHealth {
+    fn health_dto(&self) -> HealthDto {
+        HealthDto {
+            status: "ok",
+            uptime_seconds: 0,
+            version: "test",
+            role: None,
+            quiescent: None,
+        }
     }
 }
 
@@ -90,6 +103,7 @@ fn spawn_harness() -> Harness {
         WsWorkerPorts {
             stats: Arc::new(NullStats),
             diagnostics: Arc::new(NullDiagnostics),
+            health: Arc::new(NullHealth),
         },
         Arc::new(|| 0),
     );

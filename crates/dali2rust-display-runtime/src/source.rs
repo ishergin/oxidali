@@ -11,6 +11,7 @@ pub struct DisplaySample {
     pub adapter_enabled: bool,
     pub redundancy_enabled: bool,
     pub controller_active: bool,
+    pub controller_quiescent: bool,
     pub time_synced: bool,
     pub frames_sent_total: u32,
     pub foreign_frames_total: u32,

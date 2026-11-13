@@ -35,7 +35,7 @@ async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: Str
     inject_forward24(world, [&b0, &b1, &b2]);
 }
 
-// SET-DALI-010 SET-DALI-011
+// SET-DALI-010 SET-DALI-011 SET-DALI-023 WS-060
 #[when(regex = r"^another controller sends (START|STOP) QUIESCENT MODE to every unit$")]
 async fn when_another_controller_sends_quiescent_mode(world: &mut DaliWorld, verb: String) {
     let command = match verb.as_str() {

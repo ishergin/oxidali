@@ -57,8 +57,6 @@
 Что из роли control device не построено —
 [`../reference/iec62386-conformance-gaps.md`](../reference/iec62386-conformance-gaps.md)
 §8, дизайн — [ADR-030](../architecture/decisions/ADR-030-controller-as-a-part-103-bus-unit.md).
-Quiescent mode другого контроллера виден в `/api/v1/health` и ресурсе redundancy, но не
-на WebSocket и не на OLED.
 
 ### R17 — отказоустойчивость
 

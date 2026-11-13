@@ -45,6 +45,7 @@
 | `RulesActivationEvent` | `rules` | `rule_name`, `dry`, `effects`, `partial`, `trigger_to_publish_ms`. |
 | `StatsSnapshot` | `stats` | Тело `GET /api/v1/stats`; серверный снимок, а не событие шины. |
 | `DiagnosticsSnapshot` | `diagnostics` | Тело `GET /api/v1/diagnostics`. |
+| `HealthSnapshot` | `health` | Тело `GET /api/v1/health`; `role` и `quiescent` опущены там, где роли нет. |
 | `SnifferBatch` | `sniffer` | Записи кадров (время, направление, ширина, hex, цель, имя команды, запрос ли) и `dropped_since`. |
 | `LogBatch` | `logs` | Строки лога (`seq`, время, уровень, модуль, текст) и `dropped_since`. |
 | `DropNotice` | любой или `*` | Признание потери — [`websocket.md`](websocket.md). |

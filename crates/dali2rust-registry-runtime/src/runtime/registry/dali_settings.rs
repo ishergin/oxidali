@@ -144,7 +144,7 @@ impl DaliSettingsRecord {
         }
     }
 
-    fn quiescent_remaining_ms(&self, now: Instant) -> Option<u32> {
+    pub(crate) fn quiescent_remaining_ms(&self, now: Instant) -> Option<u32> {
         let left = self.quiescent_until?.checked_duration_since(now)?;
         Some(u32::try_from(left.as_millis()).unwrap_or(u32::MAX)).filter(|&ms| ms > 0)
     }
