@@ -33,7 +33,7 @@
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
-| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `DaliInputManualConfigEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
+| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `DaliInputManualConfigEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent`, `BusUnitIdentificationObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр | **required** |
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
@@ -167,6 +167,10 @@
   (остаток срока в мс) или закончил его (`null`), под номером отчёта. Реестр держит срок
   в RAM, не персистит и подтверждает номер; повтор того же номера переносит срок на
   оставшееся, более старый номер отвергается.
+- `BusUnitIdentificationObservedEvent` — другой контроллер запустил процедуру
+  идентификации этого (остаток срока в мс) или прервал её (`null`), под своим номером
+  отчёта. Срок и подтверждение живут так же, как у quiescent mode; экран —
+  [`../runtime-modules/display/README.md`](../runtime-modules/display/README.md).
 
 Результаты команд Part 103 (`Dali103Scan*`, `Dali103InstanceConfiguredEvent`)
 реестр проецирует в записи устройств ввода. `manual_config_active` в

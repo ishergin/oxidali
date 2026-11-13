@@ -42,11 +42,21 @@ fn panel_powered(world: &mut DaliWorld, state: String) {
     assert!(reached, "panel never powered {state}: {}", panel_state(world));
 }
 
-// SET-DISP-009, SET-DISP-011, SET-DISP-012, SET-DISP-013
+// SET-DISP-009, SET-DISP-011, SET-DISP-012, SET-DISP-013, SET-DALI-024
 #[then(expr = "the display panel should eventually show a row starting with {string}")]
 fn panel_shows(world: &mut DaliWorld, prefix: String) {
     let reached = panel_reaches(world, |panel| panel.shows_row_starting_with(&prefix));
     assert!(reached, "panel never showed {prefix:?}: {}", panel_state(world));
+}
+
+// SET-DALI-024
+#[then(expr = "the display panel should show a row starting with {string} within {int} ms")]
+fn panel_shows_within(world: &mut DaliWorld, prefix: String, millis: u64) {
+    let panel = world.display_panel();
+    let reached = probe_within(Duration::from_millis(millis), || {
+        panel.lock().expect("display panel").shows_row_starting_with(&prefix)
+    });
+    assert!(reached, "panel did not show {prefix:?} in {millis} ms: {}", panel_state(world));
 }
 
 // SET-DALI-023

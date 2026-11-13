@@ -33,6 +33,7 @@ impl DisplaySource for ControllerDisplaySource {
             redundancy_enabled: parts.redundancy_enabled,
             controller_active: parts.controller_active,
             controller_quiescent: parts.controller_quiescent,
+            controller_identifying: parts.controller_identifying,
             time_synced: self.clock.source() != TimeSource::Unset,
             frames_sent_total: self.frames_sent(),
             foreign_frames_total: self.phy_sniffer.frames.load(Ordering::Relaxed),

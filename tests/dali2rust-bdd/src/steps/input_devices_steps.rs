@@ -29,10 +29,20 @@ async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, 
     inject_forward24(world, [&b0, &b1, &b2]);
 }
 
-// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022
+// SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-012 SET-DALI-013 SET-DALI-014 SET-DALI-015 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022 SET-DALI-024
 #[when(regex = r"^a 24-bit frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_bus_unit_frame_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
     inject_forward24(world, [&b0, &b1, &b2]);
+}
+
+// SET-DALI-024
+#[when("another controller sends IDENTIFY DEVICE to every unit")]
+async fn when_another_controller_identifies_every_unit(world: &mut DaliWorld) {
+    let command = Device103Command::IdentifyDevice;
+    assert!(command.metadata().send_twice, "{command:?} is a send-twice command");
+    let bytes = command.frame(Device103Address::Broadcast).as_bytes();
+    inject_bytes(world, bytes);
+    inject_bytes(world, bytes);
 }
 
 // SET-DALI-010 SET-DALI-011 SET-DALI-023 WS-060

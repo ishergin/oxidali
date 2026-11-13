@@ -942,6 +942,12 @@ declare_bus_payloads! {
         pages_mask: u8::MAX,
     };
 
+    pub struct BusUnitIdentificationObservedEvent {
+        pub sequence: u32,
+        pub remaining_ms: Option<u32>,
+    }
+    budget = BusUnitIdentificationObservedEvent { sequence: u32::MAX, remaining_ms: Some(u32::MAX) };
+
 }
 
 impl DaliInputManualConfigEvent {

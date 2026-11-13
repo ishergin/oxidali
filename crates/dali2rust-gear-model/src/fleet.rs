@@ -395,13 +395,13 @@ impl GearFleet {
     }
 
     fn on_special(&mut self, special: SpecialCommand) -> TransferOutcome {
-        if let Some(outcome) = self.on_memory_write(special) {
-            return outcome;
-        }
         if stops_identification(special) {
             for gear in self.gears.iter_mut().filter(|g| g.executes_now) {
                 gear.identifying = false;
             }
+        }
+        if let Some(outcome) = self.on_memory_write(special) {
+            return outcome;
         }
         match special {
             SpecialCommand::Dtr0(v) => self.regs.dtr0 = v,
@@ -926,12 +926,11 @@ enum Audience {
     Addressed(DaliAddress),
 }
 
-// IEC 62386-102 §11.4.7, Table 93
+// IEC 62386-102 §9.14.3.1, §11.7.1, §11.7.6, §11.7.12, §11.7.13, Table 93
 fn stops_identification(special: SpecialCommand) -> bool {
     !matches!(
         special,
         SpecialCommand::Initialise(_)
-            | SpecialCommand::Ping
             | SpecialCommand::Compare
             | SpecialCommand::VerifyShortAddress(_)
             | SpecialCommand::QueryShortAddress
@@ -970,6 +969,7 @@ fn is_walk_query(decoded: Option<&DaliCommand>) -> bool {
 
 fn audience_of(decoded: Option<&DaliCommand>) -> Option<Audience> {
     match decoded? {
+        // IEC 62386-102 §11.7.19, Table 93
         DaliCommand::Special(SpecialCommand::Ping) => None,
         DaliCommand::Special(_) => Some(Audience::Every),
         DaliCommand::Standard { address, .. } | DaliCommand::Extended { address, .. } => {

@@ -136,7 +136,7 @@ mod tests {
                 application_active,
                 ..FACTORY_NVM
             };
-            let snapshot = BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence: 0, acknowledged_quiescence: 0 };
+            let snapshot = BusUnitSnapshot { nvm, revision, acknowledged_wire_sequence: 0, acknowledged_quiescence: 0, acknowledged_identification: 0 };
             self.inputs.publish_bus_unit(snapshot);
             let _ = self.wire.poll(Some(&self.inputs), NOW_MS);
         }
