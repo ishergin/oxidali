@@ -71,6 +71,8 @@ pub enum FrameError {
     BackwardNack,
     Collision,
     BusBusy,
+    ContendedNoAnswer,
+    PairSplit,
     TransportError,
     Preempted,
     Held(HoldCause),
@@ -153,6 +155,8 @@ mod tests {
 
     #[test]
     fn frame_error_variants_are_distinct() {
+        assert_ne!(FrameError::PairSplit, FrameError::BusBusy);
+        assert_ne!(FrameError::ContendedNoAnswer, FrameError::Collision);
         assert_ne!(FrameError::BackwardTimeout, FrameError::BackwardNack);
         assert_ne!(FrameError::BackwardTimeout, FrameError::Collision);
         assert_ne!(FrameError::BackwardTimeout, FrameError::BusBusy);
@@ -168,5 +172,9 @@ mod tests {
         assert!(s.contains("BusBusy"));
         let s = format!("{:?}", FrameError::TransportError);
         assert!(s.contains("TransportError"));
+        let s = format!("{:?}", FrameError::ContendedNoAnswer);
+        assert!(s.contains("ContendedNoAnswer"));
+        let s = format!("{:?}", FrameError::PairSplit);
+        assert!(s.contains("PairSplit"));
     }
 }

@@ -29,7 +29,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
             frame: half,
             expires_at_ms: self.clock.monotonic_ms() + STRAY_HALF_LIFETIME_MS,
         });
-        FrameError::BusBusy
+        FrameError::PairSplit
     }
 
     // IEC 62386-101 Table 17, Table 20

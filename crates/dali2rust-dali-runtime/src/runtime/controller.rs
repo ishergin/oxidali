@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use dali2rust_domain::dali::commands::{DaliCommand, DaliResponse};
 use dali2rust_domain::dali::controller::{
-    DaliApplicationController, DaliProductController, Frame24Fault, ReadbackWorkaround, WireHold,
+    DaliApplicationController, DaliProductController, Frame24Contention, Frame24Fault,
+    ReadbackWorkaround, WireHold,
 };
 use dali2rust_domain::dali::frame::{ForwardFrame, FrameError, HoldCause};
 use dali2rust_domain::dali::pres::special::SpecialCommand;
@@ -558,18 +559,24 @@ fn fault24_from_error(error: FrameError) -> Frame24Fault {
     match error {
         FrameError::Preempted => Frame24Fault::Preempted,
         FrameError::Held(cause) => Frame24Fault::Held(cause),
-        FrameError::Collision
-        | FrameError::BusBusy
-        | FrameError::TransportError
-        | FrameError::BackwardTimeout
-        | FrameError::BackwardNack => Frame24Fault::Contended,
+        FrameError::Collision => Frame24Fault::Contended(Frame24Contention::Collision),
+        FrameError::BusBusy => Frame24Fault::Contended(Frame24Contention::BusBusy),
+        FrameError::ContendedNoAnswer => {
+            Frame24Fault::Contended(Frame24Contention::ContendedNoAnswer)
+        }
+        FrameError::PairSplit => Frame24Fault::Contended(Frame24Contention::PairSplit),
+        FrameError::TransportError | FrameError::BackwardTimeout | FrameError::BackwardNack => {
+            Frame24Fault::Transport
+        }
     }
 }
 
 fn response24_from_outcome(outcome: TransferOutcome) -> Result<DaliResponse, Frame24Fault> {
     match outcome {
-        TransferOutcome::Collision | TransferOutcome::BusBusy | TransferOutcome::ForeignInWindow => {
-            Err(Frame24Fault::Contended)
+        TransferOutcome::Collision => Err(Frame24Fault::Contended(Frame24Contention::Collision)),
+        TransferOutcome::BusBusy => Err(Frame24Fault::Contended(Frame24Contention::BusBusy)),
+        TransferOutcome::ForeignInWindow => {
+            Err(Frame24Fault::Contended(Frame24Contention::ForeignInWindow))
         }
         terminal => Ok(response_from_outcome(terminal)),
     }

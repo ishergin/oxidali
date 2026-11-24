@@ -76,7 +76,7 @@ impl<T: DaliTransport + Send> DaliController<T> {
         attempts: u8,
     ) -> Result<Option<TransferOutcome>, FrameError> {
         log::info!("DALI session: retrying query after contended no-answer");
-        self.retry_or_fail(attempt, attempts, FrameError::Collision)
+        self.retry_or_fail(attempt, attempts, FrameError::ContendedNoAnswer)
     }
 
     pub(super) fn retry_or_fail(
@@ -104,8 +104,13 @@ impl<T: DaliTransport + Send> DaliController<T> {
         attempt.saturating_add(1) < attempts
     }
 
-    fn retry_delay_for(&self, error: FrameError, retry_index: u8, jitter: u64) -> Duration {
-        if error == FrameError::Collision {
+    pub(super) fn retry_delay_for(
+        &self,
+        error: FrameError,
+        retry_index: u8,
+        jitter: u64,
+    ) -> Duration {
+        if matches!(error, FrameError::Collision | FrameError::ContendedNoAnswer) {
             return Duration::ZERO;
         }
         self.retry_policy.backoff_delay(retry_index, jitter)
@@ -113,5 +118,11 @@ impl<T: DaliTransport + Send> DaliController<T> {
 }
 
 pub(super) fn unit_retryable(error: FrameError) -> bool {
-    matches!(error, FrameError::Collision | FrameError::BusBusy)
+    matches!(
+        error,
+        FrameError::Collision
+            | FrameError::BusBusy
+            | FrameError::ContendedNoAnswer
+            | FrameError::PairSplit
+    )
 }
