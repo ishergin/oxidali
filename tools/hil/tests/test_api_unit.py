@@ -290,3 +290,38 @@ def test_a_timed_series_reports_its_widest_gap_the_status_before_the_last_and_re
     assert report["fade_running_before_last"] is True and report["settled"]
     assert report["retried"] == 0 and report["held_mirek"] == 333
     assert 0 <= report["widest_gap_s"] < 1.0
+
+
+ATTR_OP = "attr-9-1"
+ATTR_READS = ("POST", "adapters/0/physical-devices/9/attribute-reads")
+ATTR_POLL = ("GET", "operations/" + ATTR_OP)
+ATTR_ACCEPTED = (202, {"operation_id": ATTR_OP, "status": "accepted"})
+ATTR_CONTENDED = (200, {"operation_id": ATTR_OP, "status": "failed",
+                        "error": {"code": "operation_failed", "message": "read_contended"}})
+ATTR_DONE = (200, {"operation_id": ATTR_OP, "status": "succeeded"})
+
+
+def test_an_absorbed_attribute_read_names_what_refused_the_first_attempt(monkeypatch):
+    client = _scripted(monkeypatch, {ATTR_READS: [ATTR_ACCEPTED],
+                                     ATTR_POLL: [ATTR_CONTENDED, ATTR_DONE]})
+
+    view = client.attr_read_checked(9, groups="runtime_status")
+
+    assert view["status"] == "succeeded"
+    assert client.retries == {"attr_read": 1}
+    assert "read_contended" in client.retry_events[0], (
+        "an absorbed retry nobody can classify is a budget breach nobody can answer: %s"
+        % client.retry_events[0]
+    )
+
+
+def test_an_exhausted_attribute_read_names_every_refusal(monkeypatch):
+    client = _scripted(monkeypatch, {ATTR_READS: [ATTR_ACCEPTED],
+                                     ATTR_POLL: [ATTR_CONTENDED]})
+
+    with pytest.raises(hil.api.ApiError):
+        client.attr_read_checked(9, groups="runtime_status", retries=1)
+
+    assert client.retries == {"attr_read": 1, "attr_read_exhausted": 1}
+    event = client.retry_events[0]
+    assert event.count("read_contended") == 2, event

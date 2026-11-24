@@ -109,6 +109,13 @@ def _cause_of(exc):
     return " < ".join(names)
 
 
+def _op_cause(view: dict) -> str:
+    error = view.get("error") or {}
+    named = "/".join(str(part) for part in (error.get("code"), error.get("message")) if part)
+    status = view.get("status") or "no status"
+    return "%s (%s)" % (status, named) if named else str(status)
+
+
 class Client:
     context = ""
 
@@ -553,22 +560,23 @@ class Client:
 
     def attr_read_checked(self, short, groups=ATTR_GROUPS_DEFAULT,
                           banks="none", retries=2):
-        view = {}
+        view, refused = {}, []
         for attempt in range(retries + 1):
             view = self.wait_op(self.attr_read(short, groups=groups, banks=banks))
             if view.get("status") == "succeeded":
                 if attempt:
                     self.retries["attr_read"] += attempt
                     self.retry_events.append(
-                        "attr_read short=%d groups=%s after %d attempt(s)%s"
-                        % (short, groups, attempt, self._where()))
+                        "attr_read short=%d groups=%s after %d attempt(s), %s%s"
+                        % (short, groups, attempt, " then ".join(refused), self._where()))
                 return view
+            refused.append(_op_cause(view))
             time.sleep(0.5)
         self.retries["attr_read"] += retries
         self.retries["attr_read_exhausted"] += 1
         self.retry_events.append(
-            "attr_read short=%d groups=%s EXHAUSTED (last status %r)%s"
-            % (short, groups, view.get("status"), self._where()))
+            "attr_read short=%d groups=%s EXHAUSTED, %s%s"
+            % (short, groups, " then ".join(refused), self._where()))
         raise ApiError(500, {"error": "attr_read_not_succeeded",
                              "last": view.get("status"), "view": view},
                        "attribute-reads")
