@@ -113,6 +113,11 @@ pub const VERIFY_CONTENDED_MESSAGE: &str = "verify_contended";
 
 pub const READ_CONTENDED_MESSAGE: &str = "read_contended";
 
+pub const TRANSPORT_ERROR_MESSAGE: &str = "dali_transport_error";
+
+const CONTENDED_ERROR_TAGS: [&str; 4] =
+    ["Collision", "BusBusy", "ContendedNoAnswer", "PairSplit"];
+
 // IEC 62386-102 §11.7.5
 // IEC 62386-103 §11.10.4
 pub const RANDOMISE_SETTLE_MS: u64 = 100;
@@ -123,10 +128,10 @@ fn map_transport_error(error: &impl core::fmt::Debug) -> SemanticDaliError {
         SemanticDaliError::Conflict(cause.message())
     } else if rendered.contains("Preempted") {
         SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE)
-    } else if rendered.contains("Collision") || rendered.contains("BusBusy") {
+    } else if CONTENDED_ERROR_TAGS.iter().any(|tag| rendered.contains(tag)) {
         SemanticDaliError::OperationFailed("bus_contended")
     } else {
-        SemanticDaliError::OperationFailed("dali_transport_error")
+        SemanticDaliError::OperationFailed(TRANSPORT_ERROR_MESSAGE)
     }
 }
 
@@ -763,7 +768,12 @@ mod tests {
 
     #[test]
     fn contention_and_transport_errors_keep_their_classification() {
-        for error in [FrameError::Collision, FrameError::BusBusy] {
+        for error in [
+            FrameError::Collision,
+            FrameError::BusBusy,
+            FrameError::ContendedNoAnswer,
+            FrameError::PairSplit,
+        ] {
             assert!(map_transport_error(&error).is_bus_contended());
             assert!(!map_transport_error(&error).is_preempted());
         }

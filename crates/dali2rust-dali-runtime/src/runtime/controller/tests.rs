@@ -486,6 +486,51 @@ fn controller_retries_contended_query_no_answer_when_enabled() {
 }
 
 #[test]
+fn naming_the_contention_leaves_every_retry_schedule_where_it_was() {
+    const JITTER: u64 = 1;
+    let controller =
+        DaliController::new(Arc::new(Mutex::new(MockDaliTransport::new())), test_clock());
+
+    for at_once in [FrameError::Collision, FrameError::ContendedNoAnswer] {
+        assert_eq!(
+            controller.retry_delay_for(at_once, 0, JITTER),
+            Duration::ZERO,
+            "{at_once:?}: 101 §9.1.4 retransmits as soon as the line is free"
+        );
+    }
+    for backs_off in [FrameError::BusBusy, FrameError::PairSplit] {
+        assert!(
+            !controller.retry_delay_for(backs_off, 0, JITTER).is_zero(),
+            "{backs_off:?}: a line another master holds is given time"
+        );
+    }
+}
+
+#[test]
+fn a_query_left_unanswered_under_foreign_traffic_is_not_called_a_collision() {
+    let mock = MockDaliTransport::new();
+    let frame = query_status_frame(6);
+    mock.expect_query_no_answer_contended(frame);
+    mock.expect_query_no_answer_contended(frame);
+    let transport = Arc::new(Mutex::new(mock));
+
+    let mut controller = DaliController::with_retry_policy(
+        Arc::clone(&transport),
+        test_clock(),
+        retry_policy_with_contention(2, true),
+    );
+
+    assert_eq!(
+        controller.send_command(&query_status_command(6)),
+        Err(FrameError::ContendedNoAnswer),
+        "the answer was lost to another master's traffic; nothing says our frame collided"
+    );
+    let guard = transport.lock().unwrap();
+    assert_eq!(guard.sent_frames(), vec![frame, frame]);
+    assert_eq!(guard.scripted_exchanges_remaining(), 0);
+}
+
+#[test]
 fn controller_keeps_quiet_query_no_answer_terminal() {
     let mock = MockDaliTransport::new();
     let frame = query_status_frame(7);
@@ -852,7 +897,7 @@ fn a_wire_hold_that_begins_while_a_stray_half_is_waited_out_stops_the_frame() {
         1,
         Box::new(StoppedClock::at(0)),
     );
-    assert_eq!(controller.send_command(&reset_short_0()), Err(FrameError::BusBusy));
+    assert_eq!(controller.send_command(&reset_short_0()), Err(FrameError::PairSplit));
     let begins = Instant::now() + Duration::from_millis(HOLD_BEGINS_AFTER_MS);
     controller.hold = Some(Arc::new(HeldFrom(begins)));
 
@@ -1215,7 +1260,7 @@ fn a_pair_split_by_a_foreign_frame_on_its_last_attempt_fails() {
 
     assert_eq!(
         controller.send_command(&reset_short_0()),
-        Err(FrameError::BusBusy),
+        Err(FrameError::PairSplit),
         "101 §9.3: an active state between the halves leaves no pair, so none is reported as sent"
     );
     assert_script_consumed(&transport);
@@ -1320,7 +1365,7 @@ fn a_stray_half_holds_only_the_frame_identical_to_it_until_it_expires() {
     );
     assert_eq!(
         controller.send_command(&select_dimming_curve_short_0()),
-        Err(FrameError::BusBusy)
+        Err(FrameError::PairSplit)
     );
 
     assert_eq!(
@@ -1349,7 +1394,7 @@ fn only_a_frame_of_ours_on_the_wire_ends_the_stray_half() {
     );
     let broadcast_off = ForwardFrame::new(0xFF, 0x00);
     let held = Duration::from_millis(STRAY_HALF_LIFETIME_MS);
-    assert_eq!(controller.send_command(&reset_short_0()), Err(FrameError::BusBusy));
+    assert_eq!(controller.send_command(&reset_short_0()), Err(FrameError::PairSplit));
 
     transport
         .lock()
@@ -1612,7 +1657,11 @@ fn a_foreign_frame_in_a_24_bit_window_is_terminal_and_leaves_the_bracket_started
         })
     });
 
-    assert_eq!(first, Err(Frame24Fault::Contended), "a foreign frame is not resent");
+    assert_eq!(
+        first,
+        Err(Frame24Fault::Contended(Frame24Contention::ForeignInWindow)),
+        "a foreign frame is not resent"
+    );
     assert!(second.is_ok());
     let guard = transport.lock().unwrap();
     assert_eq!(
@@ -1746,6 +1795,52 @@ impl DaliTransport for UnsentFrame24Transport {
 }
 
 #[test]
+fn every_wire_fact_reaches_the_24_bit_fault_under_its_own_name() {
+    let mapped = [
+        (FrameError::Collision, Frame24Fault::Contended(Frame24Contention::Collision)),
+        (FrameError::BusBusy, Frame24Fault::Contended(Frame24Contention::BusBusy)),
+        (
+            FrameError::ContendedNoAnswer,
+            Frame24Fault::Contended(Frame24Contention::ContendedNoAnswer),
+        ),
+        (FrameError::PairSplit, Frame24Fault::Contended(Frame24Contention::PairSplit)),
+        (FrameError::TransportError, Frame24Fault::Transport),
+        (FrameError::BackwardTimeout, Frame24Fault::Transport),
+        (FrameError::BackwardNack, Frame24Fault::Transport),
+        (FrameError::Preempted, Frame24Fault::Preempted),
+        (
+            FrameError::Held(HoldCause::Quiescent),
+            Frame24Fault::Held(HoldCause::Quiescent),
+        ),
+    ];
+    for (error, fault) in mapped {
+        assert_eq!(fault24_from_error(error), fault, "{error:?} lost its wire fact");
+    }
+}
+
+#[test]
+fn every_24_bit_fault_word_reaches_the_bus_whole() {
+    let words = [
+        Frame24Contention::Collision.message(),
+        Frame24Contention::BusBusy.message(),
+        Frame24Contention::ForeignInWindow.message(),
+        Frame24Contention::ContendedNoAnswer.message(),
+        Frame24Contention::PairSplit.message(),
+    ];
+    for word in words {
+        let carried = dali2rust_contracts::msg::CompactErrorPayload::new(
+            dali2rust_contracts::msg::ErrorCode::OperationFailed,
+            word,
+        );
+        assert_eq!(
+            carried.message.as_str(),
+            word,
+            "the operation's own error field truncated the cause"
+        );
+    }
+}
+
+#[test]
 fn a_24_bit_frame_the_transport_never_sent_is_not_silence() {
     let transport = Arc::new(Mutex::new(UnsentFrame24Transport {
         inner: MockDaliTransport::new(),
@@ -1754,13 +1849,13 @@ fn a_24_bit_frame_the_transport_never_sent_is_not_silence() {
 
     assert_eq!(
         controller.send_frame24_once(PROBE_24, true),
-        Err(Frame24Fault::Contended),
-        "a query whose frame never left proves nothing about the bus"
+        Err(Frame24Fault::Transport),
+        "a transport that never sent the frame is not the line being contended"
     );
     assert_eq!(
         controller.send_frame24(PROBE_24, false),
-        Err(Frame24Fault::Contended),
-        "a command whose frame never left did not happen"
+        Err(Frame24Fault::Transport),
+        "a command whose frame never left did not happen, and no other master is to blame"
     );
 }
 
@@ -1848,7 +1943,7 @@ fn a_24_bit_send_twice_pair_split_by_a_foreign_frame_is_resent_whole() {
 }
 
 #[test]
-fn a_24_bit_pair_split_by_a_foreign_frame_on_its_last_attempt_is_contended() {
+fn a_24_bit_pair_split_by_a_foreign_frame_on_its_last_attempt_names_the_split() {
     let transport = Arc::new(Mutex::new(
         ScriptedFrame24Transport::new(&[], None).with_a_capture_before(1),
     ));
@@ -1858,7 +1953,7 @@ fn a_24_bit_pair_split_by_a_foreign_frame_on_its_last_attempt_is_contended() {
 
     assert_eq!(
         controller.send_frame24_twice(PROBE_24),
-        Err(Frame24Fault::Contended)
+        Err(Frame24Fault::Contended(Frame24Contention::PairSplit))
     );
     assert_eq!(transport.lock().unwrap().sent, vec![PROBE_24; 2]);
     assert_eq!(
@@ -1896,7 +1991,7 @@ fn a_24_bit_send_twice_pair_split_past_the_interval_is_not_executed() {
 
     assert_eq!(
         controller.send_frame24_twice(PROBE_24),
-        Err(Frame24Fault::Contended),
+        Err(Frame24Fault::Contended(Frame24Contention::PairSplit)),
         "a pair split past 94 ms cannot be trusted as executed"
     );
     assert_eq!(

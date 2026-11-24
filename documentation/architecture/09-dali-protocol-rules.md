@@ -98,13 +98,14 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - No yield lands inside a started transaction, not even for our own interactive work.
   Operator-first rests on small units: a read is a series of short transactions, and
   `step_boundary` closes the open one when something is waiting.
-- The retry unit is the whole unit, prelude included: only `Collision` and `BusBusy`
-  retry it, and a 16-bit query whose window held a whole foreign forward frame (or, with
-  the contention-retry knob, went unanswered while foreign traffic was seen) counts as a
-  collision. `Preempted` and transport errors propagate.
+- The retry unit is the whole unit, prelude included: only a contended wire retries it, and
+  a 16-bit query whose window held a whole foreign forward frame (or, with the
+  contention-retry knob, went unanswered while foreign traffic was seen) is one. Each
+  contention keeps its own name out to the operator. `Preempted` and transport errors
+  propagate.
 - A unit that stages what its command consumes — DTR arming and its proof, an
   `ENABLE DEVICE TYPE` prelude, a temporary colour — runs in `controller.unit(|c| …)`, and
-  nothing inside it is retried on its own: a `Collision` or `BusBusy` anywhere in it ends
+  nothing inside it is retried on its own: a contended wire anywhere in it ends
   the attempt, no later exchange of that attempt reaches the wire, and the controller
   re-runs the unit from its first frame under the retry policy, counted as a re-run.
   Another master's frames may have landed in the gap, so a retry that resumed at the

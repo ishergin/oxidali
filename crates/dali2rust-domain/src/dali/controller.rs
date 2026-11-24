@@ -9,9 +9,32 @@ use crate::dali::ses::{DaliSession, TransactionPriority};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Frame24Fault {
     Unsupported,
-    Contended,
+    Contended(Frame24Contention),
+    Transport,
     Preempted,
     Held(HoldCause),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Frame24Contention {
+    Collision,
+    BusBusy,
+    ForeignInWindow,
+    ContendedNoAnswer,
+    PairSplit,
+}
+
+impl Frame24Contention {
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::Collision => "frame24_collision",
+            Self::BusBusy => "frame24_bus_busy",
+            Self::ForeignInWindow => "frame24_foreign_in_window",
+            Self::ContendedNoAnswer => "frame24_contended_no_answer",
+            Self::PairSplit => "frame24_pair_split",
+        }
+    }
 }
 
 pub trait WireHold: Send + Sync {
@@ -160,5 +183,45 @@ pub trait DaliApplicationController: DaliProductController {
 
     fn note_workaround(&mut self, workaround: ReadbackWorkaround) {
         let _ = workaround;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EVERY_CONTENTION: [(Frame24Contention, &str); 5] = [
+        (Frame24Contention::Collision, "frame24_collision"),
+        (Frame24Contention::BusBusy, "frame24_bus_busy"),
+        (Frame24Contention::ForeignInWindow, "frame24_foreign_in_window"),
+        (Frame24Contention::ContendedNoAnswer, "frame24_contended_no_answer"),
+        (Frame24Contention::PairSplit, "frame24_pair_split"),
+    ];
+
+    #[test]
+    fn every_wire_fact_behind_a_contention_has_its_own_word() {
+        for (cause, message) in EVERY_CONTENTION {
+            assert_eq!(cause.message(), message);
+        }
+        let mut words: Vec<&str> = EVERY_CONTENTION.iter().map(|(_, m)| *m).collect();
+        words.sort_unstable();
+        words.dedup();
+        assert_eq!(
+            words.len(),
+            EVERY_CONTENTION.len(),
+            "two wire facts under one word leave the operator where this started"
+        );
+    }
+
+    #[test]
+    fn a_contended_fault_carries_its_cause_and_a_transport_fault_is_not_one() {
+        assert_ne!(
+            Frame24Fault::Contended(Frame24Contention::Collision),
+            Frame24Fault::Contended(Frame24Contention::BusBusy)
+        );
+        assert_ne!(
+            Frame24Fault::Transport,
+            Frame24Fault::Contended(Frame24Contention::Collision)
+        );
     }
 }

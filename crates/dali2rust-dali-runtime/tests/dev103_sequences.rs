@@ -7,7 +7,7 @@ use dali2rust_dali_runtime::runtime::controller::DaliController;
 use dali2rust_dali_runtime::runtime::executor::arbitration::probe_application_controller;
 use dali2rust_dali_runtime::runtime::executor::dev103::{
     commission_control_devices, identify_device, scan_control_devices, set_event_filter_verified,
-    set_event_scheme_verified, Scan103Summary, ScannedDevice, FRAME24_CONTENDED,
+    set_event_scheme_verified, Scan103Summary, ScannedDevice,
 };
 use dali2rust_dali_runtime::runtime::executor::helpers::{
     VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE, VERIFY_UNANSWERED_MESSAGE,
@@ -439,7 +439,7 @@ fn a_foreign_frame_in_a_24_bit_window_is_terminal_and_not_resent() {
 
     assert_eq!(
         outcome.err().map(|error| error.message()),
-        Some(FRAME24_CONTENDED),
+        Some("frame24_foreign_in_window"),
         "a frame the device may have executed is not a no-answer — the half of \
          the 103 frames that discard their response would read it as success"
     );
@@ -451,7 +451,7 @@ fn a_foreign_frame_in_a_24_bit_window_is_terminal_and_not_resent() {
 }
 
 #[test]
-fn a_24_bit_frame_destroyed_on_every_attempt_is_still_the_contended_fault() {
+fn a_24_bit_frame_destroyed_on_every_attempt_names_the_collision() {
     let (mut controller, transport) = controller();
     let attempts = usize::from(RetryPolicy::default().effective_max_attempts());
     {
@@ -465,7 +465,7 @@ fn a_24_bit_frame_destroyed_on_every_attempt_is_still_the_contended_fault() {
 
     assert_eq!(
         outcome.err().map(|error| error.message()),
-        Some(FRAME24_CONTENDED)
+        Some("frame24_collision")
     );
     assert_eq!(
         frames24(&transport).len(),
@@ -660,7 +660,7 @@ fn a_collided_arbitration_probe_is_not_sent_again() {
 
     assert_eq!(
         outcome.err().map(|error| error.message()),
-        Some(FRAME24_CONTENDED),
+        Some("frame24_collision"),
         "a destroyed probe is reported, so the worker records no verdict"
     );
     assert_eq!(

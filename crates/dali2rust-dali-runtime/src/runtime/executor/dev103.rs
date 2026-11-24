@@ -10,13 +10,12 @@ use dali2rust_domain::dali::dev103::{
 use dali2rust_domain::dali::pres::DaliResponse;
 
 use crate::runtime::executor::helpers::{
-    PREEMPTED_MESSAGE, VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE, VERIFY_UNANSWERED_MESSAGE,
+    PREEMPTED_MESSAGE, TRANSPORT_ERROR_MESSAGE, VERIFY_CONTENDED_MESSAGE, VERIFY_FAILED_MESSAGE,
+    VERIFY_UNANSWERED_MESSAGE,
 };
 use crate::runtime::executor::SemanticDaliError;
 
 pub const TRANSPORT_UNSUPPORTED_24BIT: &str = "transport_unsupported_24bit";
-
-pub const FRAME24_CONTENDED: &str = "frame24_contended";
 
 const RANDOM_ADDRESS_MAX: u32 = 0x00FF_FFFE;
 const RANDOMISE_SETTLE_MS: u64 = 100;
@@ -72,7 +71,8 @@ pub(super) fn send_once(
 fn fault_to_error(fault: Frame24Fault) -> SemanticDaliError {
     match fault {
         Frame24Fault::Unsupported => SemanticDaliError::OperationFailed(TRANSPORT_UNSUPPORTED_24BIT),
-        Frame24Fault::Contended => SemanticDaliError::OperationFailed(FRAME24_CONTENDED),
+        Frame24Fault::Contended(cause) => SemanticDaliError::OperationFailed(cause.message()),
+        Frame24Fault::Transport => SemanticDaliError::OperationFailed(TRANSPORT_ERROR_MESSAGE),
         Frame24Fault::Preempted => SemanticDaliError::OperationFailed(PREEMPTED_MESSAGE),
         Frame24Fault::Held(cause) => SemanticDaliError::Conflict(cause.message()),
     }
