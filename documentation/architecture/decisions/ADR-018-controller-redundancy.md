@@ -45,8 +45,9 @@ this record keeps the decisions and their reasons.
   still answers inside Table 20's window.
 - **By default, one lost frame cannot move the bus.** Takeover needs
   `takeover_after_missed` consecutive unanswered probes, more than one by default; a
-  probe that never reached the wire is no verdict, and a freshly booted controller
-  listens before it claims anything.
+  probe that never reached the wire is no verdict, nor is one whose window a foreign
+  forward frame occupied, and a freshly booted controller listens before it claims
+  anything.
 - **The wire alone decides.** The arbitration worker reads no network state: losing
   Ethernet, the broker or the peer's HTTP surface cannot move the role. There is no
   shared virtual IP and no second election; clients reach each unit by its own address

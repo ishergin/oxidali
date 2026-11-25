@@ -645,6 +645,7 @@ fn stats_backward_dto(s: &dali2rust_platform::dali::PhySnifferCounters) -> Stats
         backward_early_rejected_total: s.backward_early_rejected.load(Relaxed),
         backward_late_rejected_total: s.backward_late_rejected.load(Relaxed),
         backward_multi_answer_total: s.backward_multi_answer.load(Relaxed),
+        backward_resolved_late_total: s.backward_resolved_late.load(Relaxed),
     }
 }
 

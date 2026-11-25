@@ -40,7 +40,8 @@ use super::{LATE_REPORT_BYTES, MICROS_PER_MILLI};
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
     classify_tx_event, classify_undecodable_in_window, collision_restart_gate,
-    foreign_forward_outcome, incomplete_reception_verdict, BackwardCause, BackwardTiming,
+    foreign_forward_outcome, settle_then_close, BackwardCause, BackwardTiming, BackwardWindow,
+    GiveUp,
     TxAttemptOutcome, TxEventCause, UndecodableCause, WindowTally, BACKWARD_ACCEPTANCE_FLOOR_US,
     BACKWARD_ACCEPTANCE_LIMIT_US,
 };
@@ -265,62 +266,90 @@ impl From<EspError> for EspIdfDaliError {
     }
 }
 
+struct LiveWindow {
+    inner: *mut TransportInner,
+    deadline: std::time::Instant,
+}
+
+impl LiveWindow {
+    fn opened_on(inner: *mut TransportInner) -> Self {
+        let bound = u64::from(BUS_POWER_DOWN_TICKS) * u64::from(PHY_TICK_US);
+        Self { inner, deadline: std::time::Instant::now() + Duration::from_micros(bound) }
+    }
+}
+
+impl BackwardWindow for LiveWindow {
+    fn take_late_outcome(&mut self) -> Option<TransferOutcome> {
+        EspIdfDaliTransport::take_late_session_outcome(self.inner)
+    }
+
+    fn reception_began(&self) -> Option<u8> {
+        // SAFETY: `inner` is valid for the transport's lifetime, as everywhere on this path.
+        unsafe { (*self.inner).isr.session_rx_started() }
+    }
+
+    fn bus_failure_flags(&self) -> u32 {
+        // SAFETY: `inner` is valid for the transport's lifetime, as everywhere on this path.
+        unsafe { (*self.inner).isr.bus_failure_flags() }
+    }
+
+    fn frame_active(&self) -> bool {
+        dali2rust_platform::dali::PHY_FRAME_ACTIVE.load(Ordering::Relaxed)
+    }
+
+    fn wait_a_step(&mut self) -> bool {
+        EspIdfDaliTransport::wait_for_notification_or_deadline(self.inner, self.deadline)
+    }
+
+    fn close(&mut self) -> Option<u8> {
+        // SAFETY: `inner` is valid for the transport's lifetime, as everywhere on this path.
+        unsafe { (*self.inner).isr.close_backward_window() }
+    }
+}
+
 fn log_backward_timeout_and_clear(p: *mut TransportInner, window_was_open: bool) -> TransferOutcome {
     let waited_ms = if window_was_open {
         SESSION_QUERY_BACKWARD_WINDOW_MS
     } else {
         SESSION_QUERY_BACKWARD_LEAD_MS
     };
-    // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-    let rx_started = unsafe { (*p).isr.close_backward_window() };
-    if let Some(rx_pre_idle) = rx_started {
-        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-        let (idle_ticks, failure_flags) =
-            unsafe { ((*p).isr.idle_ticks(), (*p).isr.bus_failure_flags()) };
-        let outcome = match super::incomplete_reception_outcome(rx_pre_idle) {
-            TransferOutcome::CorruptedInWindow => settle_held_reception(p),
-            other => other,
-        };
-        let (cause, verdict) = match backward_timing(rx_pre_idle) {
-            BackwardTiming::TooEarly => (
-                BackwardCause::EarlyRejected,
-                "before Table 20, not a conforming answer",
-            ),
-            BackwardTiming::InWindow => (
-                BackwardCause::Incomplete,
-                "inside Table 20, §8.2.5 backward frame",
-            ),
-            BackwardTiming::TooLate => {
-                (BackwardCause::LateRejected, "past Table 20, not our answer")
-            }
-        };
-        count_backward_cause(p, cause);
-        log::warn!(
-            "DALI PHY RX: reception began and never completed ({waited_ms} ms; \
-             rx_pre_idle={rx_pre_idle} ticks ({} us, {verdict}) \
-             idle_ticks={idle_ticks} bus_failure=0x{failure_flags:x})",
-            u32::from(rx_pre_idle).saturating_mul(u32::from(PHY_TICK_US))
-        );
-        return outcome;
+    match settle_then_close(&mut LiveWindow::opened_on(p)) {
+        GiveUp::Named(outcome) => outcome,
+        GiveUp::Incomplete { rx_pre_idle, outcome } => {
+            log_incomplete_reception(p, waited_ms, rx_pre_idle);
+            outcome
+        }
+        GiveUp::Silent => {
+            log::info!("DALI PHY RX: backward timeout ({waited_ms} ms)");
+            TransferOutcome::NoAnswer
+        }
     }
-    log::info!("DALI PHY RX: backward timeout ({waited_ms} ms)");
-    TransferOutcome::NoAnswer
 }
 
-fn settle_held_reception(p: *mut TransportInner) -> TransferOutcome {
-    let bound = u64::from(BUS_POWER_DOWN_TICKS) * u64::from(PHY_TICK_US);
-    let deadline = std::time::Instant::now() + Duration::from_micros(bound);
-    loop {
-        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-        let flags = unsafe { (*p).isr.bus_failure_flags() };
-        let active = dali2rust_platform::dali::PHY_FRAME_ACTIVE.load(Ordering::Relaxed);
-        if let Some(outcome) = incomplete_reception_verdict(flags, active) {
-            return outcome;
+fn log_incomplete_reception(p: *mut TransportInner, waited_ms: u64, rx_pre_idle: u8) {
+    // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
+    let (idle_ticks, failure_flags) =
+        unsafe { ((*p).isr.idle_ticks(), (*p).isr.bus_failure_flags()) };
+    let (cause, verdict) = match backward_timing(rx_pre_idle) {
+        BackwardTiming::TooEarly => (
+            BackwardCause::EarlyRejected,
+            "before Table 20, not a conforming answer",
+        ),
+        BackwardTiming::InWindow => (
+            BackwardCause::Incomplete,
+            "inside Table 20, §8.2.5 backward frame",
+        ),
+        BackwardTiming::TooLate => {
+            (BackwardCause::LateRejected, "past Table 20, not our answer")
         }
-        if !EspIdfDaliTransport::wait_for_notification_or_deadline(p, deadline) {
-            return TransferOutcome::CorruptedInWindow;
-        }
-    }
+    };
+    count_backward_cause(p, cause);
+    log::warn!(
+        "DALI PHY RX: reception began and never completed ({waited_ms} ms; \
+         rx_pre_idle={rx_pre_idle} ticks ({} us, {verdict}) \
+         idle_ticks={idle_ticks} bus_failure=0x{failure_flags:x})",
+        u32::from(rx_pre_idle).saturating_mul(u32::from(PHY_TICK_US))
+    );
 }
 
 impl EspIdfDaliTransport {
@@ -663,11 +692,23 @@ impl EspIdfDaliTransport {
         p: *mut TransportInner,
         forward_frame: Option<u16>,
     ) -> Option<TransferOutcome> {
+        Self::take_window_outcome(p, |ev| Self::backward_outcome_of_capture(p, forward_frame, ev))
+    }
+
+    fn take_late_session_outcome(p: *mut TransportInner) -> Option<TransferOutcome> {
+        let outcome = Self::take_window_outcome(p, |ev| Self::late_capture_outcome(p, ev))?;
+        count_resolved_late(p);
+        log::info!("DALI PHY RX: capture completed after the backward wait -> {outcome:?}");
+        Some(outcome)
+    }
+
+    fn take_window_outcome(
+        p: *mut TransportInner,
+        of_capture: impl Fn(&RxCompletedEvent) -> TransferOutcome,
+    ) -> Option<TransferOutcome> {
         while let Some(event) = Self::take_session_event(p) {
             match event {
-                SessionEvent::RxComplete(ev) => {
-                    return Some(Self::backward_outcome_of_capture(p, forward_frame, &ev));
-                }
+                SessionEvent::RxComplete(ev) => return Some(of_capture(&ev)),
                 SessionEvent::ForeignForward {
                     pre_idle_ticks,
                     sample_count,
@@ -685,6 +726,12 @@ impl EspIdfDaliTransport {
             }
         }
         None
+    }
+
+    // IEC 62386-101 §8.2.5
+    fn late_capture_outcome(p: *mut TransportInner, ev: &RxCompletedEvent) -> TransferOutcome {
+        Self::outside_the_backward_window(p, ev)
+            .unwrap_or_else(|| Self::undecodable_in_window(p, ev))
     }
 
     fn backward_outcome_of_capture(
@@ -1558,6 +1605,13 @@ unsafe fn coherent_isr_tick_sample(inner: *mut TransportInner) -> Option<(i64, u
 
 fn held_ms(run_ticks: u16) -> u32 {
     PHY_TICK_US.saturating_mul(u32::from(run_ticks)) / MICROS_PER_MILLI
+}
+
+fn count_resolved_late(inner: *mut TransportInner) {
+    // SAFETY: every caller holds `inner` for the transport lifetime.
+    if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
+        sink.backward_resolved_late.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 fn count_foreign_frame(p: *mut TransportInner) {

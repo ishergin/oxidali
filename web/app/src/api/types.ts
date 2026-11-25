@@ -1038,6 +1038,7 @@ export type StatsDali = {
   backward_early_rejected_total: number
   backward_late_rejected_total: number
   backward_multi_answer_total: number
+  backward_resolved_late_total: number
   console_log_dropped_total: number
   console_log_busy_total: number
   console_log_truncated_total: number

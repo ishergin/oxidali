@@ -44,6 +44,7 @@ async fn stats_blocks_present(world: &mut DaliWorld) {
         "/dali/target_state_superseded_total",
         "/dali/backward_early_rejected_total",
         "/dali/backward_multi_answer_total",
+        "/dali/backward_resolved_late_total",
         "/dali/console_log_dropped_total",
         "/dali/console_log_busy_total",
         "/dali/console_log_truncated_total",
