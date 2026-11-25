@@ -37,7 +37,7 @@ pub use backward_window::{
     ANSWER_ARM_TARGET_IDLE_TICKS, BACKWARD_DATA_BITS, BACKWARD_MAX_US, BACKWARD_MIN_US,
     BACKWARD_RECEIVE_MIN_TICKS, BACKWARD_RECEIVE_MIN_US, BACKWARD_TARGET_US,
 };
-pub use command::{AtomicCommandCell, ExchangeId, TxCommand, TxGates};
+pub use command::{AtomicCommandCell, ExchangeId, TxCommand, TxGates, WindowClose, WindowId};
 pub use cpu::{isr_core_id, ISR_CORE_ID};
 pub use frame_length::{
     frame_length_class, is_forward24_length, FrameLengthClass, BACKWARD8_SAMPLE_COUNT,

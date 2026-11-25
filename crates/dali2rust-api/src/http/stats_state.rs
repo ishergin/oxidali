@@ -73,6 +73,7 @@ pub struct StatsDaliBackwardDto {
     pub backward_early_rejected_total: u32,
     pub backward_late_rejected_total: u32,
     pub backward_multi_answer_total: u32,
+    pub backward_resolved_late_total: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -244,6 +245,7 @@ declare_widest_dtos! {
     StatsDaliBackwardDto {
         backward_undecodable_total, backward_frame_size_total, backward_incomplete_total,
         backward_early_rejected_total, backward_late_rejected_total, backward_multi_answer_total,
+        backward_resolved_late_total,
     }
     StatsDaliConsoleDto {
         console_log_dropped_total, console_log_busy_total, console_log_truncated_total,

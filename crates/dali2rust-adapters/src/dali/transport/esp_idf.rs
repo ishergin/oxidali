@@ -27,6 +27,7 @@ use dali2rust_platform::dali::{
 use dali2rust_dali_phy::{
     dali_phy_alarm_isr, frame_length_class, settle_ticks_on_wire, ExchangeId, FrameLengthClass,
     HalfBitBuffer, PhyIsrCore, RegisterGpio, RxCompletedEvent, SessionEvent, TxGates,
+    WindowClose, WindowId,
     BUS_POWER_DOWN_TICKS, MIN_SAMPLES_FOR_DECODE, PHY_TICK_US, RX_RING_CAP, TABLE_MAX_AGE_TICKS,
     TX_ARM_LEAD_TICKS, TX_HALF_BIT_TICKS,
 };
@@ -40,7 +41,8 @@ use super::{LATE_REPORT_BYTES, MICROS_PER_MILLI};
 use crate::dali::transport::{
     arrived_too_early_for_a_backward_frame, arrived_too_late_for_a_backward_frame, backward_timing,
     classify_tx_event, classify_undecodable_in_window, collision_restart_gate,
-    foreign_forward_outcome, incomplete_reception_verdict, BackwardCause, BackwardTiming,
+    foreign_forward_outcome, settle_then_close, sniffed_is_new_foreign_activity, BackwardCause,
+    BackwardTiming, BackwardWindow, GiveUp,
     TxAttemptOutcome, TxEventCause, UndecodableCause, WindowTally, BACKWARD_ACCEPTANCE_FLOOR_US,
     BACKWARD_ACCEPTANCE_LIMIT_US,
 };
@@ -165,7 +167,7 @@ struct TransportInner {
     alarm_isr: PhyAlarmIsr,
     _tx_pin: PinDriver<'static, Output>,
     _rx_pin: PinDriver<'static, Input>,
-    foreign_frames: AtomicU32,
+    foreign_activity: AtomicU32,
     last_tx_settle_ticks: AtomicU32,
     last_tx_sniff_seq: AtomicU32,
     captures_between_last_two_tx: AtomicU32,
@@ -265,62 +267,97 @@ impl From<EspError> for EspIdfDaliError {
     }
 }
 
-fn log_backward_timeout_and_clear(p: *mut TransportInner, window_was_open: bool) -> TransferOutcome {
+struct LiveWindow {
+    inner: *mut TransportInner,
+    window: WindowId,
+    deadline: std::time::Instant,
+}
+
+impl LiveWindow {
+    fn settling(inner: *mut TransportInner, window: WindowId) -> Self {
+        let bound = u64::from(BUS_POWER_DOWN_TICKS) * u64::from(PHY_TICK_US);
+        let deadline = std::time::Instant::now() + Duration::from_micros(bound);
+        Self { inner, window, deadline }
+    }
+}
+
+impl BackwardWindow for LiveWindow {
+    fn take_late_outcome(&mut self) -> Option<TransferOutcome> {
+        EspIdfDaliTransport::take_late_session_outcome(self.inner)
+    }
+
+    fn reception_began(&self) -> Option<u8> {
+        // SAFETY: `inner` is valid for the transport's lifetime, as everywhere on this path.
+        unsafe { (*self.inner).isr.session_rx_started(self.window) }
+    }
+
+    fn bus_failure_flags(&self) -> u32 {
+        // SAFETY: `inner` is valid for the transport's lifetime, as everywhere on this path.
+        unsafe { (*self.inner).isr.bus_failure_flags() }
+    }
+
+    fn frame_active(&self) -> bool {
+        dali2rust_platform::dali::PHY_FRAME_ACTIVE.load(Ordering::Relaxed)
+    }
+
+    fn wait_a_step(&mut self) -> bool {
+        EspIdfDaliTransport::wait_for_notification_or_deadline(self.inner, self.deadline)
+    }
+
+    fn close(&mut self) -> WindowClose {
+        // SAFETY: `inner` is valid for the transport's lifetime, as everywhere on this path.
+        unsafe { (*self.inner).isr.close_backward_window(self.window) }
+    }
+}
+
+fn log_backward_timeout_and_clear(
+    p: *mut TransportInner,
+    window_was_open: bool,
+    window: WindowId,
+) -> TransferOutcome {
     let waited_ms = if window_was_open {
         SESSION_QUERY_BACKWARD_WINDOW_MS
     } else {
         SESSION_QUERY_BACKWARD_LEAD_MS
     };
-    // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-    let rx_started = unsafe { (*p).isr.close_backward_window() };
-    if let Some(rx_pre_idle) = rx_started {
-        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-        let (idle_ticks, failure_flags) =
-            unsafe { ((*p).isr.idle_ticks(), (*p).isr.bus_failure_flags()) };
-        let outcome = match super::incomplete_reception_outcome(rx_pre_idle) {
-            TransferOutcome::CorruptedInWindow => settle_held_reception(p),
-            other => other,
-        };
-        let (cause, verdict) = match backward_timing(rx_pre_idle) {
-            BackwardTiming::TooEarly => (
-                BackwardCause::EarlyRejected,
-                "before Table 20, not a conforming answer",
-            ),
-            BackwardTiming::InWindow => (
-                BackwardCause::Incomplete,
-                "inside Table 20, §8.2.5 backward frame",
-            ),
-            BackwardTiming::TooLate => {
-                (BackwardCause::LateRejected, "past Table 20, not our answer")
-            }
-        };
-        count_backward_cause(p, cause);
-        log::warn!(
-            "DALI PHY RX: reception began and never completed ({waited_ms} ms; \
-             rx_pre_idle={rx_pre_idle} ticks ({} us, {verdict}) \
-             idle_ticks={idle_ticks} bus_failure=0x{failure_flags:x})",
-            u32::from(rx_pre_idle).saturating_mul(u32::from(PHY_TICK_US))
-        );
-        return outcome;
+    match settle_then_close(&mut LiveWindow::settling(p, window)) {
+        GiveUp::Named(outcome) => outcome,
+        GiveUp::Incomplete { rx_pre_idle, outcome } => {
+            note_foreign_activity(p);
+            log_incomplete_reception(p, waited_ms, rx_pre_idle);
+            outcome
+        }
+        GiveUp::Silent => {
+            log::info!("DALI PHY RX: backward timeout ({waited_ms} ms)");
+            TransferOutcome::NoAnswer
+        }
     }
-    log::info!("DALI PHY RX: backward timeout ({waited_ms} ms)");
-    TransferOutcome::NoAnswer
 }
 
-fn settle_held_reception(p: *mut TransportInner) -> TransferOutcome {
-    let bound = u64::from(BUS_POWER_DOWN_TICKS) * u64::from(PHY_TICK_US);
-    let deadline = std::time::Instant::now() + Duration::from_micros(bound);
-    loop {
-        // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-        let flags = unsafe { (*p).isr.bus_failure_flags() };
-        let active = dali2rust_platform::dali::PHY_FRAME_ACTIVE.load(Ordering::Relaxed);
-        if let Some(outcome) = incomplete_reception_verdict(flags, active) {
-            return outcome;
+fn log_incomplete_reception(p: *mut TransportInner, waited_ms: u64, rx_pre_idle: u8) {
+    // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
+    let (idle_ticks, failure_flags) =
+        unsafe { ((*p).isr.idle_ticks(), (*p).isr.bus_failure_flags()) };
+    let (cause, verdict) = match backward_timing(rx_pre_idle) {
+        BackwardTiming::TooEarly => (
+            BackwardCause::EarlyRejected,
+            "before Table 20, not a conforming answer",
+        ),
+        BackwardTiming::InWindow => (
+            BackwardCause::Incomplete,
+            "inside Table 20, §8.2.5 backward frame",
+        ),
+        BackwardTiming::TooLate => {
+            (BackwardCause::LateRejected, "past Table 20, not our answer")
         }
-        if !EspIdfDaliTransport::wait_for_notification_or_deadline(p, deadline) {
-            return TransferOutcome::CorruptedInWindow;
-        }
-    }
+    };
+    count_backward_cause(p, cause);
+    log::warn!(
+        "DALI PHY RX: reception began and never completed ({waited_ms} ms; \
+         rx_pre_idle={rx_pre_idle} ticks ({} us, {verdict}) \
+         idle_ticks={idle_ticks} bus_failure=0x{failure_flags:x})",
+        u32::from(rx_pre_idle).saturating_mul(u32::from(PHY_TICK_US))
+    );
 }
 
 impl EspIdfDaliTransport {
@@ -465,10 +502,10 @@ impl EspIdfDaliTransport {
             let outcome = match Self::await_queued_frame(p, frame)? {
                 TxAttemptOutcome::BusBusy => TransferOutcome::BusBusy,
                 TxAttemptOutcome::Collision => TransferOutcome::Collision,
-                TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq } => {
+                TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq, window } => {
                     Self::record_sent_frame(p, pre_idle_ticks, sniff_seq);
                     if expects_backward {
-                        Self::do_receive_backward_outcome(p, Some(frame))?
+                        Self::do_receive_backward_outcome(p, Some(frame), window)?
                     } else {
                         TransferOutcome::NoAnswer
                     }
@@ -607,10 +644,11 @@ impl EspIdfDaliTransport {
     fn do_receive_backward_outcome(
         p: *mut TransportInner,
         forward_frame: Option<u16>,
+        window: WindowId,
     ) -> Result<TransferOutcome, EspIdfDaliError> {
         let start = std::time::Instant::now();
         let lead = Duration::from_millis(SESSION_QUERY_BACKWARD_LEAD_MS);
-        let window = Duration::from_millis(SESSION_QUERY_BACKWARD_WINDOW_MS);
+        let open_wait = Duration::from_millis(SESSION_QUERY_BACKWARD_WINDOW_MS);
         let mut deadline = start + lead;
         let mut window_was_open = false;
 
@@ -618,34 +656,19 @@ impl EspIdfDaliTransport {
             if let Some(outcome) = Self::take_backward_session_outcome(p, forward_frame) {
                 return Ok(outcome);
             }
-
-            if Self::backward_window_has_closed(p) {
-                return Ok(Self::last_look_then_give_up(
-                    p,
-                    forward_frame,
-                    window_was_open,
-                ));
-            }
-
+            let closed = Self::backward_window_has_closed(p);
             // SAFETY: `p` is valid for the transport's lifetime, as everywhere on this path.
-            if unsafe { (*p).isr.session_expects_backward() } {
+            if !closed && unsafe { (*p).isr.window_is_open(window) } {
                 window_was_open = true;
-                deadline = start + window;
+                deadline = start + open_wait;
             }
-
-            if std::time::Instant::now() >= deadline {
-                return Ok(Self::last_look_then_give_up(
-                    p,
-                    forward_frame,
-                    window_was_open,
-                ));
-            }
-            if !Self::wait_for_notification_or_deadline(p, deadline) {
-                return Ok(Self::last_look_then_give_up(
-                    p,
-                    forward_frame,
-                    window_was_open,
-                ));
+            if closed
+                || std::time::Instant::now() >= deadline
+                || !Self::wait_for_notification_or_deadline(p, deadline)
+            {
+                let outcome =
+                    Self::last_look_then_give_up(p, forward_frame, window_was_open, window);
+                return Ok(outcome);
             }
         }
     }
@@ -654,20 +677,33 @@ impl EspIdfDaliTransport {
         p: *mut TransportInner,
         forward_frame: Option<u16>,
         window_was_open: bool,
+        window: WindowId,
     ) -> TransferOutcome {
         Self::take_backward_session_outcome(p, forward_frame)
-            .unwrap_or_else(|| log_backward_timeout_and_clear(p, window_was_open))
+            .unwrap_or_else(|| log_backward_timeout_and_clear(p, window_was_open, window))
     }
 
     fn take_backward_session_outcome(
         p: *mut TransportInner,
         forward_frame: Option<u16>,
     ) -> Option<TransferOutcome> {
+        Self::take_window_outcome(p, |ev| Self::backward_outcome_of_capture(p, forward_frame, ev))
+    }
+
+    fn take_late_session_outcome(p: *mut TransportInner) -> Option<TransferOutcome> {
+        let outcome = Self::take_window_outcome(p, |ev| Self::late_capture_outcome(p, ev))?;
+        count_resolved_late(p);
+        log::info!("DALI PHY RX: capture completed after the backward wait -> {outcome:?}");
+        Some(outcome)
+    }
+
+    fn take_window_outcome(
+        p: *mut TransportInner,
+        of_capture: impl Fn(&RxCompletedEvent) -> TransferOutcome,
+    ) -> Option<TransferOutcome> {
         while let Some(event) = Self::take_session_event(p) {
             match event {
-                SessionEvent::RxComplete(ev) => {
-                    return Some(Self::backward_outcome_of_capture(p, forward_frame, &ev));
-                }
+                SessionEvent::RxComplete(ev) => return Some(of_capture(&ev)),
                 SessionEvent::ForeignForward {
                     pre_idle_ticks,
                     sample_count,
@@ -685,6 +721,12 @@ impl EspIdfDaliTransport {
             }
         }
         None
+    }
+
+    // IEC 62386-101 §8.2.5
+    fn late_capture_outcome(p: *mut TransportInner, ev: &RxCompletedEvent) -> TransferOutcome {
+        Self::outside_the_backward_window(p, ev)
+            .unwrap_or_else(|| Self::undecodable_in_window(p, ev))
     }
 
     fn backward_outcome_of_capture(
@@ -717,7 +759,7 @@ impl EspIdfDaliTransport {
         ev: &RxCompletedEvent,
     ) -> Option<TransferOutcome> {
         if arrived_too_late_for_a_backward_frame(ev) {
-            count_foreign_frame(p);
+            note_foreign_activity(p);
             count_backward_cause(p, BackwardCause::LateRejected);
             log::info!(
                 "DALI PHY RX: frame arrived {} ticks after ours — past the \
@@ -727,7 +769,7 @@ impl EspIdfDaliTransport {
             return Some(TransferOutcome::ForeignInWindow);
         }
         if arrived_too_early_for_a_backward_frame(ev) {
-            count_foreign_frame(p);
+            note_foreign_activity(p);
             count_backward_cause(p, BackwardCause::EarlyRejected);
             log::info!(
                 "DALI PHY RX: frame arrived {} ticks after ours — below the \
@@ -744,7 +786,7 @@ impl EspIdfDaliTransport {
         let decoded = ev.decode_sniffed_with_phase();
         let (outcome, cause) = classify_undecodable_in_window(ev, decoded.frame);
         match cause.tally() {
-            WindowTally::ForeignFrame => count_foreign_frame(p),
+            WindowTally::ForeignFrame => note_foreign_activity(p),
             WindowTally::Backward(backward) => count_backward_cause(p, backward),
         }
         Self::log_undecodable_in_window(cause, decoded.phase_ticks);
@@ -790,7 +832,7 @@ impl EspIdfDaliTransport {
         pre_idle_ticks: u8,
         sample_count: u16,
     ) -> TransferOutcome {
-        count_foreign_frame(p);
+        note_foreign_activity(p);
         match backward_timing(pre_idle_ticks) {
             BackwardTiming::TooEarly => count_backward_cause(p, BackwardCause::EarlyRejected),
             BackwardTiming::TooLate => count_backward_cause(p, BackwardCause::LateRejected),
@@ -870,7 +912,7 @@ impl EspIdfDaliTransport {
                 alarm_isr: PhyAlarmIsr::unarmed(),
                 _tx_pin: tx,
                 _rx_pin: rx,
-                foreign_frames: AtomicU32::new(0),
+                foreign_activity: AtomicU32::new(0),
                 last_tx_settle_ticks: AtomicU32::new(TX_SETTLE_UNMEASURED),
                 last_tx_sniff_seq: AtomicU32::new(0),
                 captures_between_last_two_tx: AtomicU32::new(0),
@@ -977,10 +1019,11 @@ impl DaliTransport for EspIdfDaliTransport {
         match attempt {
             TxAttemptOutcome::BusBusy => Ok(TransferOutcome::BusBusy),
             TxAttemptOutcome::Collision => Ok(TransferOutcome::Collision),
-            TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq } => {
+            TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq, window } => {
                 Self::record_sent_frame(p, pre_idle_ticks, sniff_seq);
                 if expects_backward {
-                    Self::do_receive_backward_outcome(p, None).map_err(Frame24Error::Transport)
+                    Self::do_receive_backward_outcome(p, None, window)
+                        .map_err(Frame24Error::Transport)
                 } else {
                     Ok(TransferOutcome::NoAnswer)
                 }
@@ -1008,7 +1051,7 @@ impl DaliTransport for EspIdfDaliTransport {
     fn receive_backward_frame(&mut self) -> Result<Option<u8>, Self::Error> {
         let p = self.inner;
         let _exchange_id = Self::prepare_session_exchange(p)?;
-        let res = match Self::do_receive_backward_outcome(p, None)? {
+        let res = match Self::do_receive_backward_outcome(p, None, WindowId::NONE)? {
             TransferOutcome::Answer(backward) => Ok(Some(backward)),
             TransferOutcome::NoAnswer
             | TransferOutcome::ForeignInWindow
@@ -1084,10 +1127,10 @@ impl DaliTransport for EspIdfDaliTransport {
         )? {
             TxAttemptOutcome::BusBusy => Ok(TransferOutcome::BusBusy),
             TxAttemptOutcome::Collision => Ok(TransferOutcome::Collision),
-            TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq } => {
+            TxAttemptOutcome::Sent { pre_idle_ticks, sniff_seq, window } => {
                 Self::record_sent_frame(p, pre_idle_ticks, sniff_seq);
                 if expects_backward {
-                    Self::do_receive_backward_outcome(p, Some(frame))
+                    Self::do_receive_backward_outcome(p, Some(frame), window)
                 } else {
                     Ok(TransferOutcome::NoAnswer)
                 }
@@ -1098,7 +1141,7 @@ impl DaliTransport for EspIdfDaliTransport {
 
     fn foreign_activity(&self) -> u32 {
         // SAFETY: `inner` lives as long as the transport; task code reads it only through atomics.
-        unsafe { (*self.inner).foreign_frames.load(Ordering::Acquire) }
+        unsafe { (*self.inner).foreign_activity.load(Ordering::Acquire) }
     }
 
     fn last_tx_settle_ticks(&self) -> Option<u16> {
@@ -1560,10 +1603,17 @@ fn held_ms(run_ticks: u16) -> u32 {
     PHY_TICK_US.saturating_mul(u32::from(run_ticks)) / MICROS_PER_MILLI
 }
 
-fn count_foreign_frame(p: *mut TransportInner) {
+fn count_resolved_late(inner: *mut TransportInner) {
+    // SAFETY: every caller holds `inner` for the transport lifetime.
+    if let Some(sink) = unsafe { (*inner).sniffer_counters.get() } {
+        sink.backward_resolved_late.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn note_foreign_activity(p: *mut TransportInner) {
     // SAFETY: every caller holds `p` for the transport lifetime.
     unsafe {
-        (*p).foreign_frames.fetch_add(1, Ordering::Relaxed);
+        (*p).foreign_activity.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -1604,8 +1654,6 @@ unsafe fn mirror_isr_state(
 /// # Safety
 /// `inner` must be valid for the transport lifetime.
 unsafe fn sniffed_forward24(inner: *mut TransportInner, b: [u8; 3]) {
-    // SAFETY: the caller guarantees `inner`.
-    count_foreign_frame(inner);
     log::info!(
         "DALI sniff: foreign forward24=0x{:02x}{:02x}{:02x} (addr=0x{:02x})",
         b[0],
@@ -1628,10 +1676,11 @@ unsafe fn dispatch_sniffed_capture(
     decoded: SniffedDecode,
     diagnostics: &mut SnifferDiagnostics,
 ) {
+    if sniffed_is_new_foreign_activity(ev, decoded.frame) {
+        note_foreign_activity(inner);
+    }
     match decoded.frame {
         SniffedFrame::Forward16(v) => {
-            // SAFETY: the caller guarantees `inner`.
-            count_foreign_frame(inner);
             log_sniffed_forward16(v, decoded.phase_ticks);
             push_observed_raw_frame(
                 inner,
@@ -1639,7 +1688,7 @@ unsafe fn dispatch_sniffed_capture(
                 dali2rust_platform::dali::ObservedRawFrameKind::Forward16,
             );
         }
-        // SAFETY: same.
+        // SAFETY: the caller guarantees `inner`.
         SniffedFrame::Forward24(b) => unsafe { sniffed_forward24(inner, b) },
         SniffedFrame::Backward8(b) => {
             log::info!("DALI sniff: foreign backward8=0x{b:02x}");

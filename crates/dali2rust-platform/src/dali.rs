@@ -376,6 +376,7 @@ pub struct PhySnifferCounters {
     pub backward_early_rejected: core::sync::atomic::AtomicU32,
     pub backward_late_rejected: core::sync::atomic::AtomicU32,
     pub backward_multi_answer: core::sync::atomic::AtomicU32,
+    pub backward_resolved_late: core::sync::atomic::AtomicU32,
 
     pub isr_ticks_deficit_raw: core::sync::atomic::AtomicU32,
     pub isr_ticks_surplus_raw: core::sync::atomic::AtomicU32,

@@ -68,7 +68,7 @@ persist_flush_slow          0
 # Read absolutely, not as a session delta: the increment happens in the boot prologue.
 console_log_unavailable   0
 
-# Our backward window by cause; backward_late_rejected and backward_multi_answer are controls, reported and never gated.
+# Our backward window by cause; backward_late_rejected, backward_multi_answer and backward_resolved_late are controls, reported and never gated.
 backward_undecodable      0
 backward_frame_size       0
 backward_incomplete       0

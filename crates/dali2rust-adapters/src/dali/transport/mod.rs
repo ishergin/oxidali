@@ -26,8 +26,8 @@ pub mod phy_interrupt;
 use dali2rust_dali_codec::rx_decode::{RxDecode, SniffedFrame};
 use dali2rust_dali_phy::isr::BUS_FAILURE_POWER_DOWN;
 use dali2rust_dali_phy::{
-    restart_gate_for, RxCompletedEvent, SessionEvent, BUS_POWER_DOWN_TICKS, LINE_HELD_TICKS,
-    PHY_TICK_US,
+    restart_gate_for, RxCompletedEvent, SessionEvent, WindowClose, WindowId,
+    BUS_POWER_DOWN_TICKS, LINE_HELD_TICKS, PHY_TICK_US,
 };
 use dali2rust_platform::dali::TransferOutcome;
 
@@ -158,9 +158,86 @@ pub fn incomplete_reception_verdict(
     }
 }
 
+pub trait BackwardWindow {
+    fn take_late_outcome(&mut self) -> Option<TransferOutcome>;
+    fn reception_began(&self) -> Option<u8>;
+    fn bus_failure_flags(&self) -> u32;
+    fn frame_active(&self) -> bool;
+    fn wait_a_step(&mut self) -> bool;
+    fn close(&mut self) -> WindowClose;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettleStep {
+    Wait,
+    LastLook,
+    Done,
+}
+
+// IEC 62386-101 §8.2.5
+pub fn settle_step(began: Option<u8>, bus_failure_flags: u32, was_awaited: bool) -> SettleStep {
+    let in_window =
+        began.map(incomplete_reception_outcome) == Some(TransferOutcome::CorruptedInWindow);
+    if in_window && bus_failure_flags & BUS_FAILURE_POWER_DOWN == 0 {
+        SettleStep::Wait
+    } else if was_awaited {
+        SettleStep::LastLook
+    } else {
+        SettleStep::Done
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GiveUp {
+    Named(TransferOutcome),
+    Incomplete { rx_pre_idle: u8, outcome: TransferOutcome },
+    Silent,
+}
+
+pub fn settle_then_close(window: &mut impl BackwardWindow) -> GiveUp {
+    let mut was_awaited = false;
+    loop {
+        if let Some(outcome) = window.take_late_outcome() {
+            return GiveUp::Named(outcome);
+        }
+        let step = settle_step(window.reception_began(), window.bus_failure_flags(), was_awaited);
+        was_awaited = step == SettleStep::Wait;
+        if step == SettleStep::Done || !window.wait_a_step() {
+            return close_settled(window);
+        }
+    }
+}
+
+fn close_settled(window: &mut impl BackwardWindow) -> GiveUp {
+    let line = incomplete_reception_verdict(window.bus_failure_flags(), window.frame_active());
+    let rx_pre_idle = match window.close() {
+        WindowClose::Closed(Some(rx_pre_idle)) => rx_pre_idle,
+        WindowClose::Closed(None) => return GiveUp::Silent,
+        WindowClose::NotOpen => return left_by_the_interrupt(window),
+    };
+    let outcome = match incomplete_reception_outcome(rx_pre_idle) {
+        TransferOutcome::CorruptedInWindow => line.unwrap_or(TransferOutcome::CorruptedInWindow),
+        other => other,
+    };
+    GiveUp::Incomplete { rx_pre_idle, outcome }
+}
+
+fn left_by_the_interrupt(window: &mut impl BackwardWindow) -> GiveUp {
+    if let Some(outcome) = window.take_late_outcome() {
+        return GiveUp::Named(outcome);
+    }
+    window.wait_a_step();
+    window.take_late_outcome().map_or(GiveUp::Silent, GiveUp::Named)
+}
+
+pub fn sniffed_is_new_foreign_activity(ev: &RxCompletedEvent, frame: SniffedFrame) -> bool {
+    !ev.reported_to_session
+        && matches!(frame, SniffedFrame::Forward16(_) | SniffedFrame::Forward24(_))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxAttemptOutcome {
-    Sent { pre_idle_ticks: u16, sniff_seq: u32 },
+    Sent { pre_idle_ticks: u16, sniff_seq: u32, window: WindowId },
     Collision,
     BusBusy,
 }
@@ -176,10 +253,11 @@ pub enum TxEventCause {
 
 pub fn classify_tx_event(event: &SessionEvent) -> (Option<TxAttemptOutcome>, TxEventCause) {
     match event {
-        SessionEvent::TxComplete { pre_idle_ticks, sniff_seq } => (
+        SessionEvent::TxComplete { pre_idle_ticks, sniff_seq, window } => (
             Some(TxAttemptOutcome::Sent {
                 pre_idle_ticks: *pre_idle_ticks,
                 sniff_seq: *sniff_seq,
+                window: *window,
             }),
             TxEventCause::Completed,
         ),
@@ -318,6 +396,242 @@ mod collision_restart_tests {
 }
 
 #[cfg(test)]
+mod settle_then_close_tests {
+    use super::*;
+
+    const IN_WINDOW: u8 = (5_500 / PHY_TICK_US) as u8;
+    const PAST_THE_WINDOW: u8 = BACKWARD_ACCEPTANCE_LIMIT_US.div_ceil(PHY_TICK_US) as u8;
+    const BOUND_STEPS: usize = 45;
+
+    #[derive(Default)]
+    struct ScriptedWindow {
+        began: Option<u8>,
+        routed_at_step: Option<usize>,
+        posted_at_step: Option<usize>,
+        capture: Option<TransferOutcome>,
+        power_down_at_step: Option<usize>,
+        released: bool,
+        steps: usize,
+        closed_after_steps: Option<usize>,
+    }
+
+    impl ScriptedWindow {
+        fn receiving() -> Self {
+            Self { began: Some(IN_WINDOW), ..Self::default() }
+        }
+
+        fn capture_after(mut self, routed: usize, posted: usize, outcome: TransferOutcome) -> Self {
+            self.routed_at_step = Some(routed);
+            self.posted_at_step = Some(posted);
+            self.capture = Some(outcome);
+            self
+        }
+
+        fn routed(&self) -> bool {
+            self.routed_at_step.is_some_and(|at| self.steps >= at)
+        }
+    }
+
+    impl BackwardWindow for ScriptedWindow {
+        fn take_late_outcome(&mut self) -> Option<TransferOutcome> {
+            if self.posted_at_step.is_some_and(|at| self.steps >= at) {
+                self.capture.take()
+            } else {
+                None
+            }
+        }
+
+        fn reception_began(&self) -> Option<u8> {
+            if self.routed() || self.closed_after_steps.is_some() {
+                None
+            } else {
+                self.began
+            }
+        }
+
+        fn bus_failure_flags(&self) -> u32 {
+            if self.power_down_at_step.is_some_and(|at| self.steps >= at) {
+                BUS_FAILURE_POWER_DOWN
+            } else {
+                0
+            }
+        }
+
+        fn frame_active(&self) -> bool {
+            self.began.is_some() && !self.routed() && !self.released
+        }
+
+        fn wait_a_step(&mut self) -> bool {
+            if self.steps >= BOUND_STEPS {
+                return false;
+            }
+            self.steps += 1;
+            true
+        }
+
+        fn close(&mut self) -> WindowClose {
+            self.closed_after_steps = Some(self.steps);
+            if self.routed() {
+                WindowClose::NotOpen
+            } else {
+                WindowClose::Closed(self.began)
+            }
+        }
+    }
+
+    #[test]
+    fn a_capture_that_completes_after_the_wait_names_the_reception() {
+        let mut window =
+            ScriptedWindow::receiving().capture_after(3, 3, TransferOutcome::ForeignInWindow);
+        assert_eq!(
+            settle_then_close(&mut window),
+            GiveUp::Named(TransferOutcome::ForeignInWindow)
+        );
+        assert_eq!(
+            window.closed_after_steps, None,
+            "the window stayed open until the capture arrived, and the capture closed it"
+        );
+    }
+
+    #[test]
+    fn a_capture_posted_after_the_reception_was_cleared_is_still_read() {
+        let mut window =
+            ScriptedWindow::receiving().capture_after(3, 4, TransferOutcome::ForeignInWindow);
+        assert_eq!(
+            settle_then_close(&mut window),
+            GiveUp::Named(TransferOutcome::ForeignInWindow),
+            "the interrupt clears the reception a moment before it posts the capture"
+        );
+    }
+
+    #[derive(Default)]
+    struct ClosedByTheInterrupt {
+        posted_after_waits: usize,
+        waits: usize,
+        bound_spent: bool,
+        capture: Option<TransferOutcome>,
+    }
+
+    impl BackwardWindow for ClosedByTheInterrupt {
+        fn take_late_outcome(&mut self) -> Option<TransferOutcome> {
+            if self.waits >= self.posted_after_waits {
+                self.capture.take()
+            } else {
+                None
+            }
+        }
+        fn reception_began(&self) -> Option<u8> {
+            None
+        }
+        fn bus_failure_flags(&self) -> u32 {
+            0
+        }
+        fn frame_active(&self) -> bool {
+            false
+        }
+        fn wait_a_step(&mut self) -> bool {
+            self.waits += 1;
+            !self.bound_spent
+        }
+        fn close(&mut self) -> WindowClose {
+            WindowClose::NotOpen
+        }
+    }
+
+    #[test]
+    fn a_capture_routed_under_the_closing_hand_is_read_after_the_failed_close() {
+        for (posted_after_waits, bound_spent) in [(0, false), (1, false), (1, true)] {
+            let mut window = ClosedByTheInterrupt {
+                posted_after_waits,
+                bound_spent,
+                capture: Some(TransferOutcome::ForeignInWindow),
+                ..ClosedByTheInterrupt::default()
+            };
+            assert_eq!(
+                settle_then_close(&mut window),
+                GiveUp::Named(TransferOutcome::ForeignInWindow),
+                "posted after {posted_after_waits} waits, bound spent {bound_spent}: the \
+                 interrupt closes the window a moment before it posts the capture"
+            );
+            assert_eq!(window.waits, posted_after_waits);
+        }
+    }
+
+    #[test]
+    fn a_window_the_interrupt_closed_without_a_capture_is_silent_after_one_look() {
+        let mut window = ClosedByTheInterrupt::default();
+        assert_eq!(settle_then_close(&mut window), GiveUp::Silent);
+        assert_eq!(window.waits, 1, "one step for a capture on its way, and no more");
+    }
+
+    #[test]
+    fn a_window_nothing_began_in_closes_at_once_and_is_silent() {
+        let mut window = ScriptedWindow::default();
+        assert_eq!(settle_then_close(&mut window), GiveUp::Silent);
+        assert_eq!(window.closed_after_steps, Some(0), "silence costs no wait");
+        assert_eq!(window.steps, 0, "nor after the close we won ourselves");
+    }
+
+    #[test]
+    fn a_sniffed_forward_frame_is_foreign_activity_once() {
+        let fresh = RxCompletedEvent::new();
+        let reported = RxCompletedEvent { reported_to_session: true, ..RxCompletedEvent::new() };
+        for frame in [SniffedFrame::Forward16(0x1390), SniffedFrame::Forward24([0xFF, 0xFE, 0x3D])] {
+            assert!(sniffed_is_new_foreign_activity(&fresh, frame));
+            assert!(
+                !sniffed_is_new_foreign_activity(&reported, frame),
+                "the session that saw it in its window has already counted it"
+            );
+        }
+        for frame in [SniffedFrame::Backward8(0xFF), SniffedFrame::DecodeFailed] {
+            assert!(!sniffed_is_new_foreign_activity(&fresh, frame));
+        }
+    }
+
+    #[test]
+    fn a_reception_past_table_20_is_not_waited_for() {
+        let mut window = ScriptedWindow { began: Some(PAST_THE_WINDOW), ..ScriptedWindow::default() };
+        assert_eq!(
+            settle_then_close(&mut window),
+            GiveUp::Incomplete { rx_pre_idle: PAST_THE_WINDOW, outcome: TransferOutcome::NoAnswer }
+        );
+        assert_eq!(window.closed_after_steps, Some(0));
+    }
+
+    #[test]
+    fn a_bus_power_down_ends_the_wait_as_bus_busy() {
+        let mut window = ScriptedWindow::receiving();
+        window.power_down_at_step = Some(20);
+        assert_eq!(
+            settle_then_close(&mut window),
+            GiveUp::Incomplete { rx_pre_idle: IN_WINDOW, outcome: TransferOutcome::BusBusy }
+        );
+        assert_eq!(
+            window.closed_after_steps,
+            Some(21),
+            "one look after the power down, then the close"
+        );
+    }
+
+    #[test]
+    fn a_reception_that_gives_no_capture_within_the_bound_is_the_incomplete_one() {
+        for released in [false, true] {
+            let mut window = ScriptedWindow::receiving();
+            window.released = released;
+            assert_eq!(
+                settle_then_close(&mut window),
+                GiveUp::Incomplete {
+                    rx_pre_idle: IN_WINDOW,
+                    outcome: TransferOutcome::CorruptedInWindow
+                },
+                "released {released}"
+            );
+            assert_eq!(window.closed_after_steps, Some(BOUND_STEPS), "released {released}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod backward_window_tests {
     use super::*;
     use dali2rust_dali_phy::LINE_HELD_TICKS;
@@ -330,6 +644,7 @@ mod backward_window_tests {
     }
 
     const FIRST_ACCEPTED_TICK: u8 = BACKWARD_ACCEPTANCE_FLOOR_US.div_ceil(PHY_TICK_US) as u8;
+    const PAST_THE_WINDOW_TICK: u8 = BACKWARD_ACCEPTANCE_LIMIT_US.div_ceil(PHY_TICK_US) as u8;
 
     #[test]
     fn every_answer_a_conforming_gear_can_send_is_accepted() {
@@ -383,6 +698,46 @@ mod backward_window_tests {
             Some(TransferOutcome::BusBusy),
             "still active at 45 ms: bus power down, not an answer"
         );
+    }
+
+    #[test]
+    fn a_reception_is_waited_for_only_while_it_began_in_time_on_a_powered_bus() {
+        let in_window = Some(FIRST_ACCEPTED_TICK);
+        assert_eq!(settle_step(in_window, 0, false), SettleStep::Wait);
+        assert_eq!(
+            settle_step(Some(0), 0, false),
+            SettleStep::Wait,
+            "an early start is still a reception in our window, named by its capture"
+        );
+        assert_eq!(
+            settle_step(None, 0, false),
+            SettleStep::Done,
+            "nothing began in the window, so nothing is waited for"
+        );
+        assert_eq!(
+            settle_step(Some(PAST_THE_WINDOW_TICK), 0, false),
+            SettleStep::Done,
+            "a reception that began past Table 20 is later traffic"
+        );
+        assert_eq!(
+            settle_step(in_window, BUS_FAILURE_POWER_DOWN, false),
+            SettleStep::Done,
+            "a bus power down is not a frame"
+        );
+    }
+
+    #[test]
+    fn a_wait_that_just_ended_is_owed_one_more_look() {
+        assert_eq!(
+            settle_step(None, 0, true),
+            SettleStep::LastLook,
+            "the interrupt clears the reception before it posts the capture"
+        );
+        assert_eq!(
+            settle_step(Some(FIRST_ACCEPTED_TICK), BUS_FAILURE_POWER_DOWN, true),
+            SettleStep::LastLook
+        );
+        assert_eq!(settle_step(Some(FIRST_ACCEPTED_TICK), 0, true), SettleStep::Wait);
     }
 
     #[test]
@@ -554,12 +909,17 @@ mod outcome_classification_tests {
     }
 
     #[test]
-    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks_and_capture_count() {
+    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks_capture_count_and_window() {
         for (ticks, sniff_seq) in [(0u16, 0u32), (1, 1), (40, 7), (u16::MAX, u32::MAX)] {
+            let window = WindowId(sniff_seq);
             assert_eq!(
-                classified_tx(SessionEvent::TxComplete { pre_idle_ticks: ticks, sniff_seq }),
+                classified_tx(SessionEvent::TxComplete {
+                    pre_idle_ticks: ticks,
+                    sniff_seq,
+                    window
+                }),
                 (
-                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks, sniff_seq }),
+                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks, sniff_seq, window }),
                     TxEventCause::Completed
                 )
             );

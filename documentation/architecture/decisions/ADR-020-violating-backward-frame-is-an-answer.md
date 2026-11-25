@@ -27,7 +27,9 @@ gear must not read as absent), and a broadcast boolean probe of the whole segmen
   query was unanswered (`NoAnswer`). A capture shorter than a forward frame that the
   codec cannot read — an unsupported length, a failed decode, an undecodable backward
   frame — is `CorruptedInWindow`, which means exactly §8.2.5's case. A reception that
-  began and never completed is judged by Table 20: inside the window it is
+  began in the window and is still on the wire when the task's wait ends is waited out
+  and classified by its capture ([08](../08-dali-phy-and-transport.md) §Receive). One
+  that gives no capture is judged by Table 20: inside the window it is
   `CorruptedInWindow`, after it `NoAnswer`.
 - **It is terminal, and it is not a collision.** §9.1.3 applies collision detection
   during the transmission of a forward frame; in the backward window we are not

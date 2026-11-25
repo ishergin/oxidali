@@ -9,7 +9,7 @@ use crate::backward_window::{
     answer_gate, AnswerGate, ANSWER_ARM_MAX_IDLE_TICKS, ANSWER_ARM_TARGET_IDLE_TICKS,
     BACKWARD_DATA_BITS, BACKWARD_RECEIVE_MIN_TICKS, RX_START_STAMP_LAG_TICKS,
 };
-use crate::command::{AtomicCommandCell, ExchangeId, TxGates};
+use crate::command::{AtomicCommandCell, ExchangeId, TxGates, WindowClose, WindowId};
 use crate::cpu::{raw_core_id, ISR_CORE_ID};
 use crate::frame_length::{frame_length_class, is_forward24_length, FrameLengthClass};
 use crate::fsm::{
@@ -30,6 +30,7 @@ pub enum SessionEvent {
     TxComplete {
         pre_idle_ticks: u16,
         sniff_seq: u32,
+        window: WindowId,
     },
     TxCollision,
     TxRejected,
@@ -230,7 +231,9 @@ pub struct PhyIsrCore {
     stale_session_events: AtomicU32,
     idle_ticks: AtomicU32,
     active_expects_backward: AtomicBool,
-    session_exchange: AtomicU32,
+    session_epoch: AtomicU32,
+    session_window: AtomicU32,
+    window_seq: AtomicU32,
     session_rx_started: AtomicU32,
     bus_failure_flags: AtomicU32,
     bus_power_down_entries: AtomicU32,
@@ -380,7 +383,9 @@ impl PhyIsrCore {
             stale_session_events: AtomicU32::new(0),
             idle_ticks: AtomicU32::new(0),
             active_expects_backward: AtomicBool::new(false),
-            session_exchange: AtomicU32::new(0),
+            session_epoch: AtomicU32::new(0),
+            session_window: AtomicU32::new(0),
+            window_seq: AtomicU32::new(0),
             session_rx_started: AtomicU32::new(0),
             bus_failure_flags: AtomicU32::new(0),
             bus_power_down_entries: AtomicU32::new(0),
@@ -544,7 +549,7 @@ impl PhyIsrCore {
             TryArmAnswer::Armed | TryArmAnswer::Held => return,
             TryArmAnswer::NotStaged => {}
         }
-        if self.session_exchange.load(Ordering::Acquire) != 0 {
+        if self.session_window.load(Ordering::Acquire) != 0 {
             return;
         }
         if phy.bus_state() != BusState::Idle || phy.line_debouncing() {
@@ -575,8 +580,8 @@ impl PhyIsrCore {
         if self.active_epoch.load(Ordering::Acquire) == raw {
             self.active_expects_backward.store(false, Ordering::Release);
         }
-        if self.session_exchange.load(Ordering::Acquire) == raw {
-            self.session_exchange.store(0, Ordering::Release);
+        if self.session_epoch.load(Ordering::Acquire) == raw {
+            self.session_window.store(0, Ordering::Release);
             self.session_rx_started.store(0, Ordering::Release);
         }
         let _ = self
@@ -822,7 +827,7 @@ impl PhyIsrCore {
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn note_session_rx_started(&self, phy: &DaliBitbangPhy<RegisterGpio>) {
-        if self.session_exchange.load(Ordering::Acquire) != 0
+        if self.session_window.load(Ordering::Acquire) != 0
             && phy.rx_state() == RxState::Receiving
         {
             self.session_rx_started
@@ -876,7 +881,7 @@ impl PhyIsrCore {
             // SAFETY: called from `tick`, the sole owner of `pending`.
             unsafe { self.clear_pending() };
             self.active_expects_backward.store(false, Ordering::Release);
-            self.session_exchange.store(0, Ordering::Release);
+            self.session_window.store(0, Ordering::Release);
             self.session_rx_started.store(0, Ordering::Release);
             return;
         }
@@ -909,13 +914,19 @@ impl PhyIsrCore {
         // SAFETY: called from `tick`, the sole owner of `pending`.
         unsafe { self.clear_pending() };
         let expects = self.active_expects_backward.swap(false, Ordering::AcqRel);
+        let mut window = WindowId::NONE;
         if expects {
-            self.session_exchange
+            window = WindowId(self.window_seq.load(Ordering::Relaxed).wrapping_add(1).max(1));
+            self.window_seq.store(window.0, Ordering::Release);
+            self.session_rx_started.store(0, Ordering::Release);
+            self.session_epoch
                 .store(self.active_epoch.load(Ordering::Acquire), Ordering::Release);
+            self.session_window.store(window.0, Ordering::Release);
         }
         self.push_session_event(SessionEvent::TxComplete {
             pre_idle_ticks: phy.tx_pre_idle_ticks(),
             sniff_seq: self.table_path.sniff_seq.load(Ordering::Relaxed),
+            window,
         });
     }
 
@@ -924,7 +935,7 @@ impl PhyIsrCore {
         // SAFETY: called from `tick`, the sole owner of `pending`.
         unsafe { self.clear_pending() };
         self.active_expects_backward.store(false, Ordering::Release);
-        self.session_exchange.store(0, Ordering::Release);
+        self.session_window.store(0, Ordering::Release);
         // SAFETY: called from `tick`, the sole owner of `pending`.
         unsafe { self.abort_batch_tail() };
         self.push_session_event(SessionEvent::TxCollision);
@@ -986,9 +997,10 @@ impl PhyIsrCore {
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     unsafe fn route_backward_capture(&self, ev: RxCompletedEvent) {
-        let exchange = self.session_exchange.swap(0, Ordering::AcqRel);
+        let window = self.session_window.swap(0, Ordering::AcqRel);
         self.session_rx_started.store(0, Ordering::Release);
-        if exchange != 0 {
+        if window != 0 {
+            let exchange = self.session_epoch.load(Ordering::Acquire);
             self.push_session_event_for(ExchangeId(exchange), SessionEvent::RxComplete(ev));
             return;
         }
@@ -998,14 +1010,15 @@ impl PhyIsrCore {
 
     // IEC 62386-102 §11.7.14
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
-    unsafe fn route_forward_capture(&self, ev: RxCompletedEvent) {
+    unsafe fn route_forward_capture(&self, mut ev: RxCompletedEvent) {
         // SAFETY: called from `tick`, which owns `pending` exclusively.
         unsafe { self.abort_batch_tail() };
-        let exchange = self.session_exchange.swap(0, Ordering::AcqRel);
-        self.session_rx_started.store(0, Ordering::Release);
-        if exchange != 0 {
+        let window = self.session_window.swap(0, Ordering::AcqRel);
+        let began_in_a_window = self.session_rx_started.swap(0, Ordering::AcqRel) != 0;
+        ev.reported_to_session = window != 0 || began_in_a_window;
+        if window != 0 {
             self.push_session_event_for(
-                ExchangeId(exchange),
+                ExchangeId(self.session_epoch.load(Ordering::Acquire)),
                 SessionEvent::ForeignForward {
                     pre_idle_ticks: ev.pre_idle_ticks,
                     sample_count: ev.sample_count,
@@ -1320,24 +1333,35 @@ impl PhyIsrCore {
     }
 
     pub fn session_expects_backward(&self) -> bool {
-        self.session_exchange.load(Ordering::Acquire) != 0
+        self.session_window.load(Ordering::Acquire) != 0
     }
 
-    pub fn close_backward_window(&self) -> Option<u8> {
-        let current = self.exchange_epoch.load(Ordering::Acquire);
-        self.session_exchange
-            .compare_exchange(current, 0, Ordering::AcqRel, Ordering::Acquire)
-            .ok()?;
-        Self::unpack_rx_started(self.session_rx_started.swap(0, Ordering::AcqRel))
+    pub fn window_is_open(&self, window: WindowId) -> bool {
+        window != WindowId::NONE && self.session_window.load(Ordering::Acquire) == window.0
     }
 
-    pub fn take_session_rx_started(&self) -> Option<u8> {
-        let current = self.exchange_epoch.load(Ordering::Acquire);
-        if self.session_exchange.load(Ordering::Acquire) != current {
+    pub fn close_backward_window(&self, window: WindowId) -> WindowClose {
+        let ours = window != WindowId::NONE
+            && self
+                .session_window
+                .compare_exchange(window.0, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok();
+        if !ours {
+            return WindowClose::NotOpen;
+        }
+        let reading = self.session_rx_started.load(Ordering::Acquire);
+        if self.window_seq.load(Ordering::Acquire) != window.0 {
+            return WindowClose::Closed(None);
+        }
+        WindowClose::Closed(Self::unpack_rx_started(reading))
+    }
+
+    pub fn session_rx_started(&self, window: WindowId) -> Option<u8> {
+        let reading = self.session_rx_started.load(Ordering::Acquire);
+        if !self.window_is_open(window) {
             return None;
         }
-        let packed = self.session_rx_started.swap(0, Ordering::AcqRel);
-        Self::unpack_rx_started(packed)
+        Self::unpack_rx_started(reading)
     }
 
     fn unpack_rx_started(packed: u32) -> Option<u8> {
@@ -1727,12 +1751,14 @@ mod tests {
         assert!(core.queue_tx(&data, 16, false, TxGates::settle(2)));
 
         let mut sent = 0usize;
+        let mut opened = WindowId::NONE;
         for _ in 0..2048 {
             // SAFETY: single-threaded test standing in for the ISR context.
             unsafe { core.tick() };
             while let Some(event) = core.pop_session_event() {
-                if matches!(event, SessionEvent::TxComplete { .. }) {
+                if let SessionEvent::TxComplete { window, .. } = event {
                     sent += 1;
+                    opened = window;
                 }
             }
         }
@@ -1740,9 +1766,9 @@ mod tests {
             sent, 1,
             "the second frame must wait behind the backward window of the first"
         );
-        assert!(core.session_expects_backward(), "the window is still open");
+        assert!(core.window_is_open(opened), "the window is still open");
 
-        let _ = core.close_backward_window();
+        let _ = core.close_backward_window(opened);
         for _ in 0..2048 {
             // SAFETY: see above.
             unsafe { core.tick() };
@@ -1810,8 +1836,13 @@ mod tests {
             core.session_expects_backward(),
             "a query must leave the window open for its answer"
         );
+        let Some(SessionEvent::TxComplete { window, .. }) = core.pop_session_event() else {
+            panic!("the sent query reports the window it opened");
+        };
 
-        let _ = core.close_backward_window();
+        assert_eq!(core.close_backward_window(WindowId::NONE), WindowClose::NotOpen);
+        assert!(core.window_is_open(window), "no window is not a window to close");
+        let _ = core.close_backward_window(window);
         assert!(!core.session_expects_backward());
     }
 
@@ -2167,7 +2198,7 @@ mod tests {
         );
     }
 
-    unsafe fn send_query(core: &PhyIsrCore) {
+    unsafe fn send_query(core: &PhyIsrCore) -> WindowId {
         let mut data = [0u8; HalfBitBuffer::DATA_LEN];
         data[0] = 0b0101_0101;
         data[1] = 0b0101_0101;
@@ -2183,10 +2214,11 @@ mod tests {
             core.session_expects_backward(),
             "the query must leave its window open"
         );
-        assert!(matches!(
-            core.pop_session_event(),
-            Some(SessionEvent::TxComplete { .. })
-        ));
+        let Some(SessionEvent::TxComplete { window, .. }) = core.pop_session_event() else {
+            panic!("the sent query reports the window it opened");
+        };
+        assert!(core.window_is_open(window), "the reported window is the open one");
+        window
     }
 
     #[test]
@@ -2198,23 +2230,18 @@ mod tests {
             // SAFETY: `input` outlives the core; all writes use `input_ptr`.
             let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
             // SAFETY: single-threaded test standing in for the ISR context.
-            unsafe { send_query(&core) };
+            let window = unsafe { send_query(&core) };
             assert_eq!(
-                core.take_session_rx_started(),
+                core.session_rx_started(window),
                 None,
                 "an open window with nothing on the wire has seen no reception"
             );
             drive(&core, input_ptr, 0b0010, idle_ticks);
             drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
-            let reported = core
-                .take_session_rx_started()
-                .expect("a reception began inside the open window");
-            assert_eq!(
-                core.take_session_rx_started(),
-                None,
-                "the reading is taken, not latched"
-            );
-            reported
+            let WindowClose::Closed(Some(began)) = core.close_backward_window(window) else {
+                panic!("a reception began inside the open window");
+            };
+            began
         }
 
         let short = settling_after_idle(20);
@@ -2229,6 +2256,190 @@ mod tests {
             u8::MAX,
             "saturated means longer than any Table 22 window"
         );
+    }
+
+    #[test]
+    fn closing_an_answered_window_late_leaves_the_next_window_of_the_exchange_alone() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let first = unsafe { send_query(&core) };
+        receive_foreign_frame(&core, input_ptr, &EIGHT_BITS);
+        assert!(matches!(core.pop_session_event(), Some(SessionEvent::RxComplete(_))));
+        // SAFETY: as above.
+        let second = unsafe { send_query(&core) };
+        assert_ne!(first, second, "one exchange, two windows, two ids");
+        drive(&core, input_ptr, 0b0010, 40);
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+
+        assert_eq!(
+            core.close_backward_window(first),
+            WindowClose::NotOpen,
+            "the first window was answered; the reception on the wire is the second's"
+        );
+        assert_eq!(core.session_rx_started(first), None);
+        assert!(
+            core.window_is_open(second),
+            "the late close of the first window must not shut the second"
+        );
+        assert!(
+            core.session_rx_started(second).is_some(),
+            "nor take the reading that belongs to it"
+        );
+    }
+
+    #[test]
+    fn no_window_is_never_open_and_closing_it_reports_nothing() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let input = 0b0010u32;
+        let core = test_core(&mut set, &mut clr, &input);
+        core.session_rx_started
+            .store(1 + u32::from(LEFT_BEHIND_TICKS), Ordering::Release);
+
+        assert!(!core.session_expects_backward());
+        assert!(
+            !core.window_is_open(WindowId::NONE),
+            "a closed session is not an open window without an id"
+        );
+        assert_eq!(core.session_rx_started(WindowId::NONE), None);
+        assert_eq!(
+            core.close_backward_window(WindowId::NONE),
+            WindowClose::NotOpen,
+            "closing no window must not hand out a reading that was left behind"
+        );
+    }
+
+    #[test]
+    fn a_cancel_closes_the_window_of_its_own_exchange_only() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let input = 0b0010u32;
+        let core = test_core(&mut set, &mut clr, &input);
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let window = unsafe { send_query(&core) };
+        let exchange = core.current_exchange();
+
+        core.cancel_exchange(ExchangeId(exchange.0.wrapping_add(1)));
+        // SAFETY: as above.
+        unsafe { core.tick() };
+        assert!(
+            core.window_is_open(window),
+            "a cancel of another exchange leaves this window open"
+        );
+
+        core.cancel_exchange(exchange);
+        // SAFETY: as above.
+        unsafe { core.tick() };
+        assert!(!core.window_is_open(window), "its own cancel closes it");
+        assert_eq!(core.close_backward_window(window), WindowClose::NotOpen);
+    }
+
+    const LEFT_BEHIND_TICKS: u8 = 63;
+
+    #[test]
+    fn opening_a_window_drops_a_reading_the_previous_window_left_behind() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        core.session_rx_started
+            .store(1 + u32::from(LEFT_BEHIND_TICKS), Ordering::Release);
+
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let window = unsafe { send_query(&core) };
+
+        assert_eq!(
+            core.session_rx_started(window),
+            None,
+            "a reading stored after the last window closed is not this window's reception"
+        );
+        assert_eq!(
+            core.close_backward_window(window),
+            WindowClose::Closed(None),
+            "a silent query must not report a reception that began before it was sent"
+        );
+    }
+
+    #[test]
+    fn a_reception_in_progress_is_read_without_taking_it_from_the_close() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let window = unsafe { send_query(&core) };
+        drive(&core, input_ptr, 0b0010, 40);
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+
+        let began = core
+            .session_rx_started(window)
+            .expect("a reception began inside the open window");
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+        assert_eq!(
+            core.session_rx_started(window),
+            Some(began),
+            "the reading names when the reception began, however long it has run"
+        );
+        assert_eq!(
+            core.close_backward_window(window),
+            WindowClose::Closed(Some(began)),
+            "the close still reports the reception the wait looked at"
+        );
+        assert_eq!(core.session_rx_started(window), None, "a closed window has no reception");
+        assert_eq!(
+            core.close_backward_window(window),
+            WindowClose::NotOpen,
+            "and closes only once"
+        );
+    }
+
+    #[test]
+    fn a_forward_length_capture_with_no_window_open_is_the_sniffers_alone() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+
+        let capture = core
+            .pop_rx()
+            .expect("a forward-length capture goes to the sniffer");
+        assert!(!capture.reported_to_session, "no session was waiting");
+    }
+
+    #[test]
+    fn a_forward_frame_the_task_closed_its_window_on_is_still_the_sessions_to_count() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let window = unsafe { send_query(&core) };
+        drive(&core, input_ptr, 0b0010, 40);
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+        assert!(
+            matches!(core.close_backward_window(window), WindowClose::Closed(Some(_))),
+            "the task gives up while the frame is still on the wire"
+        );
+
+        drive(&core, input_ptr, 0b0010, TX_HALF_BIT_TICKS);
+        drive_bits(&core, input_ptr, &SIXTEEN_BITS);
+        drive(&core, input_ptr, 0b0010, 64);
+
+        let capture = core.pop_rx().expect("the finished frame goes to the sniffer");
+        assert!(capture.sample_count >= FORWARD_LENGTH_MIN_SAMPLES);
+        assert!(
+            capture.reported_to_session,
+            "the session saw this reception begin and counted it when it closed"
+        );
+        assert!(core.pop_session_event().is_none(), "the closed window gets no marker");
     }
 
     #[test]
@@ -2250,6 +2461,10 @@ mod tests {
             capture.sample_count >= FORWARD_LENGTH_MIN_SAMPLES,
             "{} samples is not a forward frame",
             capture.sample_count
+        );
+        assert!(
+            capture.reported_to_session,
+            "the sniffer must be able to tell this capture already reached a session"
         );
         assert!(
             matches!(

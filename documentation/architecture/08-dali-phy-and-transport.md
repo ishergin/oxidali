@@ -140,6 +140,16 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
 - The backward window closes at Table 20's 13,4 ms, judged from the interrupt's own
   pre-idle reading; a later frame is foreign. The task's polling deadline is longer and
   separate.
+- A reception that began in the window and is still a frame on the wire when the task's
+  wait ends is waited out before the window is closed, for at most the span that tells a
+  frame from a bus power down. Its capture reaches the session and is named by its
+  length like any other, so a forward-length one is a foreign frame; it never yields a
+  value, because no conforming backward frame is still on the wire that late.
+  `backward_resolved_late` counts the captures that arrived after the wait, and a
+  reception that gave none is the incomplete one.
+- Every backward window has its own id. The interrupt names it in the frame-sent event,
+  and the task closes and reads only that window, so a late close cannot reach the next
+  window of the same batch, whose frames share one exchange.
 - A capture of 24-bit length (`FORWARD24_LENGTH_MIN_SAMPLES`) is held in the interrupt
   and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
   decoded. The other lengths are decoded by the drain.
