@@ -84,6 +84,7 @@ pub struct RxCompletedEvent {
     pub timing_degraded: bool,
     pub sniff_seq: u32,
     pub isr_decode: IsrDecode,
+    pub reported_to_session: bool,
 }
 
 impl Clone for RxCompletedEvent {
@@ -99,6 +100,7 @@ impl Clone for RxCompletedEvent {
             timing_degraded: self.timing_degraded,
             sniff_seq: self.sniff_seq,
             isr_decode: self.isr_decode,
+            reported_to_session: self.reported_to_session,
         }
     }
 }
@@ -116,6 +118,7 @@ impl RxCompletedEvent {
             timing_degraded: false,
             sniff_seq: 0,
             isr_decode: IsrDecode::NotDecoded,
+            reported_to_session: false,
         }
     }
 }

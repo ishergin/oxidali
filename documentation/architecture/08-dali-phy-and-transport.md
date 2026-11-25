@@ -147,6 +147,9 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   value, because no conforming backward frame is still on the wire that late.
   `backward_resolved_late` counts the captures that arrived after the wait, and a
   reception that gave none is the incomplete one.
+- Every backward window has its own id. The interrupt names it in the frame-sent event,
+  and the task closes and reads only that window, so a late close cannot reach the next
+  window of the same batch, whose frames share one exchange.
 - A capture of 24-bit length (`FORWARD24_LENGTH_MIN_SAMPLES`) is held in the interrupt
   and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
   decoded. The other lengths are decoded by the drain.

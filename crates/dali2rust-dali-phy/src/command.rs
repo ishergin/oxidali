@@ -5,6 +5,19 @@ use crate::halfbits::HalfBitBuffer;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExchangeId(pub u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowId(pub u32);
+
+impl WindowId {
+    pub const NONE: Self = Self(0);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowClose {
+    Closed(Option<u8>),
+    NotOpen,
+}
+
 const CMD_IDLE: u8 = 0;
 const CMD_START_TX: u8 = 1;
 

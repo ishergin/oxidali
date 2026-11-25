@@ -26,8 +26,8 @@ pub mod phy_interrupt;
 use dali2rust_dali_codec::rx_decode::{RxDecode, SniffedFrame};
 use dali2rust_dali_phy::isr::BUS_FAILURE_POWER_DOWN;
 use dali2rust_dali_phy::{
-    restart_gate_for, RxCompletedEvent, SessionEvent, BUS_POWER_DOWN_TICKS, LINE_HELD_TICKS,
-    PHY_TICK_US,
+    restart_gate_for, RxCompletedEvent, SessionEvent, WindowClose, WindowId,
+    BUS_POWER_DOWN_TICKS, LINE_HELD_TICKS, PHY_TICK_US,
 };
 use dali2rust_platform::dali::TransferOutcome;
 
@@ -164,7 +164,7 @@ pub trait BackwardWindow {
     fn bus_failure_flags(&self) -> u32;
     fn frame_active(&self) -> bool;
     fn wait_a_step(&mut self) -> bool;
-    fn close(&mut self) -> Option<u8>;
+    fn close(&mut self) -> WindowClose;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,8 +210,10 @@ pub fn settle_then_close(window: &mut impl BackwardWindow) -> GiveUp {
 
 fn close_settled(window: &mut impl BackwardWindow) -> GiveUp {
     let line = incomplete_reception_verdict(window.bus_failure_flags(), window.frame_active());
-    let Some(rx_pre_idle) = window.close() else {
-        return window.take_late_outcome().map_or(GiveUp::Silent, GiveUp::Named);
+    let rx_pre_idle = match window.close() {
+        WindowClose::Closed(Some(rx_pre_idle)) => rx_pre_idle,
+        WindowClose::Closed(None) => return GiveUp::Silent,
+        WindowClose::NotOpen => return left_by_the_interrupt(window),
     };
     let outcome = match incomplete_reception_outcome(rx_pre_idle) {
         TransferOutcome::CorruptedInWindow => line.unwrap_or(TransferOutcome::CorruptedInWindow),
@@ -220,9 +222,22 @@ fn close_settled(window: &mut impl BackwardWindow) -> GiveUp {
     GiveUp::Incomplete { rx_pre_idle, outcome }
 }
 
+fn left_by_the_interrupt(window: &mut impl BackwardWindow) -> GiveUp {
+    if let Some(outcome) = window.take_late_outcome() {
+        return GiveUp::Named(outcome);
+    }
+    window.wait_a_step();
+    window.take_late_outcome().map_or(GiveUp::Silent, GiveUp::Named)
+}
+
+pub fn sniffed_is_new_foreign_activity(ev: &RxCompletedEvent, frame: SniffedFrame) -> bool {
+    !ev.reported_to_session
+        && matches!(frame, SniffedFrame::Forward16(_) | SniffedFrame::Forward24(_))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxAttemptOutcome {
-    Sent { pre_idle_ticks: u16, sniff_seq: u32 },
+    Sent { pre_idle_ticks: u16, sniff_seq: u32, window: WindowId },
     Collision,
     BusBusy,
 }
@@ -238,10 +253,11 @@ pub enum TxEventCause {
 
 pub fn classify_tx_event(event: &SessionEvent) -> (Option<TxAttemptOutcome>, TxEventCause) {
     match event {
-        SessionEvent::TxComplete { pre_idle_ticks, sniff_seq } => (
+        SessionEvent::TxComplete { pre_idle_ticks, sniff_seq, window } => (
             Some(TxAttemptOutcome::Sent {
                 pre_idle_ticks: *pre_idle_ticks,
                 sniff_seq: *sniff_seq,
+                window: *window,
             }),
             TxEventCause::Completed,
         ),
@@ -453,12 +469,12 @@ mod settle_then_close_tests {
             true
         }
 
-        fn close(&mut self) -> Option<u8> {
+        fn close(&mut self) -> WindowClose {
             self.closed_after_steps = Some(self.steps);
             if self.routed() {
-                None
+                WindowClose::NotOpen
             } else {
-                self.began
+                WindowClose::Closed(self.began)
             }
         }
     }
@@ -488,26 +504,18 @@ mod settle_then_close_tests {
         );
     }
 
-    #[test]
-    fn a_capture_routed_under_the_closing_hand_is_read_after_the_failed_close() {
-        let mut window = LateAfterClose::default();
-        assert_eq!(
-            settle_then_close(&mut window),
-            GiveUp::Named(TransferOutcome::ForeignInWindow)
-        );
-    }
-
     #[derive(Default)]
-    struct LateAfterClose {
-        closed: bool,
-        taken: bool,
+    struct ClosedByTheInterrupt {
+        posted_after_waits: usize,
+        waits: usize,
+        bound_spent: bool,
+        capture: Option<TransferOutcome>,
     }
 
-    impl BackwardWindow for LateAfterClose {
+    impl BackwardWindow for ClosedByTheInterrupt {
         fn take_late_outcome(&mut self) -> Option<TransferOutcome> {
-            if self.closed && !self.taken {
-                self.taken = true;
-                Some(TransferOutcome::ForeignInWindow)
+            if self.waits >= self.posted_after_waits {
+                self.capture.take()
             } else {
                 None
             }
@@ -522,12 +530,38 @@ mod settle_then_close_tests {
             false
         }
         fn wait_a_step(&mut self) -> bool {
-            true
+            self.waits += 1;
+            !self.bound_spent
         }
-        fn close(&mut self) -> Option<u8> {
-            self.closed = true;
-            None
+        fn close(&mut self) -> WindowClose {
+            WindowClose::NotOpen
         }
+    }
+
+    #[test]
+    fn a_capture_routed_under_the_closing_hand_is_read_after_the_failed_close() {
+        for (posted_after_waits, bound_spent) in [(0, false), (1, false), (1, true)] {
+            let mut window = ClosedByTheInterrupt {
+                posted_after_waits,
+                bound_spent,
+                capture: Some(TransferOutcome::ForeignInWindow),
+                ..ClosedByTheInterrupt::default()
+            };
+            assert_eq!(
+                settle_then_close(&mut window),
+                GiveUp::Named(TransferOutcome::ForeignInWindow),
+                "posted after {posted_after_waits} waits, bound spent {bound_spent}: the \
+                 interrupt closes the window a moment before it posts the capture"
+            );
+            assert_eq!(window.waits, posted_after_waits);
+        }
+    }
+
+    #[test]
+    fn a_window_the_interrupt_closed_without_a_capture_is_silent_after_one_look() {
+        let mut window = ClosedByTheInterrupt::default();
+        assert_eq!(settle_then_close(&mut window), GiveUp::Silent);
+        assert_eq!(window.waits, 1, "one step for a capture on its way, and no more");
     }
 
     #[test]
@@ -535,6 +569,23 @@ mod settle_then_close_tests {
         let mut window = ScriptedWindow::default();
         assert_eq!(settle_then_close(&mut window), GiveUp::Silent);
         assert_eq!(window.closed_after_steps, Some(0), "silence costs no wait");
+        assert_eq!(window.steps, 0, "nor after the close we won ourselves");
+    }
+
+    #[test]
+    fn a_sniffed_forward_frame_is_foreign_activity_once() {
+        let fresh = RxCompletedEvent::new();
+        let reported = RxCompletedEvent { reported_to_session: true, ..RxCompletedEvent::new() };
+        for frame in [SniffedFrame::Forward16(0x1390), SniffedFrame::Forward24([0xFF, 0xFE, 0x3D])] {
+            assert!(sniffed_is_new_foreign_activity(&fresh, frame));
+            assert!(
+                !sniffed_is_new_foreign_activity(&reported, frame),
+                "the session that saw it in its window has already counted it"
+            );
+        }
+        for frame in [SniffedFrame::Backward8(0xFF), SniffedFrame::DecodeFailed] {
+            assert!(!sniffed_is_new_foreign_activity(&fresh, frame));
+        }
     }
 
     #[test]
@@ -858,12 +909,17 @@ mod outcome_classification_tests {
     }
 
     #[test]
-    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks_and_capture_count() {
+    fn a_completed_transmission_is_sent_and_keeps_its_settle_ticks_capture_count_and_window() {
         for (ticks, sniff_seq) in [(0u16, 0u32), (1, 1), (40, 7), (u16::MAX, u32::MAX)] {
+            let window = WindowId(sniff_seq);
             assert_eq!(
-                classified_tx(SessionEvent::TxComplete { pre_idle_ticks: ticks, sniff_seq }),
+                classified_tx(SessionEvent::TxComplete {
+                    pre_idle_ticks: ticks,
+                    sniff_seq,
+                    window
+                }),
                 (
-                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks, sniff_seq }),
+                    Some(TxAttemptOutcome::Sent { pre_idle_ticks: ticks, sniff_seq, window }),
                     TxEventCause::Completed
                 )
             );
