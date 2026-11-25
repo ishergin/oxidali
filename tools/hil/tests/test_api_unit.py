@@ -7,6 +7,7 @@ import requests
 
 import hil.api
 import test_target_state
+from hil import prod_state
 from hil.config import load as load_config
 
 
@@ -325,3 +326,55 @@ def test_an_exhausted_attribute_read_names_every_refusal(monkeypatch):
     assert client.retries == {"attr_read": 1, "attr_read_exhausted": 1}
     event = client.retry_events[0]
     assert event.count("read_contended") == 2, event
+
+
+def test_a_priming_read_that_was_refused_says_what_refused_it(monkeypatch):
+    client = _scripted(monkeypatch, {ATTR_READS: [ATTR_ACCEPTED],
+                                     ATTR_POLL: [ATTR_CONTENDED]})
+    said = []
+
+    prod_state._prime(client, [9], said.append)
+
+    assert len(said) == 1, said
+    assert "read_contended" in said[0] and "3 attempt" in said[0], said[0]
+    assert "did not answer" not in said[0], (
+        "a refused operation says nothing about the gear, which may have answered "
+        "every frame that reached it: %s" % said[0]
+    )
+
+
+def test_a_table_read_that_was_refused_says_what_refused_it(monkeypatch):
+    client = _scripted(monkeypatch, {ATTR_READS: [ATTR_ACCEPTED],
+                                     ATTR_POLL: [ATTR_CONTENDED]})
+    said = []
+    snap = {"devices": {"9": {"groups": 1, "scenes": [None] * 16}}}
+
+    prod_state._restore_gear_tables(client, snap, said.append, _EveryTableChanged())
+
+    assert len(said) == 1, said
+    assert "read_contended" in said[0] and "did not answer" not in said[0], said[0]
+
+
+class _EveryTableChanged:
+    @staticmethod
+    def changed(key, field):
+        return True
+
+
+def test_a_refusal_without_a_named_cause_falls_back_to_the_error_itself():
+    exc = hil.api.ApiError(503, {"error": "ingress_full"}, "attribute-reads")
+
+    assert hil.api.read_refusal(exc) == str(exc)
+
+
+def test_refusals_that_differ_are_named_in_their_order(monkeypatch):
+    silent = (200, {"operation_id": ATTR_OP, "status": "failed",
+                    "error": {"code": "operation_failed", "message": "no_answer"}})
+    client = _scripted(monkeypatch, {ATTR_READS: [ATTR_ACCEPTED],
+                                     ATTR_POLL: [ATTR_CONTENDED, silent]})
+
+    with pytest.raises(hil.api.ApiError) as raised:
+        client.attr_read_checked(9, groups="runtime_status", retries=1)
+
+    named = hil.api.read_refusal(raised.value)
+    assert named.index("read_contended") < named.index("no_answer"), named
