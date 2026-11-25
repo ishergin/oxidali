@@ -149,7 +149,11 @@ stacks and memory → [07](07-memory-and-cores.md); the slice store →
   reception that gave none is the incomplete one.
 - Every backward window has its own id. The interrupt names it in the frame-sent event,
   and the task closes and reads only that window, so a late close cannot reach the next
-  window of the same batch, whose frames share one exchange.
+  window of the same batch, whose frames share one exchange. The id and how long after
+  our frame a reception began live in one word: the interrupt notes the reception once,
+  by compare-and-swap, the task's close takes both at once, and the interrupt closes by
+  compare-and-swap too, so a close of its own ends a reservation the task it interrupted
+  was holding.
 - A capture of 24-bit length (`FORWARD24_LENGTH_MIN_SAMPLES`) is held in the interrupt
   and decoded there one phase per tick (`manchester::BestPhaseSearch`); the drain takes it
   decoded. The other lengths are decoded by the drain.

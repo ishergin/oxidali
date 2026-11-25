@@ -26,6 +26,12 @@ pub const RX_RING_CAP: usize = 8;
 pub const SESSION_RING_CAP: usize = 8;
 pub const TX_RING_CAP: usize = 5;
 
+const READING_BITS: u32 = 9;
+const READING_MASK: u32 = (1 << READING_BITS) - 1;
+const WINDOW_ID_MASK: u32 = u32::MAX >> READING_BITS;
+const FIRST_WINDOW_ID: u32 = 1;
+const _: () = assert!((u8::MAX as u32) < READING_MASK);
+
 pub enum SessionEvent {
     TxComplete {
         pre_idle_ticks: u16,
@@ -234,7 +240,7 @@ pub struct PhyIsrCore {
     session_epoch: AtomicU32,
     session_window: AtomicU32,
     window_seq: AtomicU32,
-    session_rx_started: AtomicU32,
+    reception_noted: AtomicBool,
     bus_failure_flags: AtomicU32,
     bus_power_down_entries: AtomicU32,
     system_failure_entries: AtomicU32,
@@ -386,7 +392,7 @@ impl PhyIsrCore {
             session_epoch: AtomicU32::new(0),
             session_window: AtomicU32::new(0),
             window_seq: AtomicU32::new(0),
-            session_rx_started: AtomicU32::new(0),
+            reception_noted: AtomicBool::new(false),
             bus_failure_flags: AtomicU32::new(0),
             bus_power_down_entries: AtomicU32::new(0),
             line_held: AtomicU32::new(0),
@@ -581,8 +587,7 @@ impl PhyIsrCore {
             self.active_expects_backward.store(false, Ordering::Release);
         }
         if self.session_epoch.load(Ordering::Acquire) == raw {
-            self.session_window.store(0, Ordering::Release);
-            self.session_rx_started.store(0, Ordering::Release);
+            self.close_window();
         }
         let _ = self
             .control
@@ -827,11 +832,16 @@ impl PhyIsrCore {
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     fn note_session_rx_started(&self, phy: &DaliBitbangPhy<RegisterGpio>) {
-        if self.session_window.load(Ordering::Acquire) != 0
-            && phy.rx_state() == RxState::Receiving
-        {
-            self.session_rx_started
-                .store(1 + u32::from(phy.rx_pre_idle_ticks()), Ordering::Release);
+        let word = self.session_window.load(Ordering::Acquire);
+        if word == 0 || word & READING_MASK != 0 || phy.rx_state() != RxState::Receiving {
+            return;
+        }
+        let noted = word | (1 + u32::from(phy.rx_pre_idle_ticks()));
+        let written = self
+            .session_window
+            .compare_exchange(word, noted, Ordering::AcqRel, Ordering::Acquire);
+        if written.is_ok() {
+            self.reception_noted.store(true, Ordering::Relaxed);
         }
     }
 
@@ -881,8 +891,7 @@ impl PhyIsrCore {
             // SAFETY: called from `tick`, the sole owner of `pending`.
             unsafe { self.clear_pending() };
             self.active_expects_backward.store(false, Ordering::Release);
-            self.session_window.store(0, Ordering::Release);
-            self.session_rx_started.store(0, Ordering::Release);
+            self.close_window();
             return;
         }
         if poll == TxPollResult::Ok {
@@ -914,15 +923,7 @@ impl PhyIsrCore {
         // SAFETY: called from `tick`, the sole owner of `pending`.
         unsafe { self.clear_pending() };
         let expects = self.active_expects_backward.swap(false, Ordering::AcqRel);
-        let mut window = WindowId::NONE;
-        if expects {
-            window = WindowId(self.window_seq.load(Ordering::Relaxed).wrapping_add(1).max(1));
-            self.window_seq.store(window.0, Ordering::Release);
-            self.session_rx_started.store(0, Ordering::Release);
-            self.session_epoch
-                .store(self.active_epoch.load(Ordering::Acquire), Ordering::Release);
-            self.session_window.store(window.0, Ordering::Release);
-        }
+        let window = if expects { self.open_window() } else { WindowId::NONE };
         self.push_session_event(SessionEvent::TxComplete {
             pre_idle_ticks: phy.tx_pre_idle_ticks(),
             sniff_seq: self.table_path.sniff_seq.load(Ordering::Relaxed),
@@ -931,11 +932,44 @@ impl PhyIsrCore {
     }
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn open_window(&self) -> WindowId {
+        let next = self.window_seq.load(Ordering::Relaxed).wrapping_add(1) & WINDOW_ID_MASK;
+        let window = WindowId(next.max(FIRST_WINDOW_ID));
+        self.window_seq.store(window.0, Ordering::Relaxed);
+        self.session_epoch
+            .store(self.active_epoch.load(Ordering::Acquire), Ordering::Release);
+        self.session_window
+            .store(window.0 << READING_BITS, Ordering::Release);
+        window
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn close_window(&self) -> u32 {
+        self.reception_noted.store(false, Ordering::Relaxed);
+        self.take_window()
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
+    fn take_window(&self) -> u32 {
+        let mut word = self.session_window.load(Ordering::Acquire);
+        while word != 0 {
+            let taken =
+                self.session_window
+                    .compare_exchange(word, 0, Ordering::AcqRel, Ordering::Acquire);
+            match taken {
+                Ok(_) => break,
+                Err(now) => word = now,
+            }
+        }
+        word
+    }
+
+    #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     unsafe fn report_collision(&self) {
         // SAFETY: called from `tick`, the sole owner of `pending`.
         unsafe { self.clear_pending() };
         self.active_expects_backward.store(false, Ordering::Release);
-        self.session_window.store(0, Ordering::Release);
+        self.close_window();
         // SAFETY: called from `tick`, the sole owner of `pending`.
         unsafe { self.abort_batch_tail() };
         self.push_session_event(SessionEvent::TxCollision);
@@ -997,8 +1031,7 @@ impl PhyIsrCore {
 
     #[cfg_attr(target_os = "espidf", link_section = ".iram1.dali_phy")]
     unsafe fn route_backward_capture(&self, ev: RxCompletedEvent) {
-        let window = self.session_window.swap(0, Ordering::AcqRel);
-        self.session_rx_started.store(0, Ordering::Release);
+        let window = self.close_window();
         if window != 0 {
             let exchange = self.session_epoch.load(Ordering::Acquire);
             self.push_session_event_for(ExchangeId(exchange), SessionEvent::RxComplete(ev));
@@ -1013,8 +1046,8 @@ impl PhyIsrCore {
     unsafe fn route_forward_capture(&self, mut ev: RxCompletedEvent) {
         // SAFETY: called from `tick`, which owns `pending` exclusively.
         unsafe { self.abort_batch_tail() };
-        let window = self.session_window.swap(0, Ordering::AcqRel);
-        let began_in_a_window = self.session_rx_started.swap(0, Ordering::AcqRel) != 0;
+        let began_in_a_window = self.reception_noted.swap(false, Ordering::Relaxed);
+        let window = self.take_window();
         ev.reported_to_session = window != 0 || began_in_a_window;
         if window != 0 {
             self.push_session_event_for(
@@ -1337,31 +1370,29 @@ impl PhyIsrCore {
     }
 
     pub fn window_is_open(&self, window: WindowId) -> bool {
-        window != WindowId::NONE && self.session_window.load(Ordering::Acquire) == window.0
+        Self::reading_in(self.session_window.load(Ordering::Acquire), window).is_some()
     }
 
     pub fn close_backward_window(&self, window: WindowId) -> WindowClose {
-        let ours = window != WindowId::NONE
-            && self
-                .session_window
-                .compare_exchange(window.0, 0, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok();
-        if !ours {
-            return WindowClose::NotOpen;
+        let closed = self
+            .session_window
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+                Self::reading_in(word, window).map(|_| 0)
+            });
+        match closed {
+            Ok(word) => WindowClose::Closed(Self::unpack_rx_started(word & READING_MASK)),
+            Err(_) => WindowClose::NotOpen,
         }
-        let reading = self.session_rx_started.load(Ordering::Acquire);
-        if self.window_seq.load(Ordering::Acquire) != window.0 {
-            return WindowClose::Closed(None);
-        }
-        WindowClose::Closed(Self::unpack_rx_started(reading))
     }
 
     pub fn session_rx_started(&self, window: WindowId) -> Option<u8> {
-        let reading = self.session_rx_started.load(Ordering::Acquire);
-        if !self.window_is_open(window) {
-            return None;
-        }
-        Self::unpack_rx_started(reading)
+        Self::reading_in(self.session_window.load(Ordering::Acquire), window)
+            .and_then(Self::unpack_rx_started)
+    }
+
+    fn reading_in(word: u32, window: WindowId) -> Option<u32> {
+        let ours = window != WindowId::NONE && word >> READING_BITS == window.0;
+        ours.then_some(word & READING_MASK)
     }
 
     fn unpack_rx_started(packed: u32) -> Option<u8> {
@@ -2296,8 +2327,6 @@ mod tests {
         let (mut set, mut clr) = (0u32, 0u32);
         let input = 0b0010u32;
         let core = test_core(&mut set, &mut clr, &input);
-        core.session_rx_started
-            .store(1 + u32::from(LEFT_BEHIND_TICKS), Ordering::Release);
 
         assert!(!core.session_expects_backward());
         assert!(
@@ -2305,11 +2334,27 @@ mod tests {
             "a closed session is not an open window without an id"
         );
         assert_eq!(core.session_rx_started(WindowId::NONE), None);
-        assert_eq!(
-            core.close_backward_window(WindowId::NONE),
-            WindowClose::NotOpen,
-            "closing no window must not hand out a reading that was left behind"
-        );
+        assert_eq!(core.close_backward_window(WindowId::NONE), WindowClose::NotOpen);
+    }
+
+    #[test]
+    fn window_ids_stay_inside_their_field_and_skip_no_window() {
+        for (last, expected) in [(WINDOW_ID_MASK - 1, WINDOW_ID_MASK), (WINDOW_ID_MASK, 1)] {
+            let (mut set, mut clr) = (0u32, 0u32);
+            let input = 0b0010u32;
+            let core = test_core(&mut set, &mut clr, &input);
+            core.window_seq.store(last, Ordering::Relaxed);
+
+            // SAFETY: single-threaded test standing in for the ISR context.
+            let window = unsafe { send_query(&core) };
+
+            assert_eq!(window, WindowId(expected), "after window {last}");
+            assert_eq!(
+                core.close_backward_window(window),
+                WindowClose::Closed(None),
+                "the id survives the word it shares with the reading"
+            );
+        }
     }
 
     #[test]
@@ -2336,30 +2381,71 @@ mod tests {
         assert_eq!(core.close_backward_window(window), WindowClose::NotOpen);
     }
 
-    const LEFT_BEHIND_TICKS: u8 = 63;
-
     #[test]
-    fn opening_a_window_drops_a_reading_the_previous_window_left_behind() {
+    fn a_cancelled_window_leaves_its_reception_for_the_sniffer_to_count() {
         let (mut set, mut clr) = (0u32, 0u32);
         let mut input = 0b0010u32;
         let input_ptr = std::ptr::addr_of_mut!(input);
         // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
         let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
-        core.session_rx_started
-            .store(1 + u32::from(LEFT_BEHIND_TICKS), Ordering::Release);
-
         // SAFETY: single-threaded test standing in for the ISR context.
         let window = unsafe { send_query(&core) };
+        drive(&core, input_ptr, 0b0010, 40);
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+        assert!(core.session_rx_started(window).is_some());
 
-        assert_eq!(
-            core.session_rx_started(window),
-            None,
-            "a reading stored after the last window closed is not this window's reception"
+        core.cancel_exchange(core.current_exchange());
+        drive(&core, input_ptr, 0b0010, TX_HALF_BIT_TICKS);
+        assert!(!core.window_is_open(window), "the cancel closed the window");
+        drive_bits(&core, input_ptr, &SIXTEEN_BITS);
+        drive(&core, input_ptr, 0b0010, 64);
+
+        let capture = core.pop_rx().expect("the finished frame goes to the sniffer");
+        assert!(
+            !capture.reported_to_session,
+            "no task closed this window with a reading, so nobody has counted the frame"
         );
-        assert_eq!(
-            core.close_backward_window(window),
-            WindowClose::Closed(None),
-            "a silent query must not report a reception that began before it was sent"
+    }
+
+    #[test]
+    fn a_reception_that_begins_after_the_close_belongs_to_no_session() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        let window = unsafe { send_query(&core) };
+        assert_eq!(core.close_backward_window(window), WindowClose::Closed(None));
+
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+
+        assert_eq!(core.session_rx_started(window), None);
+        let capture = core.pop_rx().expect("the frame goes to the sniffer");
+        assert!(
+            !capture.reported_to_session,
+            "no session saw it begin, so the sniffer counts it"
+        );
+    }
+
+    #[test]
+    fn an_answered_window_leaves_nothing_for_the_next_foreign_frame() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { send_query(&core) };
+        receive_foreign_frame(&core, input_ptr, &EIGHT_BITS);
+        assert!(matches!(core.pop_session_event(), Some(SessionEvent::RxComplete(_))));
+
+        receive_foreign_frame(&core, input_ptr, &SIXTEEN_BITS);
+
+        let capture = core.pop_rx().expect("the later frame goes to the sniffer");
+        assert!(
+            !capture.reported_to_session,
+            "the answer the session took says nothing about a frame that came after it"
         );
     }
 
