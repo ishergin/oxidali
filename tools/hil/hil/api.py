@@ -116,6 +116,16 @@ def _op_cause(view: dict) -> str:
     return "%s (%s)" % (status, named) if named else str(status)
 
 
+def read_refusal(exc) -> str:
+    body = getattr(exc, "body", None)
+    refused = body.get("refused") if isinstance(body, dict) else None
+    if not refused:
+        return str(exc)
+    if len(set(refused)) == 1:
+        return "%d attempt(s), each %s" % (len(refused), refused[0])
+    return " then ".join(refused)
+
+
 class Client:
     context = ""
 
@@ -577,7 +587,7 @@ class Client:
         self.retry_events.append(
             "attr_read short=%d groups=%s EXHAUSTED, %s%s"
             % (short, groups, " then ".join(refused), self._where()))
-        raise ApiError(500, {"error": "attr_read_not_succeeded",
+        raise ApiError(500, {"error": "attr_read_not_succeeded", "refused": refused,
                              "last": view.get("status"), "view": view},
                        "attribute-reads")
 

@@ -7,7 +7,8 @@ from collections import namedtuple
 import requests
 
 from hil import durable
-from hil.api import ApiError, CapabilityUnsupported, _HomeAssistantSettings, _PollerSettings
+from hil.api import (ApiError, CapabilityUnsupported, _HomeAssistantSettings,
+                     _PollerSettings, read_refusal)
 from hil.lamp_guard import TEST_RULE_PREFIX, LampNotAllowed, named, only_hil_rules_appended
 from hil.write_log import WriteLog, WriteLogError, writes_path
 
@@ -111,8 +112,8 @@ def _prime(api, shorts, log, groups=PRIME_GROUPS):
         try:
             api.attr_read_checked(short, groups=groups)
         except ApiError as exc:
-            log("prod_state: SA%d did not answer its priming read (%s) — its "
-                "shown state stays as the registry has it" % (short, exc))
+            log("prod_state: SA%d priming read did not succeed (%s) — its "
+                "shown state stays as the registry has it" % (short, read_refusal(exc)))
 
 
 def _device(api, short):
@@ -984,7 +985,8 @@ def _restore_gear_tables(api, snap, log, writes):
         try:
             api.attr_read_checked(s, groups="groups,scenes")
         except ApiError as exc:
-            log("prod_state: SA%d did not answer its table read (%s)" % (s, exc))
+            log("prod_state: SA%d table read did not succeed (%s)"
+                % (s, read_refusal(exc)))
             continue
         attrs = api.attributes(s).get("attributes") or {}
         try:
