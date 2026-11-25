@@ -910,6 +910,7 @@ impl PhyIsrCore {
         unsafe { self.clear_pending() };
         let expects = self.active_expects_backward.swap(false, Ordering::AcqRel);
         if expects {
+            self.session_rx_started.store(0, Ordering::Release);
             self.session_exchange
                 .store(self.active_epoch.load(Ordering::Acquire), Ordering::Release);
         }
@@ -1332,12 +1333,23 @@ impl PhyIsrCore {
     }
 
     pub fn take_session_rx_started(&self) -> Option<u8> {
-        let current = self.exchange_epoch.load(Ordering::Acquire);
-        if self.session_exchange.load(Ordering::Acquire) != current {
+        if !self.window_is_current() {
             return None;
         }
         let packed = self.session_rx_started.swap(0, Ordering::AcqRel);
         Self::unpack_rx_started(packed)
+    }
+
+    pub fn session_rx_started(&self) -> Option<u8> {
+        if !self.window_is_current() {
+            return None;
+        }
+        Self::unpack_rx_started(self.session_rx_started.load(Ordering::Acquire))
+    }
+
+    fn window_is_current(&self) -> bool {
+        let current = self.exchange_epoch.load(Ordering::Acquire);
+        self.session_exchange.load(Ordering::Acquire) == current
     }
 
     fn unpack_rx_started(packed: u32) -> Option<u8> {
@@ -2229,6 +2241,62 @@ mod tests {
             u8::MAX,
             "saturated means longer than any Table 22 window"
         );
+    }
+
+    const LEFT_BEHIND_TICKS: u8 = 63;
+
+    #[test]
+    fn opening_a_window_drops_a_reading_the_previous_window_left_behind() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        core.session_rx_started
+            .store(1 + u32::from(LEFT_BEHIND_TICKS), Ordering::Release);
+
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { send_query(&core) };
+
+        assert_eq!(
+            core.session_rx_started(),
+            None,
+            "a reading stored after the last window closed is not this window's reception"
+        );
+        assert_eq!(
+            core.close_backward_window(),
+            None,
+            "a silent query must not report a reception that began before it was sent"
+        );
+    }
+
+    #[test]
+    fn a_reception_in_progress_is_read_without_taking_it_from_the_close() {
+        let (mut set, mut clr) = (0u32, 0u32);
+        let mut input = 0b0010u32;
+        let input_ptr = std::ptr::addr_of_mut!(input);
+        // SAFETY: `input` outlives the core; all writes below use `input_ptr`.
+        let core = test_core(&mut set, &mut clr, unsafe { &*input_ptr });
+        // SAFETY: single-threaded test standing in for the ISR context.
+        unsafe { send_query(&core) };
+        drive(&core, input_ptr, 0b0010, 40);
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+
+        let began = core
+            .session_rx_started()
+            .expect("a reception began inside the open window");
+        drive(&core, input_ptr, 0, TX_HALF_BIT_TICKS);
+        assert_eq!(
+            core.session_rx_started(),
+            Some(began),
+            "the reading names when the reception began, however long it has run"
+        );
+        assert_eq!(
+            core.close_backward_window(),
+            Some(began),
+            "the close still reports the reception the wait looked at"
+        );
+        assert_eq!(core.session_rx_started(), None, "a closed window has no reception");
     }
 
     #[test]
