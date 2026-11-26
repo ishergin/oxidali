@@ -12,9 +12,8 @@ controller and group 3 of another are unrelated, and a command between controlle
 number both of them share.
 
 The first design forwarded group commands through the Home Assistant MQTT session. It made
-the broker a single point of failure for light between segments, added up to a bridge cycle
-per frame — slower than the wire, so loop suppression would have needed a hold-off — kept
-every frame inside the bus frame budget, left the standby of a pair without a session until
+the broker a single point of failure for light between segments, added a bridge cycle and a
+broker hop to every frame, kept every frame inside the bus frame budget, left the standby of a pair without a session until
 it took over, and rebuilt the bridge's session, last will and discovery.
 
 What the cluster finds in place: `Origin::Cluster` and `RuntimeSource::Cluster` in the
@@ -28,14 +27,12 @@ contract, the installation and node identity of
 
 One datagram is one frame of at most 1472 bytes in versioned `postcard`; the board does not
 reassemble IPv4 fragments, so a larger datagram would be lost in silence. A frame of an
-unknown version is dropped and counted. No broker and no session stand between two nodes,
-and a frame arrives before the DALI frame that caused it has ended.
+unknown version is dropped and counted. No broker and no session stand between two nodes.
 
 Broadcast, not multicast. There are at most eight nodes and each needs every frame, so a
-group address buys nothing for them. It costs something: the board's Ethernet glue installs
-no multicast MAC filter (ISSUE-139 in
-[known-issues](../../product-design/known-issues.md)), and a switch with IGMP snooping and no
-querier stops delivering a group after a few minutes. Multicast stays a later setting.
+group address buys nothing for them. It costs something: the board's own Ethernet glue
+installs no multicast MAC filter, and a switch with IGMP snooping and no querier stops
+delivering a group after a few minutes. Multicast stays a later setting.
 
 The frame carries no signature and never will: the network is private and the cluster
 trusts its segment. What bounds an accident is elsewhere — the cluster is off until it is
@@ -48,9 +45,13 @@ window per sender keyed on the sender's MAC, its boot epoch and a sequence numbe
 sender paces everything else: changes coalesce in a window, a burst is bounded, and the
 periodic refreshes of different nodes fall in different phases.
 
+Every few seconds a node sends a pulse: that it is alive, its cluster name, its
+installation, its wire and its protocol version. Liveness, the owner of a wire and the
+holder of a node number are all decided from pulses.
+
 The network sits behind one port trait in `dali2rust-platform`, with one implementation on
-`std::net::UdpSocket` for the board and the host and a hub double for tests. The port also
-names the board's MAC, which a host stack is given at composition.
+`std::net::UdpSocket` for the board and the host and a hub double for tests. The sender's
+MAC is the one the network link port already reports, the source of `node_id`.
 
 ### A cluster node is an installation
 
@@ -83,7 +84,9 @@ A channel is the cluster's group. Its number, 0 to 127, comes from a block of si
 node and is issued only by the node that owns the block — the channel's home node — which
 is what makes a number unique without a shared store. The record carries a birth mark, a
 generation and a random part, that travels in every command: a number deleted and issued
-again is another channel.
+again is another channel. A node number cannot change while the node is home to a record,
+and no number is issued while two boards hold one node number; without both a block would
+have two owners.
 
 The home node keeps the record: that the channel exists, and its name with a revision.
 Every participating node keeps a part: one DALI group of its wire, the flags to send and to
@@ -92,9 +95,10 @@ channel cannot be created, renamed or deleted, and nothing else.
 
 A part's group is either an existing group linked as it is, or a free group the node takes
 for the channel. A node decides that a group is free from the membership of every gear it
-knows, not only its own lamps, and proves it on the wire by a presence query with a positive
-control before it takes the group. Each fact has one editor: a taken group is edited only
-in the channel, a linked group only on its node's group matrix.
+knows, not only its own lamps, and checks it on the wire by a presence query with a positive
+control before it takes the group; a gear that is powered off and unknown to the registry
+escapes both. A taken group is edited only in the channel. Who edits a group linked as it
+is stays open until the channel editor is built.
 
 A cluster scene is built the same way: a record on a home node, and on each node a part
 naming that node's scene. A recall addresses a whole node or a channel.
@@ -105,9 +109,9 @@ is on when some node was commanded on and has a lit member.
 ### What a datagram may change
 
 A node's settings are written only through its own REST. A datagram changes no composition,
-link, flag or gear. From announcements a node persists two things only: the copy of another
-node's name at a higher revision, and — after a home node is replaced — the records of its
-own block, taken back from the copies its peers hold.
+link, flag or gear. From announcements a node persists two things only: the name of a
+record another node is home to, at a higher revision, and — after a home node is replaced —
+the records of its own block, taken back from the copies its peers hold.
 
 An edit of another node's part is relayed over HTTP by the node the browser has open: one
 thread, one connection, an answer of `202` with an operation, and an outcome the neighbour
@@ -126,8 +130,9 @@ from the home node, an edit carried by a datagram, and no remote edit at all.
   the wire is named after one of its nodes. One live node owns it. Only the owner executes
   incoming commands to channels, to all lamps and scene recalls, and only it forwards a
   foreign master; a command its sender already executed on that wire is executed by
-  nobody. The owner holds a foreign frame's observation for tens of milliseconds, and a
-  neighbour's frame with the same target and verb cancels it.
+  nobody. When a neighbour shares the wire, the owner holds a foreign frame's observation
+  for tens of milliseconds, and the neighbour's frame with the same target and verb cancels
+  it; alone on its wire a node holds nothing.
 
 Exactly one owner cannot be had over a network without acknowledgements, and this record
 does not promise it. After the owner fails the wire executes no channel command for a few
@@ -142,10 +147,14 @@ that combination instead of warning about it.
 ### What is forwarded
 
 Group and broadcast commands of every source and every verb. Out of the box the operator
-and Home Assistant are forwarded; rules, HCL and the foreign master are switched on by the
-operator. A forwarded HCL tick keeps its background priority on the receiving node, for
-which the contract gets a second cluster origin. Steps need a semantic step command and
-applied facts for a step and for a stopped fade, neither of which exists today.
+and Home Assistant are forwarded; HCL and the foreign master are switched on by the
+operator. Commands of rules become forwardable only with the rules stage: an executed fact
+carries no chain depth, so a rule answering a forwarded command would loop between nodes
+unseen. A forwarded HCL tick keeps on the receiving node the wire priority an HCL tick has
+at home, not that of a cluster command, for which the contract gets a second cluster
+origin. Three things are missing today: a semantic command for a step, an applied fact for
+a stopped fade, and the sniffer's publication of a foreign `UP`, `DOWN` and stopped fade,
+which it only counts.
 
 ### The bus rules hold
 
@@ -157,23 +166,27 @@ Settings go through the registry worker; their changed-event only wakes the read
 ### Home Assistant sees one device
 
 One node, the face, publishes the whole cluster through the existing bridge from the
-cluster cache. A lamp keeps its `unique_id` and discovery topic, so Home Assistant keeps
-its history; a channel is a new entity. When two nodes are set to be the face, the lower
-number publishes.
+cluster cache. A lamp is published under the `unique_id` and discovery topic it had, which
+is meant to keep its history and is proven on a real Home Assistant before a node moves; a
+channel is a new entity. When two nodes are set to be the face, the lower number publishes.
 
 ## Consequences
 
 - ADR-032's fourth decision changes: the cluster's sender is the board, whose MAC travels
   in the datagram header, and the bus envelope's `cluster_origin_id` is not stamped.
-- The receive mailbox and the socket count in `sdkconfig.p4.defaults` grow, which only a
-  flash proves. The snapshot frames of `/api/v1/stats` and `/api/v1/diagnostics` grow by a
-  cluster block, and the floor of internal SRAM moves by measurement.
-- Rule targets and input-device events across nodes are stages of their own and get their
-  own record. The stages are in the
+- The UDP receive mailbox, today at the ESP-IDF default, and the socket count are set in
+  `sdkconfig.p4.defaults`, which only a flash proves.
+- The cluster's counters are a block in `/api/v1/stats`. Whether the snapshot frames of
+  `/api/v1/stats` and `/api/v1/diagnostics` grow to carry it, and to what ceiling, is
+  written here with the measured size when the block lands; until then both ceilings and
+  the floor of internal SRAM stand.
+- Input-device events and rule targets across nodes are later stages, and the rule targets
+  get a record of their own. The stages are in the
   [roadmap](../../product-design/roadmap.md); the module's design is in
   [`cluster`](../../product-design/runtime-modules/cluster/README.md).
 - BDD drives a node through HTTP, the WebSocket and the hub double, with a scenario playing
-  the neighbour in frames of the production codec. What needs two composed stacks is a
-  crate integration test.
+  the neighbour in frames of the production codec. The hub becomes one more surface of
+  [ADR-004](ADR-004-bdd-black-box-boundary.md) when the port lands, as the broker side of
+  the MQTT double is. What needs two composed stacks is a crate integration test.
 - Not promised: delivery, exactly one wire owner, and equal levels after a lost `UP` or
   `DOWN` between segments — the next absolute command brings the segments together.

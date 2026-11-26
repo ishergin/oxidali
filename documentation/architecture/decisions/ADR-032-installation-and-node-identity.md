@@ -11,8 +11,7 @@ from the Ethernet MAC, replicated to the standby, the root of every Home Assista
 `unique_id` and the MQTT client id ([ADR-018](ADR-018-controller-redundancy.md)). The two
 boards of a pair therefore shared it, and nothing told them apart across a failover: the
 role moves with the bus. The network saw no name at all — DHCP got the ESP-IDF default
-`espressif` — and the cluster (I6) needs a per-node origin for loop suppression, which
-`cluster_origin_id` reserves and leaves at 0.
+`espressif` — and the cluster (I6) needs to tell its senders apart for loop suppression.
 
 ## Decision
 
