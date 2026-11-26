@@ -1,3 +1,5 @@
+use core::mem;
+
 const HALF_SEQUENCE_SPACE: u32 = 1 << 31;
 
 const NEWEST_ONLY: u64 = 1;
@@ -19,35 +21,48 @@ impl Arrival {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SequenceWindow {
+    current: EpochWindow,
+    previous: Option<EpochWindow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EpochWindow {
     epoch: u32,
-    left: Option<u32>,
     highest: u32,
     seen: u64,
 }
 
 impl SequenceWindow {
     pub const fn starting_at(epoch: u32, seq: u32) -> Self {
-        Self { epoch, left: None, highest: seq, seen: NEWEST_ONLY }
+        Self { current: EpochWindow::starting_at(epoch, seq), previous: None }
     }
 
     pub fn admit(&mut self, epoch: u32, seq: u32) -> Arrival {
-        if epoch != self.epoch {
-            return self.restart(epoch, seq);
+        if epoch == self.current.epoch {
+            return self.current.admit(seq);
         }
+        let heard = self.previous.filter(|window| window.epoch == epoch);
+        let next = heard.unwrap_or(EpochWindow::starting_at(epoch, seq));
+        self.previous = Some(mem::replace(&mut self.current, next));
+        match heard {
+            Some(_) => self.current.admit(seq),
+            None => Arrival::Restarted,
+        }
+    }
+}
+
+impl EpochWindow {
+    const fn starting_at(epoch: u32, seq: u32) -> Self {
+        Self { epoch, highest: seq, seen: NEWEST_ONLY }
+    }
+
+    fn admit(&mut self, seq: u32) -> Arrival {
         let ahead = seq.wrapping_sub(self.highest);
         match ahead {
             0 => Arrival::Duplicate,
             1..HALF_SEQUENCE_SPACE => self.advance(seq, ahead),
             _ => self.look_back(self.highest.wrapping_sub(seq)),
         }
-    }
-
-    fn restart(&mut self, epoch: u32, seq: u32) -> Arrival {
-        if self.left == Some(epoch) {
-            return Arrival::TooOld;
-        }
-        *self = Self { left: Some(self.epoch), ..Self::starting_at(epoch, seq) };
-        Arrival::Restarted
     }
 
     fn advance(&mut self, seq: u32, ahead: u32) -> Arrival {
@@ -74,6 +89,8 @@ mod tests {
 
     const EPOCH: u32 = 0x5eed_0001;
     const REBOOTED: u32 = 0x5eed_0002;
+    const REBOOTED_AGAIN: u32 = 0x5eed_0003;
+    const STALE: u32 = 0x5eed_0000;
     const WINDOW: u32 = u64::BITS;
 
     #[test]
@@ -150,11 +167,31 @@ mod tests {
     }
 
     #[test]
-    fn a_late_frame_from_the_epoch_just_left_is_too_old_not_a_restart() {
+    fn a_frame_from_the_epoch_just_left_is_judged_by_that_epoch_s_window() {
         let mut window = SequenceWindow::starting_at(EPOCH, 5);
         assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
-        assert_eq!(window.admit(EPOCH, 5), Arrival::TooOld);
+        assert_eq!(window.admit(EPOCH, 5), Arrival::Duplicate);
+        assert_eq!(window.admit(EPOCH, 6), Arrival::Fresh { skipped: 0 });
         assert_eq!(window.admit(REBOOTED, 1), Arrival::Duplicate);
+        assert_eq!(window.admit(REBOOTED, 2), Arrival::Fresh { skipped: 0 });
+    }
+
+    #[test]
+    fn a_stale_epoch_never_locks_out_the_one_still_talking() {
+        let mut window = SequenceWindow::starting_at(EPOCH, 5);
+        assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
+        assert_eq!(window.admit(STALE, 9), Arrival::Restarted);
+        assert_eq!(window.admit(REBOOTED, 2), Arrival::Fresh { skipped: 0 });
+        assert_eq!(window.admit(REBOOTED_AGAIN, 1), Arrival::Restarted);
+        assert_eq!(window.admit(REBOOTED, 3), Arrival::Fresh { skipped: 0 });
+    }
+
+    #[test]
+    fn a_third_epoch_forgets_the_one_heard_least_recently() {
+        let mut window = SequenceWindow::starting_at(EPOCH, 5);
+        assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
+        assert_eq!(window.admit(REBOOTED_AGAIN, 1), Arrival::Restarted);
+        assert_eq!(window.admit(EPOCH, 5), Arrival::Restarted);
     }
 
     #[test]

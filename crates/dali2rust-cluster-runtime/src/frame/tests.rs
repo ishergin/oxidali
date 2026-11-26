@@ -18,23 +18,31 @@ const GOLDEN_HEADER: [u8; 17] = [
 ];
 const GOLDEN_COMMAND_BODY: [u8; 29] = [
     0x00, 0x00, 0x03, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x00, 0x01, 0x01, 0xc8, 0x01, 0x02,
-    0x8c, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01,
+    0x8c, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x03,
 ];
 const GOLDEN_PULSE_BODY: [u8; 20] = [
     0x04, 0x68, 0x6f, 0x6d, 0x65, 0x0b, 0x64, 0x61, 0x6c, 0x69, 0x2d, 0x37, 0x62, 0x39, 0x30,
-    0x65, 0x34, 0x00, 0x01, 0x01,
+    0x65, 0x34, 0x00, 0x03, 0x01,
 ];
 const GOLDEN_HELLO_BODY: [u8; 1] = [0x01];
 const GOLDEN_INFO_BODY: [u8; 77] = [
     0x01, 0x00, 0x09, 0x00, 0x03, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x04, 0x48, 0x61, 0x6c,
     0x6c, 0x04, 0x01, 0x11, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x03, 0x45, 0x76, 0x65, 0x01,
-    0x02, 0x00, 0x03, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x05, 0x00, 0x01, 0x01, 0x02, 0x0c,
-    0x04, 0x03, 0x00, 0x11, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x02, 0x00, 0x01, 0x03, 0x04,
-    0x00, 0x21, 0x05, 0x00, 0x05, 0x04, 0x48, 0x61, 0x6c, 0x6c, 0x06, 0x00, 0x02, 0x03, 0x45,
+    0x02, 0x01, 0x03, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x05, 0x00, 0x01, 0x00, 0x02, 0x0c,
+    0x04, 0x03, 0x01, 0x11, 0x02, 0xd4, 0x87, 0xcb, 0x8d, 0x0a, 0x02, 0x00, 0x01, 0x03, 0x04,
+    0x01, 0x21, 0x05, 0x01, 0x05, 0x04, 0x48, 0x61, 0x6c, 0x6c, 0x06, 0x01, 0x02, 0x03, 0x45,
     0x76, 0x65,
 ];
+const GOLDEN_EVERY_COLOUR_FIELD: [u8; 17] = [
+    0x01, 0x01, 0xc8, 0x01, 0x05, 0x8c, 0x15, 0xe8, 0x07, 0xd0, 0x0f, 0x01, 0x02, 0x03, 0x04,
+    0x05, 0x06,
+];
+const GOLDEN_LAMP_STEP: [u8; 7] = [0x00, 0x02, 0x01, 0x02, 0x03, 0x01, 0x08];
+const GOLDEN_CHANNEL_RECALL: [u8; 8] = [0x01, 0x11, 0x02, 0x03, 0x01, 0x04, 0x05, 0x06];
 const INFO_SET: u32 = 9;
 const SAMPLE_GROUP: u8 = 5;
+const SAMPLE_ADAPTER: u8 = 1;
+const SAMPLE_WIRE: u8 = 3;
 const SAMPLE_PART_GROUP_AT: usize = 39;
 const LAST_LAMP: u8 = VIRTUAL_LAMP_COUNT - 1;
 const LAST_GROUP: u8 = GROUP_COUNT - 1;
@@ -107,7 +115,7 @@ fn channel_command() -> Command {
         },
         source: SourceClass::Operator,
         hold_hcl: true,
-        executed_on_wire: Some(1),
+        executed_on_wire: Some(SAMPLE_WIRE),
     }
 }
 
@@ -128,7 +136,7 @@ fn pulse() -> Pulse<'static> {
         cluster_name: "home",
         installation: "dali-7b90e4",
         claim: NodeClaim::Holding,
-        wire: 1,
+        wire: SAMPLE_WIRE,
         wire_protection: true,
     }
 }
@@ -155,25 +163,25 @@ fn info_sample() -> [InfoElement<'static>; 7] {
             revision: 1,
         }),
         InfoElement::ChannelPart(ChannelPart {
-            adapter: 0,
+            adapter: SAMPLE_ADAPTER,
             channel: CHANNEL_3,
             group: SAMPLE_GROUP,
             taken: false,
-            flags: PartFlags { send: true, accept: true },
+            flags: PartFlags { send: true, accept: false },
             revision: 2,
             desired_lamps: 0b1100,
             written_lamps: 0b0100,
         }),
         InfoElement::ScenePart(ScenePart {
-            adapter: 0,
+            adapter: SAMPLE_ADAPTER,
             scene: RecordRef { number: 17, mark: MARK },
             node_scene: 2,
             flags: PartFlags { send: false, accept: true },
             revision: 3,
         }),
-        InfoElement::GroupMap(GroupMap { adapter: 0, occupied: 0b10_0001 }),
-        InfoElement::GroupName(LocalName { adapter: 0, number: SAMPLE_GROUP, name: "Hall" }),
-        InfoElement::SceneName(LocalName { adapter: 0, number: 2, name: "Eve" }),
+        InfoElement::GroupMap(GroupMap { adapter: SAMPLE_ADAPTER, occupied: 0b10_0001 }),
+        InfoElement::GroupName(LocalName { adapter: SAMPLE_ADAPTER, number: SAMPLE_GROUP, name: "Hall" }),
+        InfoElement::SceneName(LocalName { adapter: SAMPLE_ADAPTER, number: 2, name: "Eve" }),
     ]
 }
 
@@ -297,6 +305,33 @@ fn a_page_of_channel_and_scene_info_has_its_golden_bytes() {
 fn the_preamble_names_the_protocol_its_version_and_the_kind() {
     let bytes = encoded(&header(), &Frame::Hello(Hello { ha_face: false }));
     assert_eq!(bytes[..PREAMBLE_BYTES], [b'D', b'2', b'R', b'C', 1, HELLO_KIND]);
+}
+
+#[test]
+fn every_field_of_a_command_keeps_its_place_on_the_wire() {
+    let every_colour_field = LightSetpoint {
+        power: PowerState::On,
+        level: Some(200),
+        color: Some(ColorValue {
+            mode: ColorMode::Rgbwaf,
+            color_temperature_kelvin: 2700,
+            x: 1000,
+            y: 2000,
+            r: 1,
+            g: 2,
+            b: 3,
+            w: 4,
+            a: 5,
+            f: 6,
+        }),
+    };
+    assert_eq!(wire(&every_colour_field), GOLDEN_EVERY_COLOUR_FIELD);
+    let lamp = Target::Lamp(LampAddress { node: 1, adapter: 2, lamp: 3 });
+    let step = Action::Light { target: lamp, verb: LightVerb::Transition(LevelTransition::Down) };
+    assert_eq!(wire(&step), GOLDEN_LAMP_STEP);
+    let channel = |number, generation, nonce| RecordRef { number, mark: BirthMark { generation, nonce } };
+    let recall = Action::RecallScene { scene: channel(17, 2, 3), scope: RecallScope::Channel(channel(4, 5, 6)) };
+    assert_eq!(wire(&recall), GOLDEN_CHANNEL_RECALL);
 }
 
 #[test]
@@ -497,8 +532,11 @@ fn an_unknown_version_is_its_own_rejection_and_names_the_version() {
     let mut bytes = encoded(&header(), &Frame::Pulse(pulse()));
     bytes[PROTOCOL_TAG.len()] = PROTOCOL_VERSION + 1;
     assert_eq!(decode(&bytes), Err(Rejection::UnknownVersion(PROTOCOL_VERSION + 1)));
+    bytes[PROTOCOL_TAG.len()] = u8::MAX;
+    bytes[PREAMBLE_BYTES - 1] = FIRST_UNKNOWN_KIND;
+    assert_eq!(decode(&bytes), Err(Rejection::UnknownVersion(u8::MAX)));
     bytes.truncate(PREAMBLE_BYTES);
-    assert_eq!(decode(&bytes), Err(Rejection::UnknownVersion(PROTOCOL_VERSION + 1)));
+    assert_eq!(decode(&bytes), Err(Rejection::UnknownVersion(u8::MAX)));
 }
 
 #[test]
@@ -511,8 +549,10 @@ fn a_datagram_past_the_ceiling_is_rejected_before_it_is_read() {
 #[test]
 fn an_unknown_kind_under_a_known_version_is_its_own_rejection_and_names_the_kind() {
     let mut bytes = encoded(&header(), &Frame::Hello(Hello { ha_face: true }));
-    bytes[PREAMBLE_BYTES - 1] = FIRST_UNKNOWN_KIND;
-    assert_eq!(decode(&bytes), Err(Rejection::UnknownKind(FIRST_UNKNOWN_KIND)));
+    for kind in [FIRST_UNKNOWN_KIND, u8::MAX] {
+        bytes[PREAMBLE_BYTES - 1] = kind;
+        assert_eq!(decode(&bytes), Err(Rejection::UnknownKind(kind)));
+    }
 }
 
 #[test]
@@ -598,13 +638,18 @@ fn an_element_outside_its_range_is_refused_by_the_page() {
     let InfoElement::SceneName(scene_name) = scene_name else { panic!("name") };
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let mut writer = InfoPageWriter::start(&mut buffer, &header(), INFO_SET, 0).expect("start");
+    let past_last_record = RecordRef { number: RECORD_NUMBER_COUNT, mark: MARK };
     for element in [
         InfoElement::ChannelRecord(Record { name: &long_name, ..record }),
-        InfoElement::SceneRecord(Record { id: RecordRef { number: RECORD_NUMBER_COUNT, mark: MARK }, ..record }),
+        InfoElement::SceneRecord(Record { id: past_last_record, ..record }),
         InfoElement::ChannelPart(ChannelPart { group: GROUP_COUNT, ..channel_part }),
+        InfoElement::ChannelPart(ChannelPart { channel: past_last_record, ..channel_part }),
         InfoElement::ScenePart(ScenePart { node_scene: SCENE_COUNT, ..scene_part }),
+        InfoElement::ScenePart(ScenePart { scene: past_last_record, ..scene_part }),
         InfoElement::GroupName(LocalName { number: GROUP_COUNT, ..group_name }),
+        InfoElement::GroupName(LocalName { name: &long_name, ..group_name }),
         InfoElement::SceneName(LocalName { name: &long_name, ..scene_name }),
+        InfoElement::SceneName(LocalName { number: SCENE_COUNT, ..scene_name }),
     ] {
         assert_eq!(writer.push(&element), Err(PushError::OutOfRange));
     }

@@ -73,15 +73,16 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   decoder checks every element, then hands them out one at a time, borrowed from the
   datagram. Nothing holds a whole page as values. A record whose number lies outside the
   sender's block is the sender's copy of a record another node is home to.
-- The duplicate window (`SequenceWindow`) is kept per sender board. Sequence numbers
-  compare by wrapping arithmetic within a boot epoch; a new epoch starts the window again,
-  and a frame of the epoch just left is too old. A copy carries its original's number, and
-  every kind of frame of that board draws from one sequence.
+- The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
+  it heard last, each judged by its own window: sequence numbers compare by wrapping
+  arithmetic, and a third epoch takes the place of the one heard least recently. A copy
+  carries its original's number, and every kind of frame of that board draws from one
+  sequence.
 - The network port is `ClusterLink` in `dali2rust-platform`: send one datagram from any
-  thread, receive one with a timeout on the one thread that owns the inbox. `UdpClusterLink` is its one implementation, for the
-  board and the host: it binds, enables broadcast, sends to the limited broadcast address
-  and drops nothing. A datagram over the ceiling is refused on send and reported as
-  oversize on receive, never truncated into a frame. A socket may hear its own broadcast,
+  thread; one thread receives, with a timeout. `UdpClusterLink` is its one implementation,
+  for the board and the host: it binds, enables broadcast, sends to the limited broadcast
+  address and drops nothing. A datagram over the ceiling is refused on send and reported
+  as oversize on receive, never truncated into a frame. A socket may hear its own broadcast,
   so dropping a board's own frame is the receiver's job, by the sender MAC in the header,
   which is the one `NetworkLink::hardware_address` reports. Tests connect link ends
   through `ClusterHub` in `dali2rust-test-support`.
