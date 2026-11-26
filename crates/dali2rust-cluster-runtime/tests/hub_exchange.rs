@@ -71,7 +71,8 @@ fn a_command_sent_twice_crosses_the_hub_and_its_copy_is_a_duplicate() {
 fn pulses_cross_the_hub_both_ways_and_carry_what_decides_a_wire_owner() {
     let hub = ClusterHub::new();
     let (node_0, node_1) = (hub.attach(), hub.attach());
-    for (from, to, mac, node_no) in [(&node_0, &node_1, NODE_0_MAC, 0), (&node_1, &node_0, NODE_1_MAC, 1)] {
+    let directions = [(&node_0, &node_1, NODE_0_MAC, 0), (&node_1, &node_0, NODE_1_MAC, 1)];
+    for (from, to, mac, node_no) in directions {
         let pulse = Pulse {
             cluster_name: CLUSTER,
             installation: "dali-000010",

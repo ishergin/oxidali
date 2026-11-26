@@ -180,7 +180,11 @@ fn info_sample() -> [InfoElement<'static>; 7] {
             revision: 3,
         }),
         InfoElement::GroupMap(GroupMap { adapter: SAMPLE_ADAPTER, occupied: 0b10_0001 }),
-        InfoElement::GroupName(LocalName { adapter: SAMPLE_ADAPTER, number: SAMPLE_GROUP, name: "Hall" }),
+        InfoElement::GroupName(LocalName {
+            adapter: SAMPLE_ADAPTER,
+            number: SAMPLE_GROUP,
+            name: "Hall",
+        }),
         InfoElement::SceneName(LocalName { adapter: SAMPLE_ADAPTER, number: 2, name: "Eve" }),
     ]
 }
@@ -329,8 +333,10 @@ fn every_field_of_a_command_keeps_its_place_on_the_wire() {
     let lamp = Target::Lamp(LampAddress { node: 1, adapter: 2, lamp: 3 });
     let step = Action::Light { target: lamp, verb: LightVerb::Transition(LevelTransition::Down) };
     assert_eq!(wire(&step), GOLDEN_LAMP_STEP);
-    let channel = |number, generation, nonce| RecordRef { number, mark: BirthMark { generation, nonce } };
-    let recall = Action::RecallScene { scene: channel(17, 2, 3), scope: RecallScope::Channel(channel(4, 5, 6)) };
+    let record =
+        |number, generation, nonce| RecordRef { number, mark: BirthMark { generation, nonce } };
+    let scope = RecallScope::Channel(record(4, 5, 6));
+    let recall = Action::RecallScene { scene: record(17, 2, 3), scope };
     assert_eq!(wire(&recall), GOLDEN_CHANNEL_RECALL);
 }
 
@@ -480,7 +486,8 @@ fn a_node_s_whole_info_fills_every_page_but_the_last_and_reads_back_in_order() {
 fn a_set_with_nothing_in_it_is_one_empty_last_page() {
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let mut pages = Vec::new();
-    write_pages(&mut buffer, INFO_SET, header, [], |page| pages.push(page.to_vec())).expect("pages");
+    write_pages(&mut buffer, INFO_SET, header, [], |page| pages.push(page.to_vec()))
+        .expect("pages");
     assert_eq!(pages.len(), 1);
     let Frame::ChannelSceneInfo(page) = decode(&pages[0]).expect("decode").frame else {
         panic!("not a page")
@@ -524,6 +531,8 @@ fn a_datagram_of_another_protocol_is_not_a_cluster_frame() {
     assert_eq!(decode(b"D2R"), Err(Rejection::NotCluster));
     let mut bytes = encoded(&header(), &Frame::Pulse(pulse()));
     bytes[0] = b'X';
+    assert_eq!(decode(&bytes), Err(Rejection::NotCluster));
+    bytes[PROTOCOL_TAG.len()] = PROTOCOL_VERSION + 1;
     assert_eq!(decode(&bytes), Err(Rejection::NotCluster));
 }
 
@@ -622,7 +631,8 @@ fn a_pulse_with_an_overlong_name_or_a_wire_past_the_last_node_is_refused_and_rej
         Pulse { installation: &long_installation, ..pulse() },
         Pulse { wire: NODE_COUNT, ..pulse() },
     ] {
-        assert_eq!(encode(&header(), &Frame::Pulse(pulse), &mut buffer), Err(EncodeError::OutOfRange));
+        let refused = encode(&header(), &Frame::Pulse(pulse), &mut buffer);
+        assert_eq!(refused, Err(EncodeError::OutOfRange));
         assert_eq!(decode(&unchecked(FrameKind::Pulse, &pulse)), Err(Rejection::Malformed));
     }
 }

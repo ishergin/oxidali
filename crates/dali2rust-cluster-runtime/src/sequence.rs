@@ -41,13 +41,16 @@ impl SequenceWindow {
         if epoch == self.current.epoch {
             return self.current.admit(seq);
         }
-        let heard = self.previous.filter(|window| window.epoch == epoch);
-        let next = heard.unwrap_or(EpochWindow::starting_at(epoch, seq));
-        self.previous = Some(mem::replace(&mut self.current, next));
-        match heard {
-            Some(_) => self.current.admit(seq),
-            None => Arrival::Restarted,
+        let Some(previous) = self.previous.as_mut().filter(|window| window.epoch == epoch) else {
+            let left = mem::replace(&mut self.current, EpochWindow::starting_at(epoch, seq));
+            self.previous = Some(left);
+            return Arrival::Restarted;
+        };
+        let arrival = previous.admit(seq);
+        if arrival.is_new() {
+            mem::swap(&mut self.current, previous);
         }
+        arrival
     }
 }
 
@@ -168,9 +171,10 @@ mod tests {
 
     #[test]
     fn a_frame_from_the_epoch_just_left_is_judged_by_that_epoch_s_window() {
-        let mut window = SequenceWindow::starting_at(EPOCH, 5);
+        let mut window = SequenceWindow::starting_at(EPOCH, 4);
+        assert_eq!(window.admit(EPOCH, 5), Arrival::Fresh { skipped: 0 });
         assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
-        assert_eq!(window.admit(EPOCH, 5), Arrival::Duplicate);
+        assert_eq!(window.admit(EPOCH, 4), Arrival::Duplicate);
         assert_eq!(window.admit(EPOCH, 6), Arrival::Fresh { skipped: 0 });
         assert_eq!(window.admit(REBOOTED, 1), Arrival::Duplicate);
         assert_eq!(window.admit(REBOOTED, 2), Arrival::Fresh { skipped: 0 });
@@ -184,6 +188,16 @@ mod tests {
         assert_eq!(window.admit(REBOOTED, 2), Arrival::Fresh { skipped: 0 });
         assert_eq!(window.admit(REBOOTED_AGAIN, 1), Arrival::Restarted);
         assert_eq!(window.admit(REBOOTED, 3), Arrival::Fresh { skipped: 0 });
+    }
+
+    #[test]
+    fn a_rejected_frame_does_not_make_its_epoch_the_one_heard_last() {
+        let mut window = SequenceWindow::starting_at(EPOCH, 5);
+        assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
+        assert_eq!(window.admit(EPOCH, 5), Arrival::Duplicate);
+        assert_eq!(window.admit(STALE, 9), Arrival::Restarted);
+        assert_eq!(window.admit(REBOOTED, 2), Arrival::Fresh { skipped: 0 });
+        assert_eq!(window.admit(REBOOTED, 1), Arrival::Duplicate);
     }
 
     #[test]

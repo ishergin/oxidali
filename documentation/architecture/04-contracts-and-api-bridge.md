@@ -74,8 +74,9 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   datagram. Nothing holds a whole page as values. A record whose number lies outside the
   sender's block is the sender's copy of a record another node is home to.
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
-  it heard last, each judged by its own window: sequence numbers compare by wrapping
-  arithmetic, and a third epoch takes the place of the one heard least recently. A copy
+  it heard last with a new frame, each judged by its own window: sequence numbers compare
+  by wrapping arithmetic, and a frame of any other epoch starts a window in place of the
+  one heard least recently and counts as new. A board's boot epoch never repeats, a copy
   carries its original's number, and every kind of frame of that board draws from one
   sequence.
 - The network port is `ClusterLink` in `dali2rust-platform`: send one datagram from any
