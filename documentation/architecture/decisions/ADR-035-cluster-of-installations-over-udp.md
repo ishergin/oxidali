@@ -51,7 +51,8 @@ holder of a node number are all decided from pulses.
 
 The network sits behind one port trait in `dali2rust-platform`, with one implementation on
 `std::net::UdpSocket` for the board and the host and a hub double for tests. The sender's
-MAC is the one the network link port already reports, the source of `node_id`.
+MAC is the one the network link port already reports, the source of `node_id`; a host or
+hub stack that takes part composes a link that reports one.
 
 ### A cluster node is an installation
 
@@ -174,12 +175,12 @@ channel is a new entity. When two nodes are set to be the face, the lower number
 
 - ADR-032's fourth decision changes: the cluster's sender is the board, whose MAC travels
   in the datagram header, and the bus envelope's `cluster_origin_id` is not stamped.
-- The UDP receive mailbox, today at the ESP-IDF default, and the socket count are set in
+- The UDP receive mailbox, today at the ESP-IDF default, and the socket count are raised in
   `sdkconfig.p4.defaults`, which only a flash proves.
-- The cluster's counters are a block in `/api/v1/stats`. Whether the snapshot frames of
-  `/api/v1/stats` and `/api/v1/diagnostics` grow to carry it, and to what ceiling, is
-  written here with the measured size when the block lands; until then both ceilings and
-  the floor of internal SRAM stand.
+- The cluster's counters are a block in `/api/v1/stats`. The snapshot ceilings of
+  `/api/v1/stats` and `/api/v1/diagnostics` are raised to carry it, and the floor of
+  internal SRAM is lowered by measurement; each new value is written here with its
+  measurement when the block lands, and none moves before that.
 - Input-device events and rule targets across nodes are later stages, and the rule targets
   get a record of their own. The stages are in the
   [roadmap](../../product-design/roadmap.md); the module's design is in

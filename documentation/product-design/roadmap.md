@@ -13,7 +13,8 @@
 
 Несколько контроллеров как одна система света, по UDP в общем сегменте Ethernet. Проект
 модуля — [`runtime-modules/cluster/README.md`](runtime-modules/cluster/README.md), решения —
-[ADR-035](../architecture/decisions/ADR-035-cluster-of-installations-over-udp.md).
+[ADR-035](../architecture/decisions/ADR-035-cluster-of-installations-over-udp.md). «Узел» в
+этом разделе — узел кластера, а не плата.
 
 Стадии идут по порядку, каждая кончается стендом:
 
