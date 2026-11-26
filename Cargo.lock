@@ -711,6 +711,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dali2rust-cluster-runtime"
+version = "0.1.0"
+dependencies = [
+ "dali2rust-contracts",
+ "dali2rust-domain",
+ "dali2rust-platform",
+ "dali2rust-test-support",
+ "postcard",
+ "serde",
+]
+
+[[package]]
 name = "dali2rust-contracts"
 version = "0.1.0"
 dependencies = [

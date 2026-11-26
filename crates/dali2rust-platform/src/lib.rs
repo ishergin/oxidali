@@ -2,6 +2,7 @@ pub mod answer_table;
 pub mod arbitration;
 pub mod bus_unit;
 pub mod clock;
+pub mod cluster_link;
 pub mod dali;
 pub mod display;
 pub mod firmware;

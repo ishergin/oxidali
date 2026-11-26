@@ -28,7 +28,7 @@
 | [`rules-engine`](rules-engine/README.md) ([язык](rules-engine/operations.md)) | `dali2rust-rules-model`, `-lang`, `-runtime` | Локальная автоматика: события → действия |
 | [`redundancy`](redundancy/README.md) | `dali2rust-redundancy-runtime` | Пара контроллеров на одном сегменте: арбитраж, лиза, репликация |
 | Обновление прошивки | `dali2rust-ota-runtime` | Загрузка образа по сети в неактивный слот ([`ADR-024`](../../architecture/decisions/ADR-024-ota-over-ethernet.md), [REST](../rest-api/resources/firmware.md)) |
-| [`cluster`](cluster/README.md) | — | Запланирован (`I6`) |
+| [`cluster`](cluster/README.md) | `dali2rust-cluster-runtime` | Запланирован (`I6`); построены порт сети и кодек кадров |
 | [`dali-proxy`](dali-proxy/README.md) | — | Запланирован (`I7`) |
 
 `dali2rust-adapters` модулем не является: он только подписывает воркеров на шину,

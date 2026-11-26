@@ -15,6 +15,7 @@ dali2rust-operations-runtime
 dali2rust-fanout-runtime
 dali2rust-hcl-runtime
 dali2rust-ota-runtime
+dali2rust-cluster-runtime
 dali2rust-poller-runtime
 dali2rust-redundancy-runtime
 dali2rust-ws-runtime
