@@ -18,6 +18,11 @@ state-DTO — [`rest-api/contracts/state-contracts.md`](rest-api/contracts/state
   отказоустойчивости, её имя — `controller_id` (в настройках Home Assistant — Controller
   ID); узел — одна плата, её имя — `node_id`, оно же hostname
   ([ADR-032](../architecture/decisions/ADR-032-installation-and-node-identity.md)).
+- **Cluster node / channel** — узел кластера — установка с номером `0..7`: один
+  контроллер или пара, плата при этом остаётся платой; канал — группа шире одного сегмента
+  DALI: запись с номером `0..127` и именем, в которую узел входит одной своей группой.
+  Запланировано, стадия `I6`
+  ([ADR-035](../architecture/decisions/ADR-035-cluster-of-installations-over-udp.md)).
 - **Adapter** — физическая шина DALI со своим транспортом; адресное пространство
   адаптера — 64 коротких адреса gear, 64 виртуальные лампы, 16 групп, 16 сцен и
   отдельно 64 адреса устройств ввода.

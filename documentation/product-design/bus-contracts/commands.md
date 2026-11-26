@@ -199,8 +199,10 @@ Volatile runtime-состояние меняют только `RegistryRuntimeUp
   `sequence_no` и `timestamp_ms` после сборки никто не ставит
   ([04](../../architecture/04-contracts-and-api-bridge.md)); время кадра WebSocket ставит
   воркер WebSocket.
-- `cluster_origin_id` / `adapter_proxy_origin_id` — зарезервированы под подавление
-  петель будущих `I6`/`I7`; вне этих происхождений — `0`.
+- `cluster_origin_id` / `adapter_proxy_origin_id` — всегда `0`. Кластер несёт MAC платы
+  в заголовке своей датаграммы, а не в конверте
+  ([ADR-035](../../architecture/decisions/ADR-035-cluster-of-installations-over-udp.md));
+  второе поле зарезервировано под `I7`.
 - `error` — только на пути отказа, в куче. `ErrorPayload` (код, текст до 64 байт,
   детали) едет по подтверждениям в HTTP; внутри событий используется
   `CompactErrorPayload` (код и текст до 32 байт).

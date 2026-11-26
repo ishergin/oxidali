@@ -1,6 +1,6 @@
 # ADR-032: One installation, two nodes: the controller's identity
 
-Status: Accepted
+Status: Accepted, amended by ADR-035
 Date: 2026-09-28
 
 ## Context
@@ -30,9 +30,13 @@ role moves with the bus. The network saw no name at all — DHCP got the ESP-IDF
    hostname the interface carries, the link's MAC and the IPv4 address of its lease; a field
    with nothing behind it — the address before a lease, every field without a link — is
    `null`.
-4. **The cluster's origin is the node.** When I6 composes, `cluster_origin_id` carries the
-   node's MAC as a 48-bit integer; REST and logs show the node id. Until then
-   `cluster.enabled` stays `false` and the field stays 0.
+4. **The cluster's sender is the node; its unit is the installation.** A cluster datagram
+   carries the sending node's MAC in its header, and REST and logs show the node id. The
+   cluster numbers installations: the two nodes of a pair share one cluster node number, and
+   cluster documents call this record's node a board
+   ([ADR-035](ADR-035-cluster-of-installations-over-udp.md)). The bus envelope's
+   `cluster_origin_id` stays 0, since nothing reads it, and `cluster.enabled` stays `false`
+   until the cluster composes.
 5. **No mDNS.** The responder costs internal SRAM, whose floor is ISSUE-71 in
    [known-issues](../../product-design/known-issues.md).
 

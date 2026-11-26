@@ -320,8 +320,9 @@ decoder.
 Open work, stage by stage, is in
 [`roadmap.md`](documentation/product-design/roadmap.md) (in Russian).
 
-- **Cluster.** Several controllers act as one system: permitted group commands and
-  scene recalls are forwarded between controllers over MQTT, with loop suppression
+- **Cluster.** Several controllers act as one system: channels wider than one DALI
+  segment, lamps commanded from any controller and one device in Home Assistant, over UDP
+  between the controllers, with loop suppression
   ([design](documentation/product-design/runtime-modules/cluster/README.md), in Russian).
 - **Several DALI adapters** on one controller, each with its own `DaliWorker`.
 - **Adapter proxy**: permitted commands forwarded between the adapters of one controller
