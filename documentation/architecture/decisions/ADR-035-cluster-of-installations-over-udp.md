@@ -187,7 +187,8 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   [`cluster`](../../product-design/runtime-modules/cluster/README.md).
 - BDD drives a node through HTTP, the WebSocket and the hub double, with a scenario playing
   the neighbour in frames of the production codec. The hub becomes one more surface of
-  [ADR-004](ADR-004-bdd-black-box-boundary.md) when the port lands, as the broker side of
-  the MQTT double is. What needs two composed stacks is a crate integration test.
+  [ADR-004](ADR-004-bdd-black-box-boundary.md) when a node composes the cluster, as the
+  broker side of the MQTT double is. What needs two composed stacks is a crate integration
+  test.
 - Not promised: delivery, exactly one wire owner, and equal levels after a lost `UP` or
   `DOWN` between segments — the next absolute command brings the segments together.

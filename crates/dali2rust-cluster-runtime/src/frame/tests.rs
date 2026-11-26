@@ -1,7 +1,16 @@
 use dali2rust_contracts::msg::{ColorMode, ColorValue, LevelTransition, LightSetpoint, PowerState};
+use dali2rust_domain::registry::{GROUP_COUNT, SCENE_COUNT, VIRTUAL_LAMP_COUNT};
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
+use serde::Serialize;
 
+use super::codec::{put, write_head};
 use super::*;
+
+const COMMAND_KIND: u8 = 0;
+const PULSE_KIND: u8 = 1;
+const HELLO_KIND: u8 = 2;
+const INFO_KIND: u8 = 3;
+const FIRST_UNKNOWN_KIND: u8 = 4;
 
 const GOLDEN_HEADER: [u8; 17] = [
     0x8e, 0x85, 0xa3, 0x96, 0x0d, 0x30, 0xed, 0xa0, 0x7b, 0x90, 0xe4, 0x84, 0x86, 0x88, 0x08,
@@ -25,7 +34,11 @@ const GOLDEN_INFO_BODY: [u8; 77] = [
     0x76, 0x65,
 ];
 const INFO_SET: u32 = 9;
+const SAMPLE_GROUP: u8 = 5;
 const SAMPLE_PART_GROUP_AT: usize = 39;
+const LAST_LAMP: u8 = VIRTUAL_LAMP_COUNT - 1;
+const LAST_GROUP: u8 = GROUP_COUNT - 1;
+const LAST_SCENE: u8 = SCENE_COUNT - 1;
 
 const HOME_MAC: [u8; 6] = [0x30, 0xed, 0xa0, 0x7b, 0x90, 0xe4];
 const MARK: BirthMark = BirthMark { generation: 2, nonce: 0xa1b2_c3d4 };
@@ -144,7 +157,7 @@ fn info_sample() -> [InfoElement<'static>; 7] {
         InfoElement::ChannelPart(ChannelPart {
             adapter: 0,
             channel: CHANNEL_3,
-            group: 5,
+            group: SAMPLE_GROUP,
             taken: false,
             flags: PartFlags { send: true, accept: true },
             revision: 2,
@@ -159,14 +172,14 @@ fn info_sample() -> [InfoElement<'static>; 7] {
             revision: 3,
         }),
         InfoElement::GroupMap(GroupMap { adapter: 0, occupied: 0b10_0001 }),
-        InfoElement::GroupName(LocalName { adapter: 0, number: 5, name: "Hall" }),
+        InfoElement::GroupName(LocalName { adapter: 0, number: SAMPLE_GROUP, name: "Hall" }),
         InfoElement::SceneName(LocalName { adapter: 0, number: 2, name: "Eve" }),
     ]
 }
 
-fn golden(kind: FrameKind, body: &[u8]) -> Vec<u8> {
+fn golden(kind: u8, body: &[u8]) -> Vec<u8> {
     let mut bytes = PROTOCOL_TAG.to_vec();
-    bytes.extend_from_slice(&[PROTOCOL_VERSION, kind as u8]);
+    bytes.extend_from_slice(&[PROTOCOL_VERSION, kind]);
     bytes.extend_from_slice(&GOLDEN_HEADER);
     bytes.extend_from_slice(body);
     bytes
@@ -188,7 +201,7 @@ fn widest_elements(name: &str) -> [InfoElement<'_>; 7] {
         InfoElement::ChannelPart(ChannelPart {
             adapter: u8::MAX,
             channel: WIDEST_RECORD,
-            group: 15,
+            group: LAST_GROUP,
             taken: true,
             flags,
             revision: u32::MAX,
@@ -198,13 +211,13 @@ fn widest_elements(name: &str) -> [InfoElement<'_>; 7] {
         InfoElement::ScenePart(ScenePart {
             adapter: u8::MAX,
             scene: WIDEST_RECORD,
-            node_scene: 15,
+            node_scene: LAST_SCENE,
             flags,
             revision: u32::MAX,
         }),
         InfoElement::GroupMap(GroupMap { adapter: u8::MAX, occupied: u16::MAX }),
-        InfoElement::GroupName(LocalName { adapter: u8::MAX, number: 15, name }),
-        InfoElement::SceneName(LocalName { adapter: u8::MAX, number: 15, name }),
+        InfoElement::GroupName(LocalName { adapter: u8::MAX, number: LAST_GROUP, name }),
+        InfoElement::SceneName(LocalName { adapter: u8::MAX, number: LAST_SCENE, name }),
     ]
 }
 
@@ -213,35 +226,131 @@ fn widest_name() -> String {
     widest.to_string().repeat(MAX_NAME_BYTES / widest.len_utf8())
 }
 
+fn wire<T: Serialize>(value: &T) -> Vec<u8> {
+    let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let len = put(value, &mut buffer).expect("put");
+    buffer[..len].to_vec()
+}
+
+fn assert_wire_order<T: Serialize>(variants: &[T]) {
+    for (index, variant) in variants.iter().enumerate() {
+        assert_eq!(usize::from(wire(variant)[0]), index);
+    }
+}
+
+fn unchecked(kind: FrameKind, body: &impl Serialize) -> Vec<u8> {
+    let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let at = write_head(&mut buffer, kind, &header()).expect("head");
+    let len = at + put(body, &mut buffer[at..]).expect("body");
+    buffer[..len].to_vec()
+}
+
+fn written_pages(elements: &[InfoElement<'_>]) -> Vec<Vec<u8>> {
+    let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let mut pages = Vec::new();
+    let mut seq = 0;
+    let next_header = || {
+        seq += 1;
+        Header { seq, ..widest_header() }
+    };
+    write_pages(&mut buffer, INFO_SET, next_header, elements.iter().copied(), |page| {
+        pages.push(page.to_vec());
+    })
+    .expect("pages");
+    pages
+}
+
+fn page_at(bytes: &[u8], index: usize) -> InfoPage<'_> {
+    let decoded = decode(bytes).expect("decode");
+    assert_eq!(decoded.header.seq, u32::try_from(index + 1).expect("seq"));
+    let Frame::ChannelSceneInfo(page) = decoded.frame else { panic!("not a page") };
+    assert_eq!((page.meta().set, usize::from(page.meta().page)), (INFO_SET, index));
+    page
+}
+
 #[test]
 fn a_channel_command_has_its_golden_bytes() {
     let bytes = encoded(&header(), &Frame::Command(channel_command()));
-    assert_eq!(bytes, golden(FrameKind::Command, &GOLDEN_COMMAND_BODY));
+    assert_eq!(bytes, golden(COMMAND_KIND, &GOLDEN_COMMAND_BODY));
 }
 
 #[test]
 fn a_pulse_has_its_golden_bytes() {
     let bytes = encoded(&header(), &Frame::Pulse(pulse()));
-    assert_eq!(bytes, golden(FrameKind::Pulse, &GOLDEN_PULSE_BODY));
+    assert_eq!(bytes, golden(PULSE_KIND, &GOLDEN_PULSE_BODY));
 }
 
 #[test]
 fn a_hello_has_its_golden_bytes() {
     let bytes = encoded(&header(), &Frame::Hello(Hello { ha_face: true }));
-    assert_eq!(bytes, golden(FrameKind::Hello, &GOLDEN_HELLO_BODY));
+    assert_eq!(bytes, golden(HELLO_KIND, &GOLDEN_HELLO_BODY));
 }
 
 #[test]
 fn a_page_of_channel_and_scene_info_has_its_golden_bytes() {
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let len = sample_page(&mut buffer, true);
-    assert_eq!(buffer[..len], golden(FrameKind::ChannelSceneInfo, &GOLDEN_INFO_BODY));
+    assert_eq!(buffer[..len], golden(INFO_KIND, &GOLDEN_INFO_BODY));
 }
 
 #[test]
 fn the_preamble_names_the_protocol_its_version_and_the_kind() {
     let bytes = encoded(&header(), &Frame::Hello(Hello { ha_face: false }));
-    assert_eq!(bytes[..PREAMBLE_BYTES], [b'D', b'2', b'R', b'C', 1, FrameKind::Hello as u8]);
+    assert_eq!(bytes[..PREAMBLE_BYTES], [b'D', b'2', b'R', b'C', 1, HELLO_KIND]);
+}
+
+#[test]
+fn every_variant_of_a_command_keeps_its_index_on_the_wire() {
+    let lamp = LampAddress { node: 0, adapter: 0, lamp: 0 };
+    assert_wire_order(&[Target::Channel(CHANNEL_3), Target::All, Target::Lamp(lamp)]);
+    assert_wire_order(&[RecallScope::Node, RecallScope::Channel(CHANNEL_3)]);
+    assert_wire_order(&[
+        LightVerb::Setpoint(warm_white()),
+        LightVerb::Transition(LevelTransition::Up),
+        LightVerb::StopFade,
+    ]);
+    assert_wire_order(&[
+        Action::Light { target: Target::All, verb: LightVerb::StopFade },
+        Action::RecallScene { scene: CHANNEL_3, scope: RecallScope::Node },
+    ]);
+    assert_wire_order(&[
+        SourceClass::Operator,
+        SourceClass::HomeAssistant,
+        SourceClass::Hcl,
+        SourceClass::Rules,
+        SourceClass::ForeignMaster,
+    ]);
+}
+
+#[test]
+fn every_variant_of_a_reused_contract_type_keeps_its_index_on_the_wire() {
+    assert_wire_order(&[
+        LevelTransition::RecallMaxLevel,
+        LevelTransition::RecallMinLevel,
+        LevelTransition::StepUp,
+        LevelTransition::StepDown,
+        LevelTransition::StepDownAndOff,
+        LevelTransition::OnAndStepUp,
+        LevelTransition::GoToLastActiveLevel,
+        LevelTransition::Up,
+        LevelTransition::Down,
+    ]);
+    assert_wire_order(&[PowerState::Off, PowerState::On, PowerState::Unknown]);
+    assert_wire_order(&[
+        ColorMode::None,
+        ColorMode::Brightness,
+        ColorMode::Cct,
+        ColorMode::Xy,
+        ColorMode::Rgb,
+        ColorMode::Rgbwaf,
+        ColorMode::Unknown,
+    ]);
+}
+
+#[test]
+fn every_variant_of_presence_and_info_keeps_its_index_on_the_wire() {
+    assert_wire_order(&[NodeClaim::Holding, NodeClaim::Waiting]);
+    assert_wire_order(&info_sample());
 }
 
 #[test]
@@ -257,7 +366,7 @@ fn every_frame_kind_decodes_to_what_was_encoded() {
 
 #[test]
 fn every_verb_and_target_survives_the_round_trip() {
-    let lamp = Target::Lamp(LampAddress { node: LAST_NODE, adapter: 1, lamp: 63 });
+    let lamp = Target::Lamp(LampAddress { node: LAST_NODE, adapter: 1, lamp: LAST_LAMP });
     let verbs = [
         LightVerb::Setpoint(warm_white()),
         LightVerb::Transition(LevelTransition::Up),
@@ -293,7 +402,6 @@ fn the_widest_single_frames_stay_under_the_datagram_ceiling() {
         Frame::Hello(Hello { ha_face: true }),
     ] {
         let bytes = encoded(&widest_header(), &frame);
-        assert!(bytes.len() <= MAX_CLUSTER_DATAGRAM_BYTES);
         assert_eq!(decode(&bytes).expect("decode").frame, frame);
     }
 }
@@ -314,28 +422,21 @@ fn the_widest_element_of_every_kind_fits_a_page_after_the_widest_header() {
 }
 
 #[test]
-fn a_node_s_whole_info_splits_into_pages_under_the_ceiling_and_reads_back_in_order() {
+fn a_node_s_whole_info_fills_every_page_but_the_last_and_reads_back_in_order() {
     let name = widest_name();
     let elements: Vec<_> = (0..NUMBERS_PER_NODE).flat_map(|_| widest_elements(&name)).collect();
-    let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
-    let mut pages: Vec<Vec<u8>> = Vec::new();
-    let mut seq = 0;
-    let next_header = || {
-        seq += 1;
-        Header { seq, ..widest_header() }
-    };
-    write_pages(&mut buffer, INFO_SET, next_header, elements.clone(), |page| pages.push(page.to_vec()))
-        .expect("pages");
+    let pages = written_pages(&elements);
     assert!(pages.len() > 1);
     let mut read_back = Vec::new();
     for (index, bytes) in pages.iter().enumerate() {
-        assert!(bytes.len() <= MAX_CLUSTER_DATAGRAM_BYTES);
-        let decoded = decode(bytes).expect("decode");
-        assert_eq!(decoded.header.seq, u32::try_from(index + 1).expect("seq"));
-        let Frame::ChannelSceneInfo(page) = decoded.frame else { panic!("not a page") };
-        let meta = page.meta();
-        assert_eq!((meta.set, usize::from(meta.page), meta.last), (INFO_SET, index, index + 1 == pages.len()));
+        let page = page_at(bytes, index);
+        let last = index + 1 == pages.len();
+        assert_eq!(page.meta().last, last);
         read_back.extend(page.elements());
+        if !last {
+            let next = wire(&elements[read_back.len()]).len();
+            assert!(bytes.len() + next > MAX_CLUSTER_DATAGRAM_BYTES);
+        }
     }
     assert_eq!(read_back, elements);
 }
@@ -408,10 +509,10 @@ fn a_datagram_past_the_ceiling_is_rejected_before_it_is_read() {
 }
 
 #[test]
-fn an_unknown_kind_under_a_known_version_is_malformed() {
+fn an_unknown_kind_under_a_known_version_is_its_own_rejection_and_names_the_kind() {
     let mut bytes = encoded(&header(), &Frame::Hello(Hello { ha_face: true }));
-    bytes[PREAMBLE_BYTES - 1] = FrameKind::ChannelSceneInfo as u8 + 1;
-    assert_eq!(decode(&bytes), Err(Rejection::Malformed));
+    bytes[PREAMBLE_BYTES - 1] = FIRST_UNKNOWN_KIND;
+    assert_eq!(decode(&bytes), Err(Rejection::UnknownKind(FIRST_UNKNOWN_KIND)));
 }
 
 #[test]
@@ -447,37 +548,42 @@ fn a_value_out_of_its_range_is_refused_on_encode_and_rejected_on_decode() {
 }
 
 #[test]
-fn a_command_outside_the_cluster_s_numbers_is_refused() {
+fn a_command_outside_the_cluster_s_numbers_is_refused_and_rejected() {
     let past_last_record = RecordRef { number: RECORD_NUMBER_COUNT, mark: MARK };
-    let past_last_lamp = LampAddress { node: 0, adapter: 0, lamp: 64 };
+    let past_last_lamp = LampAddress { node: 0, adapter: 0, lamp: VIRTUAL_LAMP_COUNT };
     let past_last_node = LampAddress { node: NODE_COUNT, adapter: 0, lamp: 0 };
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
-    for action in [
+    assert!(decode(&unchecked(FrameKind::Command, &channel_command())).is_ok());
+    for command in [
         Action::Light { target: Target::Channel(past_last_record), verb: LightVerb::StopFade },
         Action::Light { target: Target::Lamp(past_last_lamp), verb: LightVerb::StopFade },
         Action::Light { target: Target::Lamp(past_last_node), verb: LightVerb::StopFade },
         Action::RecallScene { scene: past_last_record, scope: RecallScope::Node },
         Action::RecallScene { scene: CHANNEL_3, scope: RecallScope::Channel(past_last_record) },
-    ] {
-        let frame = Frame::Command(Command { action, ..channel_command() });
-        assert_eq!(encode(&header(), &frame, &mut buffer), Err(EncodeError::OutOfRange));
+    ]
+    .map(|action| Command { action, ..channel_command() })
+    .into_iter()
+    .chain([Command { executed_on_wire: Some(NODE_COUNT), ..channel_command() }])
+    {
+        let refused = encode(&header(), &Frame::Command(command.clone()), &mut buffer);
+        assert_eq!(refused, Err(EncodeError::OutOfRange));
+        assert_eq!(decode(&unchecked(FrameKind::Command, &command)), Err(Rejection::Malformed));
     }
-    let wire_past_last = Command { executed_on_wire: Some(NODE_COUNT), ..channel_command() };
-    let refused = encode(&header(), &Frame::Command(wire_past_last), &mut buffer);
-    assert_eq!(refused, Err(EncodeError::OutOfRange));
 }
 
 #[test]
-fn a_pulse_with_an_overlong_name_or_a_wire_past_the_last_node_is_refused() {
+fn a_pulse_with_an_overlong_name_or_a_wire_past_the_last_node_is_refused_and_rejected() {
     let long_name = "x".repeat(MAX_CLUSTER_NAME_BYTES + 1);
     let long_installation = "x".repeat(MAX_INSTALLATION_BYTES + 1);
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    assert!(decode(&unchecked(FrameKind::Pulse, &pulse())).is_ok());
     for pulse in [
         Pulse { cluster_name: &long_name, ..pulse() },
         Pulse { installation: &long_installation, ..pulse() },
         Pulse { wire: NODE_COUNT, ..pulse() },
     ] {
         assert_eq!(encode(&header(), &Frame::Pulse(pulse), &mut buffer), Err(EncodeError::OutOfRange));
+        assert_eq!(decode(&unchecked(FrameKind::Pulse, &pulse)), Err(Rejection::Malformed));
     }
 }
 
@@ -495,9 +601,9 @@ fn an_element_outside_its_range_is_refused_by_the_page() {
     for element in [
         InfoElement::ChannelRecord(Record { name: &long_name, ..record }),
         InfoElement::SceneRecord(Record { id: RecordRef { number: RECORD_NUMBER_COUNT, mark: MARK }, ..record }),
-        InfoElement::ChannelPart(ChannelPart { group: 16, ..channel_part }),
-        InfoElement::ScenePart(ScenePart { node_scene: 16, ..scene_part }),
-        InfoElement::GroupName(LocalName { number: 16, ..group_name }),
+        InfoElement::ChannelPart(ChannelPart { group: GROUP_COUNT, ..channel_part }),
+        InfoElement::ScenePart(ScenePart { node_scene: SCENE_COUNT, ..scene_part }),
+        InfoElement::GroupName(LocalName { number: GROUP_COUNT, ..group_name }),
         InfoElement::SceneName(LocalName { name: &long_name, ..scene_name }),
     ] {
         assert_eq!(writer.push(&element), Err(PushError::OutOfRange));
@@ -510,14 +616,7 @@ fn an_element_out_of_range_inside_a_received_page_rejects_the_page() {
     let len = sample_page(&mut buffer, true);
     let mut bytes = buffer[..len].to_vec();
     let group_at = bytes.len() - GOLDEN_INFO_BODY.len() + SAMPLE_PART_GROUP_AT;
-    assert_eq!(bytes[group_at], 5);
-    bytes[group_at] = 16;
+    assert_eq!(bytes[group_at], SAMPLE_GROUP);
+    bytes[group_at] = GROUP_COUNT;
     assert_eq!(decode(&bytes), Err(Rejection::Malformed));
-}
-
-#[test]
-fn a_command_is_byte_identical_when_sent_twice() {
-    let first = encoded(&header(), &Frame::Command(channel_command()));
-    let second = encoded(&header(), &Frame::Command(channel_command()));
-    assert_eq!(first, second);
 }

@@ -61,21 +61,24 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 - One datagram is one frame of at most `MAX_CLUSTER_DATAGRAM_BYTES`. A raw preamble —
   protocol tag, version, kind — keeps one shape in every version and precedes the
   `postcard` header and body, so the decoder tells another protocol, an unknown version, an
-  oversize datagram and a malformed frame apart, and the version of a dropped frame stays
-  readable.
-- A changed field of any kind is a new version. Every kind has golden bytes in a test, and
-  a reused contract type that changes shape changes them too.
-- A value outside its range — node, wire, record number, lamp, group, scene, name length —
-  is refused by the encoder and rejects the frame in the decoder.
+  unknown kind, an oversize datagram and a malformed frame apart, and the version of a
+  dropped frame stays readable.
+- A changed field of any kind is a new version; a new kind is not. Every kind has golden
+  bytes in a test and every enum on the wire its variant order, so a reused contract type
+  that changes shape or order changes them too.
+- A value outside its range is refused by the encoder and rejects the frame in the
+  decoder.
 - A large frame is a page of elements. The page writer encodes one element at a time into
   the caller's datagram buffer and closes the page when the next one does not fit; the
   decoder checks every element, then hands them out one at a time, borrowed from the
-  datagram. Nothing holds a whole page as values.
-- The duplicate window (`SequenceWindow`) belongs to one sender board and one boot epoch:
-  sequence numbers compare by wrapping arithmetic, a copy carries its original's number,
-  and every kind of frame of that board draws from one sequence.
-- The network port is `ClusterLink` in `dali2rust-platform`: send one datagram, receive one
-  with a timeout, from any thread. `UdpClusterLink` is its one implementation, for the
+  datagram. Nothing holds a whole page as values. A record whose number lies outside the
+  sender's block is the sender's copy of a record another node is home to.
+- The duplicate window (`SequenceWindow`) is kept per sender board. Sequence numbers
+  compare by wrapping arithmetic within a boot epoch; a new epoch starts the window again,
+  and a frame of the epoch just left is too old. A copy carries its original's number, and
+  every kind of frame of that board draws from one sequence.
+- The network port is `ClusterLink` in `dali2rust-platform`: send one datagram from any
+  thread, receive one with a timeout on the one thread that owns the inbox. `UdpClusterLink` is its one implementation, for the
   board and the host: it binds, enables broadcast, sends to the limited broadcast address
   and drops nothing. A datagram over the ceiling is refused on send and reported as
   oversize on receive, never truncated into a frame. A socket may hear its own broadcast,

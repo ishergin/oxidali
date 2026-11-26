@@ -53,6 +53,7 @@ pub struct Decoded<'a> {
 pub enum Rejection {
     NotCluster,
     UnknownVersion(u8),
+    UnknownKind(u8),
     TooLarge,
     Malformed,
 }
@@ -142,7 +143,8 @@ fn read_preamble(datagram: &[u8]) -> Result<(FrameKind, &[u8]), Rejection> {
     if version != PROTOCOL_VERSION {
         return Err(Rejection::UnknownVersion(version));
     }
-    let kind = FrameKind::from_byte(preamble[KIND_AT]).ok_or(Rejection::Malformed)?;
+    let kind_byte = preamble[KIND_AT];
+    let kind = FrameKind::from_byte(kind_byte).ok_or(Rejection::UnknownKind(kind_byte))?;
     Ok((kind, rest))
 }
 

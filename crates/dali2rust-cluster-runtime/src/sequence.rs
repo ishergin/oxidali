@@ -20,19 +20,19 @@ impl Arrival {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SequenceWindow {
     epoch: u32,
+    left: Option<u32>,
     highest: u32,
     seen: u64,
 }
 
 impl SequenceWindow {
     pub const fn starting_at(epoch: u32, seq: u32) -> Self {
-        Self { epoch, highest: seq, seen: NEWEST_ONLY }
+        Self { epoch, left: None, highest: seq, seen: NEWEST_ONLY }
     }
 
     pub fn admit(&mut self, epoch: u32, seq: u32) -> Arrival {
         if epoch != self.epoch {
-            *self = Self::starting_at(epoch, seq);
-            return Arrival::Restarted;
+            return self.restart(epoch, seq);
         }
         let ahead = seq.wrapping_sub(self.highest);
         match ahead {
@@ -40,6 +40,14 @@ impl SequenceWindow {
             1..HALF_SEQUENCE_SPACE => self.advance(seq, ahead),
             _ => self.look_back(self.highest.wrapping_sub(seq)),
         }
+    }
+
+    fn restart(&mut self, epoch: u32, seq: u32) -> Arrival {
+        if self.left == Some(epoch) {
+            return Arrival::TooOld;
+        }
+        *self = Self { left: Some(self.epoch), ..Self::starting_at(epoch, seq) };
+        Arrival::Restarted
     }
 
     fn advance(&mut self, seq: u32, ahead: u32) -> Arrival {
@@ -101,6 +109,7 @@ mod tests {
     fn a_jump_past_the_window_forgets_everything_before_it() {
         let mut window = SequenceWindow::starting_at(EPOCH, 10);
         assert_eq!(window.admit(EPOCH, 10 + WINDOW + 36), Arrival::Fresh { skipped: WINDOW + 35 });
+        assert_eq!(window.admit(EPOCH, 10 + WINDOW + 35), Arrival::Late);
         assert_eq!(window.admit(EPOCH, 10), Arrival::TooOld);
         assert_eq!(window.admit(EPOCH, 10 + WINDOW), Arrival::Late);
     }
@@ -110,6 +119,7 @@ mod tests {
         let mut window = SequenceWindow::starting_at(EPOCH, 10);
         window.admit(EPOCH, 11);
         assert_eq!(window.admit(EPOCH, 11 + WINDOW), Arrival::Fresh { skipped: WINDOW - 1 });
+        assert_eq!(window.admit(EPOCH, 11 + WINDOW - 1), Arrival::Late);
         assert_eq!(window.admit(EPOCH, 12), Arrival::Late);
         assert_eq!(window.admit(EPOCH, 11), Arrival::TooOld);
     }
@@ -137,6 +147,14 @@ mod tests {
         assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
         assert_eq!(window.admit(REBOOTED, 1), Arrival::Duplicate);
         assert_eq!(window.admit(REBOOTED, 2), Arrival::Fresh { skipped: 0 });
+    }
+
+    #[test]
+    fn a_late_frame_from_the_epoch_just_left_is_too_old_not_a_restart() {
+        let mut window = SequenceWindow::starting_at(EPOCH, 5);
+        assert_eq!(window.admit(REBOOTED, 1), Arrival::Restarted);
+        assert_eq!(window.admit(EPOCH, 5), Arrival::TooOld);
+        assert_eq!(window.admit(REBOOTED, 1), Arrival::Duplicate);
     }
 
     #[test]
