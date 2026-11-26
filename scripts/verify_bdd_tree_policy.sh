@@ -14,6 +14,7 @@ features_dir = sys.argv[1]
 
 allowed_top_level = {
     "adapters",
+    "cluster",
     "commissioning",
     "contracts",
     "diagnostic",

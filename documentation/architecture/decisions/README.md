@@ -38,9 +38,10 @@ Scope: why the system is built this way. How it works is in the
 | [029](ADR-029-network-buffers-in-psram-and-a-measured-receive-ring.md) | Network buffers in PSRAM | Accepted | lwIP and received frames in PSRAM; mailbox holds the window; ring sized by its drop counter |
 | [030](ADR-030-controller-as-a-part-103-bus-unit.md) | The controller as a Part 103 bus unit | Accepted | One stateful model; the interrupt answers from the table it builds; answers superimpose in their slot; liveness is an application-controller error |
 | [031](ADR-031-gear-emulator-on-the-standby.md) | Gear emulator on the standby | Accepted | Lent by OTA for one boot or by wire; a session envelope keeps it off the owner's lamps |
-| [032](ADR-032-installation-and-node-identity.md) | Installation and node identity | Accepted | `controller_id` is the pair's installation; `node_id` and the hostname come from the node's MAC |
+| [032](ADR-032-installation-and-node-identity.md) | Installation and node identity | Amended by 035 | `controller_id` is the pair's installation; `node_id` and the hostname come from the node's MAC |
 | [033](ADR-033-mqtt-rule-trigger.md) | MQTT rule trigger | Accepted | Exact topics the bridge subscribes from a read port; one required event per message; a subscription's retained replay fires nothing |
 | [034](ADR-034-the-websocket-socket-belongs-to-a-worker.md) | The WebSocket socket belongs to a worker | Accepted | `for_async_req` takes the socket off the httpd task; our own frame codec; the last owner completes the request |
+| [035](ADR-035-cluster-of-installations-over-udp.md) | The cluster | Accepted | UDP broadcast in one L2 segment, unsigned; a node is an installation; a channel is a record with a home node |
 
 A new record takes the next number and the same sections (`Status`, `Date`, `Context`,
 `Decision`, `Consequences`). A later decision that changes an earlier one is merged into
