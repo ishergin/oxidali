@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { GroupMembershipMatrix } from '../api/types'
 import { Chip, EditableName, MatrixCell, Switch } from '../components/ui'
@@ -7,24 +7,35 @@ import { statusOnly } from '../cluster-feed'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify, saveThenApply, trackOp } from '../toast'
 import { applyBar, boundLamps } from './apply-bar'
-import { type GroupLock, gearDiffers, groupLocks, lockHint, lockHref, lockLabel } from './groups-view'
+import { type GroupLock, LOCKS_UNREAD, dropLocked, gearDiffers, groupLocks, lockHint, lockHref, lockLabel } from './groups-view'
 
 const MATRIX_POLL_MS = 10_000
 
 const editKey = (vl: number, g: number) => `${vl}:${g}`
 
-async function readLocks(): Promise<Map<number, GroupLock>> {
+interface LocksRead {
+  locks: Map<number, GroupLock>
+  unread: boolean
+}
+
+const NO_LOCKS: LocksRead = { locks: new Map(), unread: false }
+
+async function readLocks(): Promise<LocksRead> {
   try {
-    const [parts, records] = await Promise.all([api.clusterOwnParts('channel'), api.clusterRecords('channel')])
-    return groupLocks(ADAPTER, parts, records)
+    const settings = await api.clusterSettings()
+    const [parts, records] = await Promise.all([
+      api.clusterNodeParts('channel', settings.node_number),
+      api.clusterRecords('channel'),
+    ])
+    return { locks: groupLocks(ADAPTER, parts, records), unread: false }
   } catch {
-    return new Map()
+    return { locks: new Map(), unread: true }
   }
 }
 
-function useGroupLocks(): Map<number, GroupLock> {
+function useGroupLocks(): LocksRead {
   const { data } = useLive(readLocks, ['cluster'], { intervalMs: MATRIX_POLL_MS, onEvent: statusOnly })
-  return data ?? new Map()
+  return data ?? NO_LOCKS
 }
 
 function LockedPop({ g, lock, ha, onHa }: { g: number; lock: GroupLock; ha: boolean; onHa: () => void }) {
@@ -69,7 +80,8 @@ function LockedHead(p: {
   )
 }
 
-function LockHint({ locks }: { locks: Map<number, GroupLock> }) {
+function LockHint({ read: { locks, unread } }: { read: LocksRead }) {
+  if (unread) return <p class="lockhint">{LOCKS_UNREAD}</p>
   const text = lockHint(locks)
   if (!text) return null
   const entries = [...locks.entries()].sort(([a], [b]) => a - b)
@@ -85,6 +97,46 @@ function LockHint({ locks }: { locks: Map<number, GroupLock> }) {
         </span>
       ))}
     </p>
+  )
+}
+
+function OpenHead(p: {
+  g: number
+  grp: GroupMembershipMatrix['groups'][number]
+  count: number
+  open: boolean
+  ha: boolean
+  onOpen: () => void
+  onName: (name: string) => void
+  onClose: () => void
+  onHa: () => void
+}) {
+  return (
+    <th class={`gname${p.grp.dirty ? ' dirty' : ''}`} title="Click to rename" onClick={p.onOpen}>
+      G{p.g}
+      <span class="cnt">
+        {p.grp.name || '—'} · {p.count}
+      </span>
+      {p.open && (
+        <span class="pop" onClick={(e) => e.stopPropagation()}>
+          <span class="ph">Group G{p.g}</span>
+          <span class="pb">
+            <EditableName
+              autoFocus
+              value={p.grp.name ?? ''}
+              placeholder={`unnamed`}
+              onCommit={p.onName}
+              onCancel={p.onClose}
+              onDismiss={p.onClose}
+            />
+            <span class="prow" onMouseDown={(e) => e.preventDefault()}>
+              <span class="pl">Home Assistant</span>
+              <Switch on={p.ha} onToggle={p.onHa} />
+            </span>
+          </span>
+        </span>
+      )}
+    </th>
   )
 }
 
@@ -109,7 +161,9 @@ export function Groups() {
   const [filter, setFilter] = useState('')
   const [busy, setBusy] = useState(false)
   const [renaming, setRenaming] = useState<number | null>(null)
-  const locks = useGroupLocks()
+  const locksRead = useGroupLocks()
+  const locks = locksRead.locks
+  useEffect(() => setEdits((prev) => dropLocked(prev, locks)), [locks])
 
   if (!data) return <div class="empty">Loading group matrix…</div>
   const { matrix, bound, names, shorts, haEnabled } = data
@@ -226,54 +280,25 @@ export function Groups() {
             <tr>
               <th class="lamp">Virtual lamp</th>
               {matrix.groups.map((grp, g) => {
+                const head = {
+                  g,
+                  count: desiredCount(g),
+                  open: renaming === g,
+                  ha: haEnabled.get(g) !== false,
+                  onHa: () => void toggleGroupHa(g, haEnabled.get(g) === false),
+                }
                 const lock = locks.get(g)
                 return lock ? (
-                  <LockedHead
-                    key={g}
-                    g={g}
-                    lock={lock}
-                    count={desiredCount(g)}
-                    open={renaming === g}
-                    ha={haEnabled.get(g) !== false}
-                    onOpen={() => setRenaming((cur) => (cur === g ? null : g))}
-                    onHa={() => void toggleGroupHa(g, haEnabled.get(g) === false)}
-                  />
+                  <LockedHead key={g} {...head} lock={lock} onOpen={() => setRenaming((cur) => (cur === g ? null : g))} />
                 ) : (
-                <th
-                  key={g}
-                  class={`gname${grp.dirty ? ' dirty' : ''}`}
-                  title="Click to rename"
-                  onClick={() => {
-                    setRenaming((cur) => (cur === null || locks.has(cur) ? g : cur))
-                  }}
-                >
-                  G{g}
-                  <span class="cnt">
-                    {grp.name || '—'} · {desiredCount(g)}
-                  </span>
-                  {renaming === g && (
-                    <span class="pop" onClick={(e) => e.stopPropagation()}>
-                      <span class="ph">Group G{g}</span>
-                      <span class="pb">
-                        <EditableName
-                          autoFocus
-                          value={grp.name ?? ''}
-                          placeholder={`unnamed`}
-                          onCommit={(v) => void saveGroupName(g, v)}
-                          onCancel={() => setRenaming(null)}
-                          onDismiss={() => setRenaming(null)}
-                        />
-                        <span class="prow" onMouseDown={(e) => e.preventDefault()}>
-                          <span class="pl">Home Assistant</span>
-                          <Switch
-                            on={haEnabled.get(g) !== false}
-                            onToggle={() => void toggleGroupHa(g, haEnabled.get(g) === false)}
-                          />
-                        </span>
-                      </span>
-                    </span>
-                  )}
-                </th>
+                  <OpenHead
+                    key={g}
+                    {...head}
+                    grp={grp}
+                    onOpen={() => setRenaming((cur) => (cur === null || locks.has(cur) ? g : cur))}
+                    onName={(v) => void saveGroupName(g, v)}
+                    onClose={() => setRenaming(null)}
+                  />
                 )
               })}
             </tr>
@@ -318,7 +343,7 @@ export function Groups() {
           </tbody>
         </table>
       </div>
-      <LockHint locks={locks} />
+      <LockHint read={locksRead} />
 
       {bar && (
         <div class="applybar">

@@ -164,7 +164,7 @@ export function editName(draft: Draft, kind: Kind, rec: ClusterRecord, raw: stri
   const key = recordKey(kind, rec)
   const name = clipTyped(raw)
   const names = { ...draft.names }
-  if (clipName(name) === rec.name) delete names[key]
+  if (name === rec.name) delete names[key]
   else names[key] = { name, revision: draft.names[key]?.revision ?? rec.revision }
   return { ...draft, names }
 }
@@ -191,7 +191,7 @@ function kindOfKey(key: string): Kind {
 export function draftOnRead(draft: Draft, records: Records, own: OwnParts, readOnly = false): Draft {
   if (readOnly) return EMPTY_DRAFT
   const byKey = recordByKey(records)
-  const names = Object.entries(draft.names).filter(([key, edit]) => byKey.has(key) && byKey.get(key)?.name !== clipName(edit.name))
+  const names = Object.entries(draft.names).filter(([key, edit]) => byKey.has(key) && byKey.get(key)?.name !== edit.name)
   const parts = Object.entries(draft.parts).filter(([key, state]) => {
     const rec = byKey.get(key)
     return rec !== undefined && !samePart(state, serverPart(ownPartOf(rec, own[kindOfKey(key)])))
@@ -237,10 +237,17 @@ export function editsOf(draft: Draft, key: string): number {
   return (key in draft.names ? 1 : 0) + (key in draft.parts ? 1 : 0)
 }
 
+const STRAY_TAIL: Record<ClusterNodePart['link'], string> = { live: '', orphan: ' · left over', unknown: ' · not heard' }
+
 function stillHolds(kind: Kind, part: ClusterNodePart, draft: Draft): boolean {
-  if (part.link === 'orphan') return true
+  if (part.link !== 'live') return true
   const moved = draft.parts[recordKey(kind, part.record)]
   return moved === undefined || moved.local === localOf(part)
+}
+
+export interface Holder {
+  label: string
+  drafted: boolean
 }
 
 export function holderOf(
@@ -249,21 +256,29 @@ export function holderOf(
   own: ClusterNodePart[],
   draft: Draft,
   exceptKey: string,
-): string | null {
+): Holder | null {
   const server = own.find((p) => p.adapter === ADAPTER && localOf(p) === local && stillHolds(kind, p, draft))
   if (server) {
     if (recordKey(kind, server.record) === exceptKey) return null
     const label = recordLabel(kind, server.record.number)
-    return server.link === 'orphan' ? `${label} · left over` : label
+    return { label: `${label}${STRAY_TAIL[server.link]}`, drafted: false }
   }
   for (const [key, state] of Object.entries(draft.parts)) {
-    if (key !== exceptKey && kindOfKey(key) === kind && state.local === local) return recordLabel(kind, Number(key.split(':')[1]))
+    if (key !== exceptKey && kindOfKey(key) === kind && state.local === local) {
+      return { label: recordLabel(kind, Number(key.split(':')[1])), drafted: true }
+    }
   }
   return null
 }
 
-export function takenText(kind: Kind, local: number, holder: string): string {
-  return `${localLabel(kind, local)} is the part of ${holder}. Unlink it there first; the draft does not move it.`
+export function takenText(kind: Kind, local: number, holder: Holder): string {
+  const what = localLabel(kind, local)
+  if (holder.drafted) return `${what} is also chosen for ${holder.label} in this draft. A group is the part of one record only.`
+  return `${what} is the part of ${holder.label}. Unlink it there first; the draft does not move it.`
+}
+
+function holderTail(holder: Holder): string {
+  return holder.drafted ? ` · chosen for ${holder.label}` : ` · part of ${holder.label}`
 }
 
 export interface LocalInfo {
@@ -283,7 +298,7 @@ export function localOptions(
   for (const l of locals) {
     const holder = holderOf(kind, l.id, own, draft, key)
     const name = l.name ? ` · ${l.name}` : ''
-    const tail = holder ? ` · part of ${holder}` : ` · ${l.members} lamp${l.members === 1 ? '' : 's'}`
+    const tail = holder ? holderTail(holder) : ` · ${l.members} lamp${l.members === 1 ? '' : 's'}`
     options.push({ value: l.id, label: `${localLabel(kind, l.id)}${name}${tail}` })
   }
   return options
@@ -293,16 +308,19 @@ export type Step =
   | { op: 'rename'; key: string; item: string; kind: Kind; number: number; name: string; revision: number }
   | { op: 'unlink'; key: string; item: string; kind: Kind; local: number }
   | { op: 'link'; key: string; item: string; kind: Kind; local: number; body: ClusterPartWrite }
-  | { op: 'refuse'; key: string; item: string; kind: Kind; text: string }
+  | { op: 'refuse'; key: string; item: string; kind: Kind; text: string; keeps?: number }
 
 function partSteps(kind: Kind, rec: ClusterRecord, state: PartState, own: OwnParts, draft: Draft): Step[] {
   const key = recordKey(kind, rec)
   const item = `${recordLabel(kind, rec.number)} part`
   const server = ownPartOf(rec, own[kind])
   const holder = state.local === null ? null : holderOf(kind, state.local, own[kind], draft, key)
-  if (state.local !== null && holder) return [{ op: 'refuse', key, item, kind, text: takenText(kind, state.local, holder) }]
-  const steps: Step[] = []
   const was = server ? localOf(server) : null
+  if (state.local !== null && holder) {
+    const text = takenText(kind, state.local, holder)
+    return [{ op: 'refuse', key, item, kind, text, ...(was === null ? {} : { keeps: was }) }]
+  }
+  const steps: Step[] = []
   if (was !== null && state.local !== was) steps.push({ op: 'unlink', key, item, kind, local: was })
   if (state.local !== null && !samePart(state, serverPart(server))) {
     const record = { number: rec.number, birth_mark: rec.birth_mark }
@@ -374,22 +392,30 @@ function sendStep(step: Step, ports: ApplyPorts): Promise<unknown> {
   }
 }
 
-function heldBack(step: Step, stuck: Set<string>): string | null {
+function heldBack(step: Step, stuck: Set<string>, links: Map<string, number>): string | null {
+  if (step.op === 'unlink') {
+    const next = links.get(step.key)
+    if (next === undefined || !stuck.has(`${step.kind}:${next}`)) return null
+    return `${localLabel(step.kind, step.local)} was kept: ${localLabel(step.kind, next)} is still the part of another record.`
+  }
   if (step.op !== 'link') return null
   const label = localLabel(step.kind, step.local)
-  if (stuck.has(step.key)) return `${label} was not linked: the record's old part could not be removed.`
   if (stuck.has(`${step.kind}:${step.local}`)) return `${label} was not linked: it is still the part of another record.`
+  if (stuck.has(step.key)) return `${label} was not linked: the record's old part could not be removed.`
   return null
 }
 
 export async function runApply(steps: Step[], ports: ApplyPorts): Promise<Outcome[]> {
   const out: Outcome[] = []
   const stuck = new Set<string>()
+  const links = new Map(steps.flatMap((s) => (s.op === 'link' ? [[s.key, s.local] as const] : [])))
   for (const step of steps) {
     const what = step.item.endsWith(' name') ? 'name' : 'part'
     const base = { key: step.key, item: step.item, what, stale: false } as const
-    const held = step.op === 'refuse' ? step.text : heldBack(step, stuck)
+    const held = step.op === 'refuse' ? step.text : heldBack(step, stuck, links)
     if (held !== null) {
+      if (step.op === 'refuse' && step.keeps !== undefined) stuck.add(`${step.kind}:${step.keeps}`)
+      if (step.op === 'unlink') stuck.add(step.key)
       out.push({ ...base, ok: false, text: held })
       continue
     }
@@ -454,6 +480,11 @@ export function recallsOn(kind: Kind, number: number, parts: ClusterNodePart[]):
   return live.map((p) => `N${p.node} ${localLabel(kind, localOf(p), p.adapter)}`).join(' · ')
 }
 
+export function unreadText(nodes: number[]): string {
+  const noun = nodes.length === 1 ? 'node' : 'nodes'
+  return `${noun} ${nodes.join(', ')} not read`
+}
+
 export function partNodes(info: ClusterInfo | null, kind: Kind, ownNode: number): number[] {
   const nodes = new Set([ownNode])
   for (const row of info?.nodes ?? []) {
@@ -463,12 +494,23 @@ export function partNodes(info: ClusterInfo | null, kind: Kind, ownNode: number)
 }
 
 export function orphansOf(own: ClusterNodePart[]): ClusterNodePart[] {
-  return own.filter((p) => p.link === 'orphan').sort((a, b) => a.record.number - b.record.number)
+  return own.filter((p) => p.link !== 'live').sort((a, b) => a.record.number - b.record.number)
 }
 
 export function orphanName(kind: Kind, part: ClusterNodePart, records: ClusterRecord[]): string {
+  if (part.link === 'unknown') return `${NOUN[kind]} not heard yet`
   const again = records.some((r) => r.number === part.record.number)
   return again ? `an earlier ${recordLabel(kind, part.record.number)}` : `deleted ${NOUN[kind]}`
+}
+
+export interface StrayFace {
+  chip: string
+  act: string
+}
+
+export function strayFace(part: ClusterNodePart): StrayFace {
+  if (part.link === 'unknown') return { chip: `home node ${homeOf(part.record.number)} not heard`, act: 'Unlink' }
+  return { chip: 'left over', act: 'Finish delete' }
 }
 
 export type NumberRead = { ok: true; number: number | null } | { ok: false; text: string; node: number | null }
@@ -510,7 +552,7 @@ function planRow(kind: Kind, preset: Preset, l: LocalInfo, records: ClusterRecor
   const local = localLabel(kind, l.id)
   const holder = own.find((p) => p.adapter === ADAPTER && localOf(p) === l.id)
   if (holder) {
-    const tail = holder.link === 'orphan' ? ' · left over' : ''
+    const tail = STRAY_TAIL[holder.link]
     return { ...base, action: 'skip', text: `skipped: ${local} is the part of ${recordLabel(kind, holder.record.number)}${tail}` }
   }
   if (rec) {

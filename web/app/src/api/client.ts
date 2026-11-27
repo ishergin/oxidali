@@ -368,8 +368,6 @@ export const api = {
     delWith<null>(`/cluster/${RECORDS[kind]}/${number}`, { revision }),
   clusterNodeParts: async (kind: ClusterRecordKind, node: number) =>
     (await get<Record<string, ClusterNodePart[]>>(`/cluster/nodes/${node}/${partsPath(kind)}`))[PARTS[kind]],
-  clusterOwnParts: async (kind: ClusterRecordKind) =>
-    (await get<Record<string, ClusterPart[]>>(`/cluster/${partsPath(kind)}`))[PARTS[kind]],
   putClusterPart: (kind: ClusterRecordKind, adapter: number, local: number, body: ClusterPartWrite) =>
     put<ClusterPart>(`/cluster/${partsPath(kind)}/${adapter}/${local}`, body),
   deleteClusterPart: (kind: ClusterRecordKind, adapter: number, local: number) =>

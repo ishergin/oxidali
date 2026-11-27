@@ -34,6 +34,8 @@ import {
   recordKey,
   runApply,
   runPreset,
+  strayFace,
+  unreadText,
 } from '../src/screens/cluster-records.js'
 
 function rec(number: number, over: Partial<ClusterRecord> = {}): ClusterRecord {
@@ -140,13 +142,13 @@ test('a group the draft frees can be taken by another record in the same draft',
   const d = editPart(EMPTY_DRAFT, 'channel', CH2, own.channel, { local: null })
   assert.equal(holderOf('channel', 3, own.channel, d, recordKey('channel', CH5)), null)
   const twice = editPart(d, 'channel', CH5, own.channel, { local: 3 })
-  assert.equal(holderOf('channel', 3, own.channel, twice, recordKey('channel', CH2)), 'CH5')
+  assert.deepEqual(holderOf('channel', 3, own.channel, twice, recordKey('channel', CH2)), { label: 'CH5', drafted: true })
 })
 
 test('a left-over part still holds its group', () => {
   const gone = rec(0, { birth_mark: { generation: 1, nonce: 7 } })
   const own = [part(gone, 7, { link: 'orphan' })]
-  assert.equal(holderOf('channel', 7, own, EMPTY_DRAFT, recordKey('channel', CH2)), 'CH0 · left over')
+  assert.deepEqual(holderOf('channel', 7, own, EMPTY_DRAFT, recordKey('channel', CH2)), { label: 'CH0 · left over', drafted: false })
   const labels = localOptions('channel', [{ id: 7, name: '', members: 1 }], own, EMPTY_DRAFT, recordKey('channel', CH2))
   assert.deepEqual(
     labels.map((o) => o.label),
@@ -303,7 +305,7 @@ test('nodes, silent nodes and nodes that ignore commands are read from parts', (
   assert.equal(recallsOn('scene', 0, scenes), 'N0 S1 · N1 S2')
 })
 
-test('the level control sends a level, and 0 is Off', () => {
+test('the level body names the level, and 0 is Off', () => {
   assert.deepEqual(levelBody(0), { power: 'off' })
   assert.deepEqual(levelBody(128), { power: 'on', level: 128 })
   assert.deepEqual(levelBody(999), { power: 'on', level: 254 })
@@ -313,7 +315,7 @@ test('a record that keeps its group is not told the group is taken by a draft cl
   const { records, own } = world([part(CH2, 5)])
   const d = editPart(EMPTY_DRAFT, 'channel', CH5, own.channel, { local: 5 })
   assert.equal(holderOf('channel', 5, own.channel, d, recordKey('channel', CH2)), null)
-  assert.equal(holderOf('channel', 5, own.channel, d, recordKey('channel', CH5)), 'CH2')
+  assert.deepEqual(holderOf('channel', 5, own.channel, d, recordKey('channel', CH5)), { label: 'CH2', drafted: false })
   assert.deepEqual(
     planApply(d, records, own).map((s) => s.op),
     ['refuse'],
@@ -351,7 +353,7 @@ test('an empty name is refused on the page and kept in the draft', () => {
   assert.equal(step.item, 'CH2 name')
 })
 
-test('Delete and Finish delete act only on a second press of the same button', () => {
+test('the two-press keys of Delete and Finish delete arm only on a second press of the same key', () => {
   const del = deleteKey('channel', CH2)
   const fin = finishKey('channel', part(rec(0, { birth_mark: { generation: 1, nonce: 7 } }), 7, { link: 'orphan' }))
   assert.equal(del, `del:${recordKey('channel', CH2)}`)
@@ -386,4 +388,100 @@ test('on the standby a read empties the draft', () => {
   const d = editName(EMPTY_DRAFT, 'channel', CH2, 'Corridor east')
   assert.equal(draftOnRead(d, records, own, true), EMPTY_DRAFT)
   assert.notEqual(draftOnRead(d, records, own, false), EMPTY_DRAFT)
+})
+
+const CH9 = rec(9, { name: 'Porch' })
+
+test('a refused move keeps its old group, so a link that counted on it is held back', async () => {
+  const records: Records = { channel: [CH2, CH5, CH9], scene: [] }
+  const own: OwnParts = { channel: [part(CH2, 1), part(CH5, 5)], scene: [] }
+  let d = editPart(EMPTY_DRAFT, 'channel', CH2, own.channel, { local: 5 })
+  d = editPart(d, 'channel', CH9, own.channel, { local: 1 })
+  const sent: string[] = []
+  const ports: ApplyPorts = {
+    rename: async () => undefined,
+    unlink: async (_k, local) => {
+      sent.push(`unlink G${local}`)
+    },
+    link: async (_k, local) => {
+      sent.push(`link G${local}`)
+    },
+    refusal: (e) => (e as Error).message,
+  }
+  const out = await runApply(planApply(d, records, own), ports)
+  assert.deepEqual(sent, [])
+  assert.deepEqual(
+    out.map((o) => [o.item, o.ok]),
+    [
+      ['CH2 part', false],
+      ['CH9 part', false],
+    ],
+  )
+  assert.match(out[1].text, /G1 was not linked: it is still the part of another record/)
+})
+
+test('a record whose new group stays taken keeps its old group: the unlink is not sent', async () => {
+  const records: Records = { channel: [CH2, CH5, CH9], scene: [] }
+  const own: OwnParts = { channel: [part(CH2, 5), part(CH5, 4), part(CH9, 1)], scene: [] }
+  let d = editPart(EMPTY_DRAFT, 'channel', CH2, own.channel, { local: 4 })
+  d = editPart(d, 'channel', CH9, own.channel, { local: 5 })
+  const sent: string[] = []
+  const ports: ApplyPorts = {
+    rename: async () => undefined,
+    unlink: async (_k, local) => {
+      sent.push(`unlink G${local}`)
+    },
+    link: async (_k, local) => {
+      sent.push(`link G${local}`)
+    },
+    refusal: (e) => (e as Error).message,
+  }
+  const out = await runApply(planApply(d, records, own), ports)
+  assert.deepEqual(sent, [])
+  assert.deepEqual(
+    out.map((o) => [o.item, o.ok, o.text]),
+    [
+      ['CH2 part', false, 'G4 is the part of CH5. Unlink it there first; the draft does not move it.'],
+      ['CH9 part', false, 'G1 was kept: G5 is still the part of another record.'],
+      ['CH9 part', false, 'G5 was not linked: it is still the part of another record.'],
+    ],
+  )
+})
+
+test('a name being typed keeps its trailing space, and Apply sends it trimmed', () => {
+  const { records, own } = world()
+  const d = editName(EMPTY_DRAFT, 'channel', CH5, 'Hall ')
+  assert.equal(d.names[recordKey('channel', CH5)]?.name, 'Hall ')
+  assert.equal(draftOnRead(d, records, own).names[recordKey('channel', CH5)]?.name, 'Hall ')
+  const typed = editName(d, 'channel', CH5, 'Hall 2 ')
+  const [step] = planApply(typed, records, own)
+  assert.equal(step.op === 'rename' ? step.name : '', 'Hall 2')
+})
+
+test('a group chosen twice in one draft names the other draft claim, not a part', () => {
+  const { records, own } = world()
+  let d = editPart(EMPTY_DRAFT, 'channel', CH2, own.channel, { local: 6 })
+  d = editPart(d, 'channel', CH5, own.channel, { local: 6 })
+  const texts = planApply(d, records, own).map((s) => (s.op === 'refuse' ? s.text : s.op))
+  assert.deepEqual(texts, [
+    'G6 is also chosen for CH5 in this draft. A group is the part of one record only.',
+    'G6 is also chosen for CH2 in this draft. A group is the part of one record only.',
+  ])
+  const labels = localOptions('channel', [{ id: 6, name: '', members: 2 }], own.channel, d, recordKey('channel', CH2))
+  assert.equal(labels[1].label, 'G6 · chosen for CH5')
+})
+
+test('nodes whose parts could not be read are named, not drawn as empty', () => {
+  assert.equal(unreadText([2]), 'node 2 not read')
+  assert.equal(unreadText([1, 3]), 'nodes 1, 3 not read')
+})
+
+test('a part whose home node is not heard is listed apart, holds its group, and is unlinked, not finished', () => {
+  const far = rec(40, { home_node: 2 })
+  const own = [part(far, 8, { link: 'unknown' }), part(CH2, 3)]
+  assert.deepEqual(orphansOf(own).map((p) => p.record.number), [40])
+  assert.equal(orphanName('channel', own[0], [CH2, CH5]), 'channel not heard yet')
+  assert.deepEqual(strayFace(own[0]), { chip: 'home node 2 not heard', act: 'Unlink' })
+  assert.deepEqual(strayFace(part(CH2, 7, { link: 'orphan' })), { chip: 'left over', act: 'Finish delete' })
+  assert.deepEqual(holderOf('channel', 8, own, EMPTY_DRAFT, recordKey('channel', CH5)), { label: 'CH40 · not heard', drafted: false })
 })

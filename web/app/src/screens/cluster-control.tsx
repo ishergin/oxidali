@@ -1,4 +1,4 @@
-import type { ComponentChildren } from 'preact'
+import { Fragment, type ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { ApiError, api } from '../api/client'
 import type {
@@ -55,6 +55,7 @@ import {
   offeredLocals,
   orphanName,
   orphansOf,
+  strayFace,
   parseRecordNumber,
   partNodes,
   partNote,
@@ -70,6 +71,7 @@ import {
   runPreset,
   sameMark,
   takenText,
+  unreadText,
 } from './cluster-records'
 import { Select, StandbyBanner, refusalFrom, usePeerUrl } from './cluster-shared'
 import { ageText, nodeHref, nodeLine } from './cluster-view'
@@ -88,19 +90,29 @@ interface World {
   records: Records
   own: OwnParts
   all: OwnParts
+  unread: Record<Kind, number[]>
   locals: Record<Kind, LocalInfo[]>
 }
 
-async function readParts(kind: Kind, nodes: number[]): Promise<ClusterNodePart[]> {
-  const lists = await Promise.all(nodes.map((n) => api.clusterNodeParts(kind, n).catch(() => [] as ClusterNodePart[])))
-  return lists.flat()
+interface PartsRead {
+  parts: ClusterNodePart[]
+  unread: number[]
+}
+
+async function readParts(kind: Kind, nodes: number[], me: number): Promise<PartsRead> {
+  const other = (n: number) => api.clusterNodeParts(kind, n).catch(() => null)
+  const lists = await Promise.all(nodes.map((n) => (n === me ? api.clusterNodeParts(kind, n) : other(n))))
+  return {
+    parts: lists.flatMap((l) => l ?? []),
+    unread: nodes.filter((_, i) => lists[i] === null),
+  }
 }
 
 async function readLocals(): Promise<Record<Kind, LocalInfo[]>> {
-  const [groups, scenes] = await Promise.all([api.groups(ADAPTER).catch(() => null), api.scenes(ADAPTER).catch(() => null)])
+  const [groups, scenes] = await Promise.all([api.groups(ADAPTER), api.scenes(ADAPTER)])
   return {
-    channel: (groups?.groups ?? []).map((g) => ({ id: g.group_id, name: g.name, members: g.member_count_desired })),
-    scene: (scenes?.scenes ?? []).map((s) => ({ id: s.scene_id, name: s.name, members: s.row_count_included })),
+    channel: groups.groups.map((g) => ({ id: g.group_id, name: g.name, members: g.member_count_desired })),
+    scene: scenes.scenes.map((s) => ({ id: s.scene_id, name: s.name, members: s.row_count_included })),
   }
 }
 
@@ -113,13 +125,14 @@ async function readWorld(): Promise<World> {
     readLocals(),
   ])
   const me = settings.node_number
-  const [allChannel, allScene] = await Promise.all([
-    readParts('channel', partNodes(info, 'channel', me)),
-    readParts('scene', partNodes(info, 'scene', me)),
+  const [ch, sc] = await Promise.all([
+    readParts('channel', partNodes(info, 'channel', me), me),
+    readParts('scene', partNodes(info, 'scene', me), me),
   ])
   const mine = (p: ClusterNodePart) => p.node === me
-  const own = { channel: allChannel.filter(mine), scene: allScene.filter(mine) }
-  return { settings, info, records: { channel, scene }, own, all: { channel: allChannel, scene: allScene }, locals }
+  const own = { channel: ch.parts.filter(mine), scene: sc.parts.filter(mine) }
+  const all = { channel: ch.parts, scene: sc.parts }
+  return { settings, info, records: { channel, scene }, own, all, unread: { channel: ch.unread, scene: sc.unread }, locals }
 }
 
 interface RowErr {
@@ -171,13 +184,32 @@ function OpenNode({ node, label = 'Open' }: { node: ClusterNode | null; label?: 
   )
 }
 
+function Unread({ nodes, lead }: { nodes: number[]; lead: boolean }) {
+  if (nodes.length === 0) return null
+  return (
+    <span class="silent" title="these nodes' parts could not be read">
+      {lead ? ' · ' : ''}
+      {unreadText(nodes)}
+    </span>
+  )
+}
+
 function NodesCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
-  if (ctx.kind === 'scene') return <td class="nodes">{recallsOn('scene', rec.number, ctx.world.all.scene)}</td>
+  const unread = ctx.world.unread[ctx.kind]
+  if (ctx.kind === 'scene') {
+    const recalls = recallsOn('scene', rec.number, ctx.world.all.scene)
+    return (
+      <td class="nodes">
+        {recalls}
+        <Unread nodes={unread} lead={recalls !== ''} />
+      </td>
+    )
+  }
   const nodes = nodesTakingPart(rec.number, ctx.world.all.channel)
   return (
     <td class="nodes">
       {nodes.map((n, i) => (
-        <>
+        <Fragment key={n.node}>
           {i > 0 && ' · '}
           {n.silent ? (
             <span class="silent" title="silent">
@@ -186,8 +218,9 @@ function NodesCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
           ) : (
             n.node
           )}
-        </>
+        </Fragment>
       ))}
+      <Unread nodes={unread} lead={nodes.length > 0} />
     </td>
   )
 }
@@ -196,6 +229,11 @@ function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   const label = recordLabel('channel', rec.number)
   const send = (title: string, body: ReturnType<typeof levelBody>) =>
     ctx.command(rec, `${label} ${title}`, () => api.clusterChannelTarget(rec.number, body))
+  const sendLevel = (el: HTMLInputElement) => {
+    const level = Number(el.value)
+    el.value = '0'
+    send(`level ${level}`, levelBody(level))
+  }
   return (
     <span class="btns">
       <button class="btn sm" disabled={ctx.readOnly} onClick={() => send('on', { power: 'on' })}>
@@ -212,10 +250,21 @@ function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
         defaultValue="0"
         disabled={ctx.readOnly}
         aria-label={`Level of ${label}`}
+        title="Drag and release to send; with the keyboard, move and press Enter"
+        onPointerDown={(e) => {
+          e.currentTarget.dataset.drag = '1'
+        }}
         onChange={(e) => {
-          const level = Number(e.currentTarget.value)
+          const el = e.currentTarget
+          if (el.dataset.drag !== '1') return
+          delete el.dataset.drag
+          sendLevel(el)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') sendLevel(e.currentTarget)
+        }}
+        onBlur={(e) => {
           e.currentTarget.value = '0'
-          send(`level ${level}`, levelBody(level))
         }}
       />
     </span>
@@ -247,8 +296,8 @@ function NameChips({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   return (
     <>
       {edits > 0 && <Chip cls="warn">{edits === 1 ? '1 edit' : `${edits} edits`}</Chip>}
-      {rec.source === 'stale' && <Chip cls="warn">home node {rec.home_node} silent</Chip>}
-      {ignores && <Chip cls="warn">{ignores}</Chip>}
+      {rec.source === 'stale' && <Chip cls="muted">home node {rec.home_node} silent</Chip>}
+      {ignores && <Chip cls="muted">{ignores}</Chip>}
     </>
   )
 }
@@ -533,35 +582,40 @@ function RecordDetail({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
 
 function finishDelete(ctx: Ctx, part: ClusterNodePart) {
   const local = localOf(part)
+  const title = `${strayFace(part).act} of ${localLabel(ctx.kind, local)}`
   api
     .deleteClusterPart(ctx.kind, part.adapter, local)
     .then(() => {
-      notify(`Finish delete of ${localLabel(ctx.kind, local)}`, 'succeeded', 'Removed')
+      notify(title, 'succeeded', 'Removed')
       ctx.reload()
     })
-    .catch((e) => notify(`Finish delete of ${localLabel(ctx.kind, local)}`, 'failed', refusalFrom(e, 'records').text))
+    .catch((e) => {
+      notify(title, 'failed', refusalFrom(e, 'records').text)
+      ctx.reload()
+    })
 }
 
 function OrphanRow({ ctx, part }: { ctx: Ctx; part: ClusterNodePart }) {
   const local = localOf(part)
   const key = finishKey(ctx.kind, part)
   const sure = ctx.armed === key
+  const face = strayFace(part)
   return (
     <tr>
       <td class="num">{recordLabel(ctx.kind, part.record.number)}</td>
       <td class="nm-col">
         <span class="nm name-faint">{orphanName(ctx.kind, part, ctx.world.records[ctx.kind])}</span>
-        <Chip cls="warn">left over</Chip>
+        <Chip cls="muted">{face.chip}</Chip>
       </td>
       <td class="unit">this node</td>
       <td class="nodes">{localLabel(ctx.kind, local, part.adapter)} of this node</td>
       <td class="acts-col">
         <button
           class={sure ? 'btn sm sure' : 'btn sm'}
-          disabled={ctx.readOnly}
+          disabled={ctx.readOnly || ctx.busy}
           onClick={() => ctx.tap(key, () => finishDelete(ctx, part))}
         >
-          {sure ? 'Sure?' : 'Finish delete'}
+          {sure ? 'Sure?' : face.act}
         </button>
       </td>
     </tr>
@@ -858,7 +912,7 @@ function EmptyRecords({ kind }: { kind: Kind }) {
   )
 }
 
-function Outcomes({ outcomes }: { outcomes: Outcome[] | null }) {
+function Outcomes({ outcomes, onClose }: { outcomes: Outcome[] | null; onClose: () => void }) {
   if (!outcomes || outcomes.length === 0) return null
   return (
     <div class="outcomes" role="status">
@@ -869,6 +923,13 @@ function Outcomes({ outcomes }: { outcomes: Outcome[] | null }) {
           <Chip cls={o.ok ? 'ok' : 'err'}>{o.ok ? 'done' : 'refused'}</Chip>
         </div>
       ))}
+      <div class="planrow">
+        <span class="mono" />
+        <span class="what" />
+        <button class="btn sm ghost" onClick={onClose}>
+          Close
+        </button>
+      </div>
     </div>
   )
 }
@@ -976,14 +1037,17 @@ function useOpened(kind: Kind, open: string | undefined) {
   return { isOpen: (n: number) => opened.has(`${kind}:${n}`), toggle: flip, openRow: add }
 }
 
-function useCommands() {
+function useCommands(reload: () => void) {
   const [rowErr, setRowErr] = useState<Record<string, RowErr>>({})
   const command = (kind: Kind, rec: ClusterRecord, title: string, send: () => Promise<unknown>) => {
     const key = `${kind}:${rec.number}`
     setRowErr((now) => without(now, key))
     send()
       .then(() => notify(title, 'succeeded', 'Sent'))
-      .catch((e) => setRowErr((now) => ({ ...now, [key]: rowErrOf(e) })))
+      .catch((e) => {
+        setRowErr((now) => ({ ...now, [key]: rowErrOf(e) }))
+        if (e instanceof ApiError && e.status === 404) reload()
+      })
   }
   return { rowErr, command }
 }
@@ -1024,7 +1088,7 @@ function useRecordDraft(world: World | null, reload: () => void) {
     setErrs({})
     setOutcomes(null)
   }
-  return { draft, edit, errs, setErr, outcomes, busy, apply, discard }
+  return { draft, edit, errs, setErr, outcomes, busy, apply, discard, closeOutcomes: () => setOutcomes(null) }
 }
 
 function Page({ children }: { children: ComponentChildren }) {
@@ -1041,7 +1105,7 @@ function Loaded({ ctx, rd, peerUrl }: { ctx: Ctx; rd: ReturnType<typeof useRecor
       <Banners world={ctx.world} peerUrl={peerUrl} />
       <Tabs kind={ctx.kind} world={ctx.world} />
       {ctx.kind === 'scene' && <p class="hint">{SCENES_HINT}</p>}
-      <Outcomes outcomes={rd.outcomes} />
+      <Outcomes outcomes={rd.outcomes} onClose={rd.closeOutcomes} />
       <RecordsCard ctx={ctx} />
       {!ctx.readOnly && (
         <ApplyBar draft={rd.draft} busy={rd.busy} onDiscard={rd.discard} onApply={() => void rd.apply()} />
@@ -1069,7 +1133,7 @@ export function ClusterControl({ tab, open }: { tab?: string; open?: string }) {
   const status = useClusterStatus().read?.status ?? null
   const peerUrl = usePeerUrl(world?.settings.read_only ?? false)
   const rows = useOpened(kind, open)
-  const { rowErr, command } = useCommands()
+  const { rowErr, command } = useCommands(() => void reload())
   const rd = useRecordDraft(world, () => void reload())
   const [armed, tap] = useConfirmTap<string>()
   if (!world || (!world.settings.enabled && !hasAnything(world)))

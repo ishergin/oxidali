@@ -114,10 +114,14 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
 /* A group linked to a cluster channel has one editor, the channel: its
    column is closed, the tick shown without a hover, and the header names the
-   channel and links to its row instead of opening the rename popover. */
+   channel and links to its row instead of opening the rename popover. A closed
+   cell still shows a membership the gear has not taken (add, remove), and an
+   unsaved tick in a column that closes is dropped from the draft. */
 .matrix-wrap thead th.gname.locked { cursor: pointer; color: var(--text-faint); background: var(--surface); }
 .cell.lock { cursor: default; border-style: dashed; background: transparent; color: var(--text-faint); }
 .cell.lock:hover { border-color: var(--border); background: transparent; }
+.cell.lock.add, .cell.lock.rm { background: var(--dirty-soft); border-color: var(--dirty); color: var(--dirty); }
+.cell.lock.on { color: var(--text-faint); border-color: var(--border); }
 .chref { color: var(--info); text-decoration: none; }
 .pop .pnote { font-size: 12px; color: var(--text-muted); line-height: 1.45; font-family: var(--font); white-space: normal; }
 .lockhint { font-size: 12px; color: var(--text-faint); margin: 10px 2px 0; max-width: 90ch; line-height: 1.5; }
@@ -293,7 +297,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr>
           <td class="lamp"><span class="vl">VL 02</span><span class="nm">Hall spot 1</span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell lock">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock on">✓</span></td>
           <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -304,7 +308,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 03</span><span class="nm">Hall spot 2</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell add">✓</span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell lock">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock add">✓</span></td>
           <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -359,6 +363,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <button class="btn discard">Discard</button>
     <button class="btn apply">Apply to bus</button>
   </div>
+
+  <div class="state-label"><span>The cluster's channel parts could not be read</span><span class="ln"></span></div>
+  <p class="lockhint">The cluster’s channel parts could not be read, so a column whose group is linked to a cluster channel is not marked here.</p>
 
   <div class="state-label"><span>A locked column — its header opened</span><span class="ln"></span></div>
   <div class="matrix-wrap" style="max-height: none; padding-bottom: 150px;">

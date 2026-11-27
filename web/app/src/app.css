@@ -541,6 +541,8 @@ tr.editor-row td { background: var(--accent-soft); padding: 10px 12px; }
 .cell.dis { background: transparent; border-color: color-mix(in srgb, var(--border) 40%, transparent); cursor: default; }
 .cell.lock { cursor: default; border-style: dashed; background: transparent; color: var(--text-faint); }
 .cell.lock:hover { border-color: var(--border); background: transparent; }
+.cell.lock.add, .cell.lock.rm { background: var(--dirty-soft); border-color: var(--dirty); color: var(--dirty); }
+.cell.lock.on { color: var(--text-faint); border-color: var(--border); }
 .chref { color: var(--info); text-decoration: none; }
 .pop .pnote { font-size: 12px; color: var(--text-muted); line-height: 1.45; font-family: var(--font); white-space: normal; }
 .lockhint { font-size: 12px; color: var(--text-faint); margin: 10px 2px 0; max-width: 90ch; line-height: 1.5; }
