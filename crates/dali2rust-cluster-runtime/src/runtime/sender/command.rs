@@ -1,11 +1,11 @@
 use dali2rust_contracts::msg::{ClusterCommandCommand, ErrorCode};
 use dali2rust_platform::liveness::monotonic_ms;
 
-use crate::frame::{encode, Command, Frame, Header};
+use crate::frame::{encode, Action, Command, Frame, Header};
 use crate::presence::OwnMode;
 
 use super::super::counters::bump;
-use super::super::execute::{is_supported, Gate};
+use super::super::execute::{is_supported, Gate, Stamp};
 use super::super::outgoing::{Admission, Due, Queued, Repeat, TargetKey};
 use super::{confirm, NodeSender, Reading};
 
@@ -24,10 +24,13 @@ impl NodeSender<'_> {
         if let Some(cause) = self.refusal(&reading, request) {
             return self.refuse(correlation_id, ErrorCode::Conflict, cause);
         }
+        self.admit_request(&reading, Queued { correlation_id, request: request.clone(), forwarded: false });
+    }
+
+    pub(super) fn admit_request(&mut self, reading: &Reading, queued: Queued) {
         let now_ms = monotonic_ms();
-        let queued = Queued { correlation_id, request: request.clone() };
         match self.outgoing.admit(queued, now_ms) {
-            Admission::Now(queued) => self.send_command(&reading, queued, now_ms),
+            Admission::Now(queued) => self.send_command(reading, queued, now_ms),
             Admission::AfterCopy => {}
             Admission::Later { superseded } => self.delayed(superseded),
             Admission::Full(queued) => self.refuse(queued.correlation_id, ErrorCode::Conflict, CLUSTER_BUSY),
@@ -81,19 +84,25 @@ impl NodeSender<'_> {
     }
 
     fn send_command(&mut self, reading: &Reading, queued: Queued, now_ms: u32) {
-        let Queued { correlation_id, request } = queued;
-        let own = self.execution.plan(&request.action, Gate::Own);
-        let executed_on_wire = (own.accepted > 0).then_some(reading.wire());
+        let Queued { correlation_id, request, forwarded } = queued;
+        let executed_on_wire = self.executed_on_wire(reading, &request.action, forwarded);
         let command = Command { action: request.action, source: request.source, hold_hcl: request.hold_hcl, executed_on_wire };
         let header = self.next_header(reading);
         let key = TargetKey::of(&command.action);
         if !self.transmit_command(&header, &command) {
             return self.refuse(correlation_id, ErrorCode::ExecutionFailed, CLUSTER_SEND_FAILED);
         }
-        self.execution.execute(&command.action, command.hold_hcl, Gate::Own);
+        if !forwarded {
+            self.execution.execute(&command.action, Stamp::of(&command), Gate::Own);
+        }
         bump(&self.ports.counters.commands_sent_total);
         self.outgoing.sent(key, Repeat { header, command }, now_ms);
         confirm(&self.ports.publisher, correlation_id, None);
+    }
+
+    fn executed_on_wire(&self, reading: &Reading, action: &Action, forwarded: bool) -> Option<u8> {
+        let executed_here = forwarded || self.execution.plan(action, Gate::Own).accepted > 0;
+        executed_here.then_some(reading.wire())
     }
 
     fn repeat(&mut self, repeat: &Repeat) {

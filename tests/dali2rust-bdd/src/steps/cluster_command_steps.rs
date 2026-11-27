@@ -22,6 +22,9 @@ struct CommandSpec {
     scene: Option<[u32; 3]>,
     level: Option<u8>,
     recall: Option<String>,
+    all: Option<bool>,
+    source: Option<String>,
+    hold_hcl: Option<bool>,
     executed_on_wire: Option<u8>,
 }
 
@@ -41,7 +44,8 @@ impl CommandSpec {
             (Some(scene), None) => Action::RecallScene { scene, scope: RecallScope::Node },
             (Some(scene), Some(channel)) => Action::RecallScene { scene, scope: RecallScope::Channel(channel) },
             (None, Some(channel)) => Action::Light { target: Target::Channel(channel), verb: self.verb() },
-            (None, None) => panic!("a command names a channel or a scene"),
+            (None, None) if self.all == Some(true) => Action::Light { target: Target::All, verb: self.verb() },
+            (None, None) => panic!("a command names a channel, all lamps or a scene"),
         }
     }
 
@@ -55,9 +59,18 @@ impl CommandSpec {
         }
     }
 
+    fn source(&self) -> SourceClass {
+        match self.source.as_deref() {
+            None | Some("operator") => SourceClass::Operator,
+            Some("home_assistant") => SourceClass::HomeAssistant,
+            Some("hcl") => SourceClass::Hcl,
+            Some(other) => panic!("no source class {other}"),
+        }
+    }
+
     fn command(&self) -> Command {
-        let source = SourceClass::Operator;
-        Command { action: self.action(), source, hold_hcl: true, executed_on_wire: self.executed_on_wire }
+        let hold_hcl = self.hold_hcl.unwrap_or(true);
+        Command { action: self.action(), source: self.source(), hold_hcl, executed_on_wire: self.executed_on_wire }
     }
 }
 
@@ -67,7 +80,7 @@ fn command_datagram(header: &Header, command: &Command) -> Vec<u8> {
     buffer.get(..len).expect("the encoded length").to_vec()
 }
 
-// CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-086 CLU-087 CLU-088 CLU-089
+// CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-086 CLU-087 CLU-088 CLU-089 CLU-098 CLU-100
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends the command (\{.*\}) twice with one sequence number$"#)]
 async fn board_sends_command_twice(world: &mut DaliWorld, mac: String, json: String) {
     let command = CommandSpec::parse(&json).command();
@@ -114,7 +127,7 @@ fn colour_stated_or_none(mut command: Command) -> Command {
     command
 }
 
-// CLU-083
+// CLU-083 CLU-090 CLU-092 CLU-094 CLU-095 CLU-097 CLU-099
 #[then(regex = r"^the cluster hub should carry from this controller the command (\{.*\}) twice with one sequence number$")]
 async fn hub_carries_command_twice(world: &mut DaliWorld, json: String) {
     let wanted = CommandSpec::parse(&json).command();
@@ -128,7 +141,7 @@ async fn hub_carries_command_twice(world: &mut DaliWorld, json: String) {
     assert_eq!(first_bytes.bytes, second_bytes.bytes, "the copies are the same datagram");
 }
 
-// CLU-076 CLU-081
+// CLU-076 CLU-081 CLU-091 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100
 #[then(regex = r"^the cluster hub should carry no command from this controller within (\d+) ms$")]
 async fn hub_carries_no_command(world: &mut DaliWorld, window_ms: u64) {
     let sent = sent_commands(rig(world), Duration::from_millis(window_ms), 1);

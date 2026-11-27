@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
+use super::forwarding::Skip;
 use crate::frame::Rejection;
 use crate::info::PageTally;
 use crate::presence::Taken;
@@ -40,6 +41,10 @@ pub struct ClusterCounters {
     pub commands_dropped_accept_off_total: AtomicU32,
     pub commands_dropped_not_wire_owner_total: AtomicU32,
     pub commands_dropped_executed_on_wire_total: AtomicU32,
+    pub commands_forwarded_total: AtomicU32,
+    pub forwards_skipped_cluster_origin_total: AtomicU32,
+    pub forwards_skipped_source_off_total: AtomicU32,
+    pub forwards_skipped_not_sent_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {
@@ -47,6 +52,14 @@ pub(crate) fn bump(counter: &AtomicU32) {
 }
 
 impl ClusterCounters {
+    pub(crate) const fn skipped(&self, skip: Skip) -> &AtomicU32 {
+        match skip {
+            Skip::ClusterOrigin => &self.forwards_skipped_cluster_origin_total,
+            Skip::SourceOff => &self.forwards_skipped_source_off_total,
+            Skip::NotSent => &self.forwards_skipped_not_sent_total,
+        }
+    }
+
     pub(crate) fn count_rejection(&self, rejection: Rejection) {
         match rejection {
             Rejection::UnknownVersion(_) => bump(&self.unknown_version_frames_total),

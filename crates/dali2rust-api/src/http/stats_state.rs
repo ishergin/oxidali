@@ -231,6 +231,10 @@ pub struct StatsClusterDto {
     pub commands_dropped_accept_off_total: u32,
     pub commands_dropped_not_wire_owner_total: u32,
     pub commands_dropped_executed_on_wire_total: u32,
+    pub commands_forwarded_total: u32,
+    pub forwards_skipped_cluster_origin_total: u32,
+    pub forwards_skipped_source_off_total: u32,
+    pub forwards_skipped_not_sent_total: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -339,7 +343,8 @@ declare_widest_dtos! {
         commands_received_total, commands_executed_total, commands_rejected_total,
         commands_dropped_not_member_total, commands_dropped_duplicate_total, commands_dropped_not_running_total,
         commands_dropped_unsupported_total, commands_dropped_no_part_total, commands_dropped_accept_off_total,
-        commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total,
+        commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total, commands_forwarded_total,
+        forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
     }
     StatsReportDto {
         controller = StatsControllerDto::widest(),

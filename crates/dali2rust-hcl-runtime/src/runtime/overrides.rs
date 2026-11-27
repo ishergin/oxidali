@@ -35,13 +35,10 @@ pub struct RuntimeCommit {
 
 impl RuntimeCommit {
     fn is_foreign(&self) -> bool {
-        !matches!(
-            self.value_source,
-            Some(RuntimeSource::Hcl)
-                | Some(RuntimeSource::Poller)
-                | Some(RuntimeSource::Readback)
-                | None
-        )
+        match self.value_source {
+            None => false,
+            Some(source) => !source.is_hcl() && !source.reads_the_gear(),
+        }
     }
 
     pub(crate) fn overrides(&self) -> bool {
@@ -484,12 +481,24 @@ mod tests {
     }
 
     #[test]
+    fn a_neighbour_s_hcl_tick_is_no_manual_intervention_here() {
+        let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
+        assert!(!commit_hits_target(
+            &stub,
+            &commit(RuntimeSource::ClusterHcl, Some(1)),
+            group_target(3),
+            drives_level()
+        ));
+    }
+
+    #[test]
     fn a_manual_commit_on_a_member_lamp_hits_the_group() {
         let stub = MembershipStub::with_lamp_in_groups(1, &[3]);
         for source in [
             RuntimeSource::Api,
             RuntimeSource::Mqtt,
             RuntimeSource::Sniffer,
+            RuntimeSource::Cluster,
         ] {
             assert!(
                 commit_hits_target(&stub, &commit(source, Some(1)), group_target(3), drives_level()),

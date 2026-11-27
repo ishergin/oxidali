@@ -383,7 +383,8 @@ declare_counter_mapping! {
         commands_received_total, commands_executed_total, commands_rejected_total,
         commands_dropped_not_member_total, commands_dropped_duplicate_total, commands_dropped_not_running_total,
         commands_dropped_unsupported_total, commands_dropped_no_part_total, commands_dropped_accept_off_total,
-        commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total,
+        commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total, commands_forwarded_total,
+        forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,

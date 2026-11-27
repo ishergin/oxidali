@@ -1,4 +1,5 @@
 use dali2rust_contracts::msg::{ClusterCommandCommand, LightSetpoint, PowerState};
+use dali2rust_contracts::CORRELATION_NONE;
 
 use super::*;
 use crate::frame::{BirthMark, LightVerb, RecordRef, SourceClass};
@@ -17,7 +18,7 @@ fn setpoint(number: u8, level: u8) -> ClusterCommandCommand {
 }
 
 fn queued(correlation_id: u64, request: ClusterCommandCommand) -> Queued {
-    Queued { correlation_id, request }
+    Queued { correlation_id, request, forwarded: false }
 }
 
 fn repeat_of(request: &ClusterCommandCommand, seq: u32) -> Repeat {
@@ -160,4 +161,18 @@ fn the_placed_table_starts_empty() {
     let placed = placed_outgoing();
     assert_eq!(placed.deadline(), None);
     assert!(placed.slots.iter().all(Option::is_none));
+}
+
+#[test]
+fn a_forwarded_setpoint_and_a_command_given_here_keep_their_own_flag_through_the_wait() {
+    let mut outgoing = Outgoing::new();
+    send(&mut outgoing, 1, setpoint(3, 100), START_MS);
+    let inside = START_MS + COPY_GAP_MS;
+    let forwarded = Queued { correlation_id: CORRELATION_NONE, request: setpoint(3, 150), forwarded: true };
+    assert_eq!(outgoing.admit(forwarded.clone(), inside), Admission::Later { superseded: None });
+    let given_here = queued(4, setpoint(3, 200));
+    assert_eq!(outgoing.admit(given_here.clone(), inside + 1), Admission::Later { superseded: Some(forwarded) });
+    assert!(matches!(outgoing.take_due(inside), Some(Due::Repeat(_))));
+    let last = outgoing.take_due(START_MS + TARGET_SPACING_MS);
+    assert_eq!(last, Some(Due::Waiting(given_here)), "the command given here still runs this node's own part");
 }

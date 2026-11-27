@@ -41,6 +41,7 @@ impl TargetKey {
 pub(crate) struct Queued {
     pub(crate) correlation_id: u64,
     pub(crate) request: ClusterCommandCommand,
+    pub(crate) forwarded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

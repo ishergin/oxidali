@@ -6,7 +6,7 @@ use dali2rust_contracts::bus::{build_confirmation_envelope, build_confirmation_e
 use dali2rust_contracts::msg::{
     CommandEnvelope, ErrorCode, PowerState, COMMAND_VARIANT_NAMES,
 };
-use dali2rust_domain::registry::ClusterPartKeys;
+use dali2rust_domain::registry::{AdapterView, ClusterPartKeys, ClusterSettingsView};
 
 use super::*;
 use crate::frame::BirthMark;
@@ -15,6 +15,7 @@ const BUS: BusId = BusId(1);
 const MARK: BirthMark = BirthMark { generation: 5, nonce: 77 };
 const CHANNEL: RecordRef = RecordRef { number: 3, mark: MARK };
 const SCENE: RecordRef = RecordRef { number: 9, mark: MARK };
+const LAMP: crate::frame::LampAddress = crate::frame::LampAddress { node: 1, adapter: 0, lamp: 4 };
 const QUIET: Duration = Duration::from_millis(50);
 const PATIENCE: Duration = Duration::from_secs(2);
 
@@ -30,6 +31,34 @@ impl ClusterPartReadPort for Parts {
         self.0.iter().filter(|part| part.kind == kind).for_each(|part| keys.insert(part.adapter, part.local));
         keys
     }
+}
+
+struct Settings(ClusterSettingsView);
+
+impl ClusterSettingsReadPort for Settings {
+    fn cluster_settings_view(&self) -> ClusterSettingsView {
+        self.0.clone()
+    }
+}
+
+struct OneAdapter;
+
+impl AdapterReadPort for OneAdapter {
+    fn adapter_count(&self) -> u8 {
+        1
+    }
+
+    fn adapter_view(&self, _adapter_id: u8) -> Option<AdapterView> {
+        None
+    }
+
+    fn list_adapter_views(&self) -> Vec<AdapterView> {
+        Vec::new()
+    }
+}
+
+fn stamp(hold_hcl: bool) -> Stamp {
+    Stamp { hold_hcl, origin: Origin::Cluster }
 }
 
 fn part(kind: ClusterRecordKind, (adapter, local): (u8, u8), record: RecordRef, accept: bool) -> ClusterPartView {
@@ -52,10 +81,19 @@ struct Rig {
 }
 
 fn rig(parts: Vec<ClusterPartView>) -> Rig {
+    rig_with(parts, ClusterSettingsView::default())
+}
+
+fn rig_with(parts: Vec<ClusterPartView>, settings: ClusterSettingsView) -> Rig {
     let (host, publisher, commands) =
         BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_commands(16, COMMAND_VARIANT_NAMES));
     let counters = Arc::new(ClusterCounters::default());
-    let execution = ClusterExecution::new((publisher, BUS), Arc::new(Parts(parts)), Arc::clone(&counters));
+    let reads = ExecutionReads {
+        parts: Arc::new(Parts(parts)),
+        settings: Arc::new(Settings(settings)),
+        adapters: Arc::new(OneAdapter),
+    };
+    let execution = ClusterExecution::new((publisher, BUS), reads, Arc::clone(&counters));
     Rig { _host: host, execution, commands, counters }
 }
 
@@ -89,7 +127,7 @@ fn on_channel(verb: LightVerb) -> Action {
 #[test]
 fn a_neighbour_s_setpoint_runs_on_every_accepting_part_of_the_channel_as_a_cluster_command() {
     let rig = rig(vec![group(0, 3, true), group(1, 5, true), group(0, 7, false)]);
-    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(200))), false, Gate::Accepting);
+    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(200))), stamp(false), Gate::Accepting);
     assert_eq!(outcome, Outcome { unsupported: false, matched: 3, accepted: 2, queued: 2 });
     let published = rig.published(2);
     let expected = [(0, 3), (1, 5)].map(|(adapter, local)| {
@@ -107,7 +145,7 @@ fn a_neighbour_s_setpoint_runs_on_every_accepting_part_of_the_channel_as_a_clust
 #[test]
 fn this_node_s_own_command_runs_on_its_part_whatever_accept_says() {
     let rig = rig(vec![group(0, 3, false)]);
-    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), true, Gate::Own);
+    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), stamp(true), Gate::Own);
     assert_eq!(outcome.queued, 1);
     rig.published(1);
 }
@@ -127,7 +165,7 @@ fn a_plan_counts_this_node_s_parts_and_publishes_nothing() {
 fn a_part_of_another_channel_with_the_same_birth_mark_is_no_part_of_this_one() {
     let other = RecordRef { number: 4, mark: MARK };
     let rig = rig(vec![part(ClusterRecordKind::Channel, (0, 3), other, true)]);
-    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), true, Gate::Accepting);
+    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), stamp(true), Gate::Accepting);
     assert_eq!(outcome.matched, 0);
     rig.published(0);
 }
@@ -136,7 +174,7 @@ fn a_part_of_another_channel_with_the_same_birth_mark_is_no_part_of_this_one() {
 fn a_part_whose_record_has_another_birth_mark_is_no_part_of_the_channel() {
     let reborn = RecordRef { number: 3, mark: BirthMark { generation: 6, nonce: 77 } };
     let rig = rig(vec![part(ClusterRecordKind::Channel, (0, 3), reborn, true)]);
-    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), true, Gate::Accepting);
+    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), stamp(true), Gate::Accepting);
     outcome.count_drop(&rig.counters);
     assert_eq!(outcome.matched, 0);
     assert_eq!(rig.read(|c| &c.commands_dropped_no_part_total), 1);
@@ -147,7 +185,7 @@ fn a_part_whose_record_has_another_birth_mark_is_no_part_of_the_channel() {
 #[test]
 fn a_channel_whose_every_part_refuses_is_counted_as_accept_off() {
     let rig = rig(vec![group(0, 3, false)]);
-    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), true, Gate::Accepting);
+    let outcome = rig.execution.execute(&on_channel(LightVerb::Setpoint(level(10))), stamp(true), Gate::Accepting);
     outcome.count_drop(&rig.counters);
     assert_eq!(rig.read(|c| &c.commands_dropped_accept_off_total), 1);
     assert_eq!(rig.read(|c| &c.commands_dropped_no_part_total), 0);
@@ -157,7 +195,7 @@ fn a_channel_whose_every_part_refuses_is_counted_as_accept_off() {
 #[test]
 fn recall_max_level_on_a_channel_is_the_group_s_level_preset() {
     let rig = rig(vec![group(0, 3, true)]);
-    rig.execution.execute(&on_channel(LightVerb::Transition(LevelTransition::RecallMaxLevel)), true, Gate::Accepting);
+    rig.execution.execute(&on_channel(LightVerb::Transition(LevelTransition::RecallMaxLevel)), stamp(true), Gate::Accepting);
     let expected = DaliRecallLevelPresetCommand::for_group(0, 3, LevelPreset::MaxLevel);
     assert_eq!(rig.published(1)[0].payload, BusCommandPayload::from(expected));
 }
@@ -165,7 +203,7 @@ fn recall_max_level_on_a_channel_is_the_group_s_level_preset() {
 #[test]
 fn a_scene_recalled_on_the_node_is_broadcast_on_each_accepting_scene_part() {
     let rig = rig(vec![scene(0, 4, true), scene(1, 6, false)]);
-    let outcome = rig.execution.execute(&Action::RecallScene { scene: SCENE, scope: RecallScope::Node }, true, Gate::Accepting);
+    let outcome = rig.execution.execute(&Action::RecallScene { scene: SCENE, scope: RecallScope::Node }, stamp(true), Gate::Accepting);
     assert_eq!((outcome.matched, outcome.queued), (2, 1));
     let expected = DaliRecallSceneCommand::broadcast(0, 4);
     assert_eq!(rig.published(1)[0].payload, BusCommandPayload::from(expected));
@@ -176,7 +214,7 @@ fn a_scene_recalled_on_a_channel_needs_both_parts_to_accept_and_runs_on_the_chan
     let action = Action::RecallScene { scene: SCENE, scope: RecallScope::Channel(CHANNEL) };
     for (scene_accepts, group_accepts, runs) in [(true, true, 1), (false, true, 0), (true, false, 0)] {
         let rig = rig(vec![scene(0, 4, scene_accepts), group(0, 3, group_accepts), scene(1, 6, true)]);
-        let outcome = rig.execution.execute(&action, true, Gate::Accepting);
+        let outcome = rig.execution.execute(&action, stamp(true), Gate::Accepting);
         assert_eq!(outcome.queued, runs, "scene accepts {scene_accepts}, group accepts {group_accepts}");
         let published = rig.published(usize::from(runs));
         if let Some(command) = published.first() {
@@ -192,15 +230,60 @@ fn steps_stop_fade_and_the_other_targets_are_not_executed_by_this_slice() {
     let actions = [
         on_channel(LightVerb::Transition(LevelTransition::Up)),
         on_channel(LightVerb::StopFade),
-        Action::Light { target: Target::All, verb: LightVerb::Setpoint(level(1)) },
+        Action::Light { target: Target::All, verb: LightVerb::StopFade },
+        Action::Light { target: Target::Lamp(LAMP), verb: LightVerb::Setpoint(level(1)) },
     ];
     for action in actions {
         assert!(!is_supported(&action));
-        let outcome = rig.execution.execute(&action, true, Gate::Accepting);
+        let outcome = rig.execution.execute(&action, stamp(true), Gate::Accepting);
         outcome.count_drop(&rig.counters);
     }
-    assert_eq!(rig.read(|c| &c.commands_dropped_unsupported_total), 3);
+    assert_eq!(rig.read(|c| &c.commands_dropped_unsupported_total), 4);
     rig.published(0);
+}
+
+fn to_all(verb: LightVerb) -> Action {
+    Action::Light { target: Target::All, verb }
+}
+
+#[test]
+fn a_command_to_all_lamps_is_a_broadcast_on_every_adapter_once_accept_all_lamps_is_on() {
+    let accepting = ClusterSettingsView { accept_all_lamps: true, ..ClusterSettingsView::default() };
+    let rig = rig_with(Vec::new(), accepting);
+    let setpoint = rig.execution.execute(&to_all(LightVerb::Setpoint(level(90))), stamp(false), Gate::Accepting);
+    let preset = to_all(LightVerb::Transition(LevelTransition::RecallMinLevel));
+    rig.execution.execute(&preset, stamp(true), Gate::Accepting);
+    assert_eq!((setpoint.matched, setpoint.queued), (1, 1));
+    let published = rig.published(2);
+    let broadcast = DaliSetTargetStateCommand { hold_hcl: false, ..DaliSetTargetStateCommand::broadcast(0, &level(90)) };
+    assert_eq!(published[0].payload, BusCommandPayload::from(broadcast));
+    let min = DaliRecallLevelPresetCommand::broadcast(0, LevelPreset::MinLevel);
+    assert_eq!(published[1].payload, BusCommandPayload::from(min));
+    assert_eq!(published[0].meta.origin, Origin::Cluster);
+}
+
+#[test]
+fn a_command_to_all_lamps_is_refused_while_accept_all_lamps_is_off_unless_this_node_gave_it() {
+    let rig = rig(Vec::new());
+    let refused = rig.execution.execute(&to_all(LightVerb::Setpoint(level(90))), stamp(true), Gate::Accepting);
+    refused.count_drop(&rig.counters);
+    assert_eq!(rig.read(|c| &c.commands_dropped_accept_off_total), 1);
+    rig.published(0);
+    assert_eq!(rig.execution.plan(&to_all(LightVerb::Setpoint(level(90))), Gate::Own).accepted, 1);
+}
+
+#[test]
+fn a_command_of_the_hcl_class_runs_with_the_hcl_cluster_origin_and_every_other_class_with_the_cluster_one() {
+    let rig = rig(vec![group(0, 3, true)]);
+    for (source, origin) in [
+        (SourceClass::Hcl, Origin::ClusterHcl),
+        (SourceClass::Operator, Origin::Cluster),
+        (SourceClass::HomeAssistant, Origin::Cluster),
+    ] {
+        let command = Command { action: on_channel(LightVerb::Setpoint(level(5))), source, hold_hcl: true, executed_on_wire: None };
+        rig.execution.execute(&command.action, Stamp::of(&command), Gate::Accepting);
+        assert_eq!(rig.published(1)[0].meta.origin, origin, "{source:?}");
+    }
 }
 
 #[test]

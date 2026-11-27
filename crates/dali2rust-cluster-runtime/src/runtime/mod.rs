@@ -2,6 +2,7 @@ mod announce;
 mod composition;
 mod counters;
 mod execute;
+mod forwarding;
 mod incoming;
 mod outgoing;
 mod receiver;

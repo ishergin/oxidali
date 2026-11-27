@@ -225,13 +225,13 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070 CLU-094 CLU-097 CLU-100
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
 }
 
-// HCL-051 HCL-053 HCL-061 HCL-064 HCL-060 HCL-077 RULE-060 RULE-062
+// HCL-051 HCL-053 HCL-061 HCL-064 HCL-060 HCL-077 RULE-060 RULE-062 CLU-100
 #[when(regex = r"^the scheduler has run (\d+) more ticks$")]
 async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     let port = world.server_port();
@@ -246,13 +246,13 @@ async fn when_scheduler_ticks(world: &mut DaliWorld, count: u64) {
     );
 }
 
-// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070
+// HCL-050 HCL-063 HCL-053 HCL-054 HCL-056 HCL-057 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070 CLU-094 CLU-100
 #[then(regex = r"^the scheduler should drive group (\d+) to level (\d+)$")]
 async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
 }
 
-// HCL-057 HCL-078
+// HCL-057 HCL-078 CLU-097
 #[then(regex = r"^the scheduler should drive broadcast to level (\d+)$")]
 async fn then_broadcast_driven(world: &mut DaliWorld, level: u8) {
     wait_for_frame(world, dapc_frame(None, level));
@@ -372,7 +372,7 @@ fn suspended_groups(port: u16, schedule_id: &str) -> Option<Vec<u64>> {
     )
 }
 
-// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062
+// RULE-037 RULE-038 RULE-061 RULE-063 RULE-062 CLU-100
 #[then(regex = r#"^HCL schedule "([^"]+)" eventually reports group (\d+) suspended$"#)]
 async fn then_group_eventually_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
     let port = world.server_port();
@@ -405,7 +405,7 @@ async fn then_only_groups_eventually_suspended(world: &mut DaliWorld, schedule_i
     );
 }
 
-// RULE-037 RULE-038 RULE-061 RULE-063
+// RULE-037 RULE-038 RULE-061 RULE-063 CLU-100
 #[then(regex = r#"^HCL schedule "([^"]+)" should not report group (\d+) suspended$"#)]
 async fn then_group_not_suspended(world: &mut DaliWorld, schedule_id: String, group_id: u64) {
     let groups = suspended_groups(world.server_port(), &schedule_id).expect("override read");

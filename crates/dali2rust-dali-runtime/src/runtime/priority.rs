@@ -292,7 +292,7 @@ fn refine_by_origin(variant: &str, default: WirePriority, origin: Origin) -> Wir
         (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL, Origin::Hcl) => WirePriority::Attended,
         (
             SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET,
-            Origin::Mqtt | Origin::Cluster,
+            Origin::Mqtt | Origin::Cluster | Origin::ClusterHcl,
         ) => WirePriority::Attended,
         (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET, Origin::Rules) => {
             WirePriority::Interactive
@@ -308,7 +308,7 @@ fn refine_class_by_origin(
 ) -> TransactionPriority {
     match (variant, origin) {
         // IEC 62386-103 §9.13.1
-        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL, Origin::Hcl) => {
+        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL, Origin::Hcl | Origin::ClusterHcl) => {
             TransactionPriority::Automatic
         }
         _ => default,
@@ -509,6 +509,21 @@ mod tests {
     }
 
     #[test]
+    fn a_neighbour_s_hcl_tick_queues_and_announces_itself_as_an_hcl_tick_here() {
+        for variant in [SET_TARGET_STATE, RECALL_LAST_ACTIVE_LEVEL] {
+            assert_eq!(wire_priority(variant, Origin::ClusterHcl), wire_priority(variant, Origin::Hcl), "{variant}");
+            let class = transaction_priority(variant, Origin::ClusterHcl);
+            assert_eq!(class, transaction_priority(variant, Origin::Hcl), "{variant}");
+            assert_eq!(class, Some(TransactionPriority::Automatic), "{variant}");
+        }
+        for variant in [RECALL_SCENE, RECALL_LEVEL_PRESET] {
+            assert_eq!(wire_priority(variant, Origin::ClusterHcl), wire_priority(variant, Origin::Cluster), "{variant}");
+            let class = transaction_priority(variant, Origin::ClusterHcl);
+            assert_eq!(class, transaction_priority(variant, Origin::Cluster), "{variant}");
+        }
+    }
+
+    #[test]
     fn a_held_button_s_dim_outranks_the_poller_s_read_back_and_never_yields() {
         assert_eq!(wire_priority(DIM, Origin::Rules), Some(WirePriority::Interactive));
         assert_eq!(transaction_priority(DIM, Origin::Rules), Some(TransactionPriority::UserAction));
@@ -534,6 +549,7 @@ mod tests {
             Origin::Registry,
             Origin::Internal,
             Origin::Rules,
+            Origin::ClusterHcl,
         ];
         for row in WIRE_CLASSES {
             for origin in origins {
