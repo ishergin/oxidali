@@ -16,6 +16,7 @@ members = [
     "crates/dali2rust-fanout-runtime",
     "crates/dali2rust-hcl-runtime",
     "crates/dali2rust-ota-runtime",
+    "crates/dali2rust-cluster-runtime",
     "crates/dali2rust-poller-runtime",
     "crates/dali2rust-redundancy-runtime",
     "crates/dali2rust-ws-runtime",

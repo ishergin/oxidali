@@ -2,7 +2,9 @@
 
 Проект модуля, который делает из нескольких контроллеров одну систему света: каналы
 шире одного сегмента DALI, лампы любого узла под общим адресом и одно устройство в Home
-Assistant. В коде его нет: стадия `I6` ([`../../roadmap.md`](../../roadmap.md)).
+Assistant. В композиции его нет: построены только порт сети и кодек кадров
+([04](../../../architecture/04-contracts-and-api-bridge.md) §Cluster datagrams), воркера
+нет; стадия `I6` ([`../../roadmap.md`](../../roadmap.md)).
 
 Границы: почему кластер устроен так —
 [ADR-035](../../../architecture/decisions/ADR-035-cluster-of-installations-over-udp.md);

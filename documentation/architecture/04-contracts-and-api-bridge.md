@@ -1,8 +1,8 @@
 # 04 Contracts and the API Bridge
 
 What crosses a boundary and in which encoding: the shared message types, how a bus
-payload is declared and encoded, where JSON is allowed, how a counter reaches a surface,
-and how an HTTP request waits for its confirmation.
+payload is declared and encoded, how a cluster datagram is framed, where JSON is allowed,
+how a counter reaches a surface, and how an HTTP request waits for its confirmation.
 
 Scope: contract mechanics. Channel semantics → [03](03-bus-and-backpressure.md); the
 external REST, WebSocket and MQTT contracts and the bus families →
@@ -50,6 +50,43 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   have payload shapes of their own and are never squeezed into that tuple. Product code
   publishes semantic commands; the raw frame is diagnostic
   ([09](09-dali-protocol-rules.md)).
+
+## Cluster datagrams
+
+[ADR-035](decisions/ADR-035-cluster-of-installations-over-udp.md).
+
+- A cluster frame is a datagram, never a bus payload: its types live in
+  `dali2rust-cluster-runtime` (`src/frame/`) and none of them travels on the bus. A field
+  that is already a contract type (`LightSetpoint`, `LevelTransition`) reuses it.
+- One datagram is one frame of at most `MAX_CLUSTER_DATAGRAM_BYTES`. A raw preamble —
+  protocol tag, version, kind — keeps one shape in every version and precedes the
+  `postcard` header and body, so the decoder tells another protocol, an unknown version, an
+  unknown kind, an oversize datagram and a malformed frame apart, and the version of a
+  dropped frame stays readable.
+- A changed field of any kind is a new version; a new kind is not. Every kind has golden
+  bytes in a test and every enum on the wire its variant order, so a reused contract type
+  that changes shape or order changes them too.
+- A value outside its range is refused by the encoder and rejects the frame in the
+  decoder.
+- A large frame is a page of elements. The page writer encodes one element at a time into
+  the caller's datagram buffer and closes the page when the next one does not fit; the
+  decoder checks every element, then hands them out one at a time, borrowed from the
+  datagram. Nothing holds a whole page as values. A record whose number lies outside the
+  sender's block is the sender's copy of a record another node is home to.
+- The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
+  it heard last with a new frame, each judged by its own window: sequence numbers compare
+  by wrapping arithmetic, and a frame of any other epoch starts a window in place of the
+  one heard least recently and counts as new. A board's boot epoch never repeats, a copy
+  carries its original's number, and every kind of frame of that board draws from one
+  sequence.
+- The network port is `ClusterLink` in `dali2rust-platform`: send one datagram from any
+  thread; one thread receives, with a timeout. `UdpClusterLink` is its one implementation,
+  for the board and the host: it binds, enables broadcast, sends to the limited broadcast
+  address and drops nothing. A datagram over the ceiling is refused on send and reported
+  as oversize on receive, never truncated into a frame. A socket may hear its own broadcast,
+  so dropping a board's own frame is the receiver's job, by the sender MAC in the header,
+  which is the one `NetworkLink::hardware_address` reports. Tests connect link ends
+  through `ClusterHub` in `dali2rust-test-support`.
 
 ## JSON boundaries
 
