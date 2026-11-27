@@ -1160,11 +1160,28 @@ export interface StatsReportPayload {
   input: StatsInput
   hcl: StatsHcl
   rules: StatsRules
+  cluster: StatsCluster
   network: StatsNetwork | null
 }
 
 export type StatsHcl = {
   ticks_cut_total: number
+}
+
+export type StatsCluster = {
+  datagrams_sent_total: number
+  send_failures_total: number
+  bind_failures_total: number
+  datagrams_received_total: number
+  receive_failures_total: number
+  own_frames_dropped_total: number
+  other_cluster_frames_total: number
+  unknown_version_frames_total: number
+  rejected_frames_total: number
+  duplicates_total: number
+  sequence_gaps_total: number
+  withheld_standby_total: number
+  boards_evicted_total: number
 }
 
 export type InputDeviceSummary = {

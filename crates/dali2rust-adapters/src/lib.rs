@@ -16,8 +16,8 @@ pub mod log;
 pub mod runtime;
 
 pub use runtime::{
-    build_http_test_stack, build_router_with_bus_and_transport, BusStackRuntime, HttpTestPorts,
-    StackOptions, WsHub,
+    build_http_test_stack, build_router_with_bus_and_transport, host_boot_epoch, BusStackRuntime,
+    ClusterComposition, HttpTestPorts, StackOptions, WsHub,
 };
 pub use dali2rust_api::http::handlers::static_assets::StaticAsset;
 pub use dali2rust_display_runtime::{DisplayPanel, DisplayView, HardwareDisplay, RecordingPanel};

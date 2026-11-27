@@ -174,8 +174,34 @@ fn stack_options(
         web_assets: crate::web_assets::WEB_ASSETS,
         mqtt_client: mqtt_client(),
         firmware_update: firmware_update_ports(),
+        cluster: cluster_composition(),
         ..StackOptions::default()
     }
+}
+
+#[cfg(target_os = "espidf")]
+const EPOCH_TIMER_ROTATION: u32 = 16;
+
+#[cfg(target_os = "espidf")]
+fn cluster_composition() -> dali2rust_adapters::ClusterComposition {
+    dali2rust_adapters::ClusterComposition::production(
+        Arc::new(dali2rust_platform::cluster_link::UdpClusterBinder),
+        cluster_boot_epoch(),
+    )
+}
+
+#[cfg(target_os = "espidf")]
+fn cluster_boot_epoch() -> u32 {
+    // SAFETY: `esp_random` reads the hardware RNG register and `esp_timer_get_time` the system timer; neither has preconditions.
+    let (drawn, since_boot_us) =
+        unsafe { (esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_timer_get_time()) };
+    let [a, b, c, d, ..] = since_boot_us.to_le_bytes();
+    drawn ^ u32::from_le_bytes([a, b, c, d]).rotate_left(EPOCH_TIMER_ROTATION)
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn cluster_composition() -> dali2rust_adapters::ClusterComposition {
+    dali2rust_adapters::ClusterComposition::default()
 }
 
 #[cfg(target_os = "espidf")]

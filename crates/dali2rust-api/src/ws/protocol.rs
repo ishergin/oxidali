@@ -23,6 +23,7 @@ pub enum Channel {
     Rules,
     Logs,
     Health,
+    Cluster,
 }
 
 pub const V1_CHANNELS: &[Channel] = &[
@@ -39,6 +40,7 @@ pub const V1_CHANNELS: &[Channel] = &[
     Channel::Rules,
     Channel::Logs,
     Channel::Health,
+    Channel::Cluster,
 ];
 
 impl Channel {
@@ -57,6 +59,7 @@ impl Channel {
             Self::Rules => "rules",
             Self::Logs => "logs",
             Self::Health => "health",
+            Self::Cluster => "cluster",
         }
     }
 

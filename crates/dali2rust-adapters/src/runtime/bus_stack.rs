@@ -21,6 +21,7 @@ pub struct BusStackRuntime {
     _arbitration: std::thread::JoinHandle<()>,
     pub(crate) _ws_worker: Option<std::thread::JoinHandle<()>>,
     pub(crate) _mqtt_worker: Option<std::thread::JoinHandle<()>>,
+    _cluster: Option<dali2rust_cluster_runtime::ClusterWorkerThreads>,
 }
 
 impl BusStackRuntime {
@@ -44,6 +45,7 @@ impl BusStackRuntime {
             _arbitration: workers.arbitration,
             _ws_worker: workers.ws_worker,
             _mqtt_worker: workers.mqtt,
+            _cluster: workers.cluster,
         }
     }
 

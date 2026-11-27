@@ -1,4 +1,5 @@
 mod batch;
+pub mod cluster;
 pub mod protocol;
 pub mod logs;
 pub mod project;
@@ -12,6 +13,9 @@ pub use protocol::{
 pub use project::{
     coalesce_key, event_channels, project_event, project_event_where, CoalesceKey,
     WS_PROJECTED_EVENTS,
+};
+pub use cluster::{
+    cluster_status_frame, CLUSTER_STATUS_FRAME_CEILING_BYTES, WS_PORT_EVENTS, WS_SUBSCRIBED_EVENTS,
 };
 pub use logs::{log_batch_frame, log_batch_prefix};
 pub use snapshot::{diagnostics_snapshot_frame, health_snapshot_frame, stats_snapshot_frame};

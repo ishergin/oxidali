@@ -39,6 +39,7 @@ pub const NAMED_EVENT_SUBSCRIBERS: &[&str] = &[
     "arbitration",
     "arb-supervisor",
     "replication",
+    "cluster",
 ];
 
 #[derive(Clone, Copy)]
@@ -69,13 +70,15 @@ const RULES: EventInbox =
     event_inbox("rules", dali2rust_rules_runtime::RULES_WORKER_HANDLED_EVENTS, 128);
 const MQTT_BRIDGE: EventInbox =
     event_inbox("mqtt_bridge", dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS, 64);
-const WS_FANOUT: EventInbox = event_inbox("ws_fanout", dali2rust_api::ws::WS_PROJECTED_EVENTS, 128);
+const WS_FANOUT: EventInbox = event_inbox("ws_fanout", dali2rust_api::ws::WS_SUBSCRIBED_EVENTS, 128);
 const ARBITRATION: EventInbox =
     event_inbox("arbitration", dali2rust_redundancy_runtime::ARBITRATION_HANDLED_EVENTS, 16);
 const SUPERVISOR: EventInbox =
     event_inbox("arb-supervisor", dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS, 4);
 const REPLICATION: EventInbox =
     event_inbox("replication", dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS, 8);
+const CLUSTER: EventInbox =
+    event_inbox("cluster", dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_EVENTS, 16);
 
 fn named_events<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
     reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
@@ -109,6 +112,11 @@ pub(crate) fn spawn_bus_subscribers(
                 WS_FANOUT.handled,
                 WS_FANOUT.name,
             )),
+            cluster: named_commands_and_events(
+                reg,
+                dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_COMMANDS,
+                CLUSTER,
+            ),
         });
 
     BusSubscribers {
@@ -174,7 +182,7 @@ fn periodic_channels<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
 #[cfg(test)]
 mod tests {
     use super::{
-        spawn_bus_subscribers, EventInbox, APPLY_ORCHESTRATOR, ARBITRATION, DISPLAY,
+        spawn_bus_subscribers, EventInbox, APPLY_ORCHESTRATOR, ARBITRATION, CLUSTER, DISPLAY,
         HCL_SCHEDULER, MQTT_BRIDGE, NAMED_EVENT_SUBSCRIBERS, OPERATION_TRACKER, POLLER,
         PROJECTOR, REGISTRY, REPLICATION, RULES, SUPERVISOR, WS_FANOUT,
     };
@@ -183,7 +191,7 @@ mod tests {
         ANNOUNCEMENT_SHARE_OF_INBOX,
     };
 
-    const EVENT_INBOXES: [EventInbox; 13] = [
+    const EVENT_INBOXES: [EventInbox; 14] = [
         REGISTRY,
         DISPLAY,
         OPERATION_TRACKER,
@@ -197,6 +205,7 @@ mod tests {
         ARBITRATION,
         SUPERVISOR,
         REPLICATION,
+        CLUSTER,
     ];
 
     fn most_announced_in_a_park(handled: &[&str]) -> usize {

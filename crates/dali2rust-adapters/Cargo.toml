@@ -22,6 +22,7 @@ dali2rust-hcl-runtime = { path = "../dali2rust-hcl-runtime" }
 dali2rust-ota-runtime = { path = "../dali2rust-ota-runtime" }
 dali2rust-poller-runtime = { path = "../dali2rust-poller-runtime" }
 dali2rust-redundancy-runtime = { path = "../dali2rust-redundancy-runtime" }
+dali2rust-cluster-runtime = { path = "../dali2rust-cluster-runtime" }
 dali2rust-domain = { path = "../dali2rust-domain" }
 dali2rust-operations-runtime = { path = "../dali2rust-operations-runtime" }
 dali2rust-registry-runtime = { path = "../dali2rust-registry-runtime" }

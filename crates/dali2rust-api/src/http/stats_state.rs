@@ -208,7 +208,6 @@ pub struct StatsClusterDto {
     pub rejected_frames_total: u32,
     pub duplicates_total: u32,
     pub sequence_gaps_total: u32,
-    pub withheld_no_address_total: u32,
     pub withheld_standby_total: u32,
     pub boards_evicted_total: u32,
 }
@@ -313,7 +312,7 @@ declare_widest_dtos! {
         datagrams_sent_total, send_failures_total, bind_failures_total, datagrams_received_total,
         receive_failures_total, own_frames_dropped_total, other_cluster_frames_total,
         unknown_version_frames_total, rejected_frames_total, duplicates_total, sequence_gaps_total,
-        withheld_no_address_total, withheld_standby_total, boards_evicted_total,
+        withheld_standby_total, boards_evicted_total,
     }
     StatsReportDto {
         controller = StatsControllerDto::widest(),

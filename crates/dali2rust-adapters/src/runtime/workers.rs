@@ -51,6 +51,7 @@ pub(crate) struct SpawnedWorkers {
     pub mqtt: Option<std::thread::JoinHandle<()>>,
     pub ws_worker: Option<std::thread::JoinHandle<()>>,
     pub ota: Option<std::thread::JoinHandle<()>>,
+    pub cluster: Option<dali2rust_cluster_runtime::ClusterWorkerThreads>,
 }
 
 #[derive(Clone)]
@@ -111,6 +112,7 @@ pub(crate) struct WorkerChannels {
     pub pipeline: PipelineChannels,
     pub services: ServiceChannels,
     pub ws_ev: WsInboxPending,
+    pub cluster: BusSubscriberRx,
 }
 
 pub(crate) struct WsInbox {
@@ -1192,6 +1194,7 @@ fn gather_handles(
         replication: solo.2,
         ws_worker: None,
         ota: None,
+        cluster: None,
     }
 }
 

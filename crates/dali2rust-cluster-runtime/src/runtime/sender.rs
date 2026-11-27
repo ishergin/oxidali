@@ -10,7 +10,7 @@ use dali2rust_bsp::stack_probe::StackLowWater;
 use dali2rust_bsp::std_thread_stack;
 use dali2rust_bus::{
     publish_or_drop, recv_then_drain, wait_then_drain, BusChannel, BusFrame, BusId, BusPublisher,
-    BusSubscriberRx, WorkerTurn,
+    BusSubscriberRx, PublishResult, WorkerTurn,
 };
 use dali2rust_contracts::bus::{
     build_confirmation_envelope, build_confirmation_envelope_with_product_error, event_envelope,
@@ -292,10 +292,12 @@ impl<'a> NodeSender<'a> {
         if digest == self.digest {
             return;
         }
-        self.digest = digest;
         let changed = ClusterStateChangedEvent { subject: ClusterSubject::Status };
         let envelope = event_envelope(SOURCE_ID_UNSPECIFIED, CORRELATION_NONE, self.ports.bus_id.0, None, changed);
-        publish_or_drop(&self.ports.publisher, BusChannel::Events, BusFrame::event(envelope), "cluster-state");
+        let frame = BusFrame::event(envelope);
+        if publish_or_drop(&self.ports.publisher, BusChannel::Events, frame, "cluster-state") == PublishResult::Queued {
+            self.digest = digest;
+        }
     }
 
     fn take(&mut self, frame: &BusFrame) {

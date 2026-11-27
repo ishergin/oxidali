@@ -36,7 +36,7 @@ use dali2rust_api::http::redundancy_settings_state::{
     RedundancySettingsHttpStateBridge,
 };
 use dali2rust_api::http::stats_state::{
-    StatsBusDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
+    StatsBusDto, StatsClusterDto, StatsControllerDto, StatsDaliBackwardDto, StatsDaliConsoleDto, StatsDaliDto,
     StatsDaliReadbackDto, StatsDaliTaskTimingDto, StatsHclDto, StatsHttpState, StatsInputDto,
     StatsMqttDto,
     StatsNetworkDto, StatsOperationsDto, StatsReportDto, StatsRuleCountDto, StatsRulesDto,
@@ -54,6 +54,7 @@ use dali2rust_api::http::{
 };
 use dali2rust_api::http::handlers::config_transfer::{ImportRefusal, SliceManifestEntry};
 use dali2rust_bus::BusPublisher;
+use dali2rust_cluster_runtime::ClusterCounters;
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
 use dali2rust_platform::clock::Uptime;
@@ -349,6 +350,12 @@ macro_rules! declare_counter_mapping {
 }
 
 declare_counter_mapping! {
+    stats_cluster_dto(c: ClusterCounters) -> StatsClusterDto {
+        datagrams_sent_total, send_failures_total, bind_failures_total, datagrams_received_total,
+        receive_failures_total, own_frames_dropped_total, other_cluster_frames_total,
+        unknown_version_frames_total, rejected_frames_total, duplicates_total, sequence_gaps_total,
+        withheld_standby_total, boards_evicted_total,
+    }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,
         event_publish_failed, evidence_publish_failed, event_publish_retried,
@@ -574,6 +581,7 @@ pub(crate) struct StatsBridge {
     publisher: BusPublisher,
     slots: Arc<PendingConfirmationSlots>,
     counters: RuntimeCounterHandles,
+    cluster: Arc<ClusterCounters>,
     heap: Option<Arc<dyn HeapStatsPort>>,
     link: Option<Arc<dyn NetworkLink>>,
 }
@@ -583,7 +591,7 @@ impl StatsBridge {
         uptime: Uptime,
         publisher: BusPublisher,
         slots: Arc<PendingConfirmationSlots>,
-        counters: RuntimeCounterHandles,
+        (counters, cluster): (RuntimeCounterHandles, Arc<ClusterCounters>),
         platform: PlatformGauges,
     ) -> Self {
         Self {
@@ -591,6 +599,7 @@ impl StatsBridge {
             publisher,
             slots,
             counters,
+            cluster,
             heap: platform.heap,
             link: platform.link,
         }
@@ -751,6 +760,7 @@ impl StatsHttpState for StatsBridge {
         out.input = stats_input_dto(&self.counters);
         out.hcl = stats_hcl_dto(&self.counters.hcl_scheduler);
         out.rules = stats_rules_dto(&self.counters);
+        out.cluster = stats_cluster_dto(&self.cluster);
         out.network = self.link.as_ref().map(|l| stats_network_dto(l.stats()));
     }
 }

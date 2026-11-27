@@ -10,6 +10,8 @@ crates/dali2rust-bsp/src/psram_selftest.rs                                   psr
 crates/dali2rust-bsp/src/sntp_sync.rs                                        sntp-watch                boot     one watcher started when the firmware starts SNTP
 crates/dali2rust-bsp/src/stack_runner.rs                                     <dynamic>                 runner   the runner's own thread, named by its StackRunner or RunnerPool and reused for every job
 crates/dali2rust-bus/src/bus.rs                                              bus_task                  boot     the bus routing task, started with the bus host
+crates/dali2rust-cluster-runtime/src/runtime/sender.rs                       cluster_rx                boot     cluster receiver, started with the cluster sender; ends when the sender lets it go
+crates/dali2rust-cluster-runtime/src/runtime/sender.rs                       cluster_tx                boot     cluster sender, started with the bus workers
 crates/dali2rust-dali-runtime/src/runtime/dali_worker.rs                     dali_worker               boot     the wire's only owner, started with the bus workers
 crates/dali2rust-display-runtime/src/runtime/display_worker.rs               display_worker            boot     OLED worker, started with the bus workers
 crates/dali2rust-fanout-runtime/src/runtime/projector_worker.rs              fanout_projector_worker   boot     state-fanout projector, started with the bus workers

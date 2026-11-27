@@ -33,6 +33,10 @@ const COMMAND_OWNERS: &[(&str, &[&str])] = &[
         "ota_worker",
         dali2rust_ota_runtime::OTA_WORKER_HANDLED_COMMANDS,
     ),
+    (
+        "cluster",
+        dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_COMMANDS,
+    ),
 ];
 
 const EVENT_CONSUMERS: &[(&str, &[&str])] = &[
@@ -82,11 +86,15 @@ const EVENT_CONSUMERS: &[(&str, &[&str])] = &[
     ),
     (
         "ws_fanout",
-        dali2rust_api::ws::WS_PROJECTED_EVENTS,
+        dali2rust_api::ws::WS_SUBSCRIBED_EVENTS,
     ),
     (
         "mqtt_bridge",
         dali2rust_mqtt_runtime::MQTT_WORKER_HANDLED_EVENTS,
+    ),
+    (
+        "cluster",
+        dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_EVENTS,
     ),
 ];
 
@@ -134,10 +142,6 @@ const OBSERVED_ONLY_EVENTS: &[(&str, &str)] = &[
     (
         "PoliciesChangedEvent",
         "the policy is read from the port when it is applied, never latched from an event",
-    ),
-    (
-        "ClusterSettingsChangedEvent",
-        "a wake for the cluster worker, which is designed but not composed; it reads the settings from the port",
     ),
     (
         "Dali103ApplicationControlObservedEvent",

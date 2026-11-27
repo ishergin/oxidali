@@ -1,6 +1,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use dali2rust_api::http::cluster_status_state::{
+    ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState,
+};
 use dali2rust_api::http::diagnostics_state::{DiagnosticsDto, DiagnosticsHttpState};
 use dali2rust_api::http::health_state::{HealthDto, HealthHttpState};
 use dali2rust_api::http::stats_state::{StatsHttpState, StatsReportDto};
@@ -46,6 +49,31 @@ impl HealthHttpState for NullHealth {
             role: None,
             quiescent: None,
         }
+    }
+}
+
+struct NullCluster;
+impl ClusterStatusHttpState for NullCluster {
+    fn own(&self) -> ClusterOwnDto {
+        ClusterOwnDto {
+            state: "off",
+            node_number: 0,
+            wire: 0,
+            board: None,
+            boot_epoch: 0,
+            wire_owner: None,
+            split_pair: false,
+            wire_chain: false,
+            number_held_by: None,
+        }
+    }
+
+    fn node(&self, _node: u8) -> Option<ClusterNodeDto> {
+        None
+    }
+
+    fn ignored(&self, _index: usize) -> Option<ClusterIgnoredDto> {
+        None
     }
 }
 
@@ -104,6 +132,7 @@ fn spawn_harness() -> Harness {
             stats: Arc::new(NullStats),
             diagnostics: Arc::new(NullDiagnostics),
             health: Arc::new(NullHealth),
+            cluster: Arc::new(NullCluster),
         },
         Arc::new(|| 0),
     );
