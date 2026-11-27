@@ -171,11 +171,16 @@ Changing the table takes a wired flash.
 - A card is changed in place to show the design as it is: its body is the current look
   and it keeps, in the present tense, why the design is so; why it changed, what it
   replaced and when go in the commit, never in the card.
-- The maintainer pushes the cards, when syncing, to the Claude Design project "dali2rust Web UI"
-  (`0f3fcd66-9619-445b-b9bc-51bc578eefd9`) with `DesignSync`: `list_files` / `get_file`
-  first (the owner edits there; never replace the project), `finalize_plan` (`deletes:
-  []`), `write_files` with `localDir = web/design-system`, then
-  `scripts/verify_design_system_pushed.sh --stamp` — only after the write succeeded.
+- The maintainer pushes the cards, when syncing, with the Artifact tool to the design
+  system "dali2rust Web UI", a Claude artifact of the Design System type whose address is
+  `DESIGN_SYSTEM_URL` in `scripts/verify_design_system_pushed.sh`. The card
+  `web/design-system/<path>` is the artifact's `project/<path>`, byte for byte and served
+  as `text/plain`. The owner edits there, so the push lists the artifact's files first and
+  compares their hashes with `.pushed.sha256`, never replaces the system, and publishes
+  only the drifted cards, with a `lastChange` in the index `project/design-system.json`.
+  It reads them back, and only after the read-back matched runs
+  `scripts/verify_design_system_pushed.sh --stamp`. The page's own clean-up moves the
+  cards to other paths and breaks this mapping, so it is not run.
 
 ## Merge gates (`just verify`)
 

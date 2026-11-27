@@ -40,7 +40,7 @@ of your pull request:
   `bash scripts/build_web_ui.sh` to try your UI on a board of your own; committing it is
   optional;
 - `web/design-system/.pushed.sha256`, which records what was pushed to the
-  maintainer's Claude Design project.
+  maintainer's design system, a Claude artifact.
 
 The details of the UI build chain are in
 [`10-build-release-and-tooling.md`](documentation/architecture/10-build-release-and-tooling.md)
