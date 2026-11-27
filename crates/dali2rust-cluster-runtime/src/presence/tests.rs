@@ -204,11 +204,15 @@ fn two_boards_of_one_installation_transmitting_together_are_a_split_pair() {
 fn a_switchover_shows_the_board_that_started_last_and_is_no_split() {
     let mut table = BoardTable::default();
     let (mut old, mut new) = (Board::holding(LOW_MAC, 2, BARN), Board::holding(HIGH_MAC, 2, BARN));
-    old.pulse_into(&mut table, START_MS);
+    new.claim = NodeClaim::Waiting;
+    new.pulse_into(&mut table, START_MS);
+    old.pulse_into(&mut table, START_MS + 1);
+    new.claim = NodeClaim::Holding;
     new.pulse_into(&mut table, START_MS + PERIOD_MS);
     new.pulse_into(&mut table, START_MS + 2 * PERIOD_MS);
     let facts = own(0, None);
     let view = roster(&table, &facts, START_MS + 2 * PERIOD_MS);
+    assert!(view.live(table.iter().find(|board| board.mac == LOW_MAC).expect("the old board")));
     assert_eq!(view.displayed(2).map(|board| board.mac), Some(HIGH_MAC));
     assert!(!view.split(2));
 }
