@@ -5,6 +5,7 @@ import { ago, hex2, lampState, LEVEL_MAX } from '../format'
 import { useVerifying } from '../observation'
 import { draftAfterPoll, draftAfterRefusal, type SliderDraft } from '../slider-draft'
 import { type CctRange, cctSliderView } from './cct-view'
+import { nextTap } from './confirm-tap'
 import { blurCommits } from './text-commit'
 
 const IME_PROCESS_KEY_CODE = 229
@@ -27,13 +28,10 @@ export function useConfirmTap<K extends string>(): [K | null, (key: K, act: () =
   const tap = (key: K, act: () => void) => {
     if (timer.current != null) clearTimeout(timer.current)
     timer.current = null
-    if (armed !== key) {
-      setArmed(key)
-      timer.current = setTimeout(() => setArmed(null), CONFIRM_MS)
-      return
-    }
-    setArmed(null)
-    act()
+    const next = nextTap(armed, key)
+    setArmed(next.armed)
+    if (next.act) return act()
+    timer.current = setTimeout(() => setArmed(null), CONFIRM_MS)
   }
   return [armed, tap]
 }

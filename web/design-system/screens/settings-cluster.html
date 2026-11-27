@@ -1,0 +1,308 @@
+<!-- @dsCard group="Screens" name="Settings — Cluster" subtitle="This node in a cluster of controllers: name, number, port, the boards heard and ignored, forwarding, sharing and the DALI bus — off, running, a forgotten node, a refused Apply and the read-only standby" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — Cluster — dali2rust</title>
+<style>
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b22;
+  --raised: #1d242e;
+  --overlay: #232c38;
+  --border: #2a3340;
+  --border-strong: #3a4656;
+
+  /* Text */
+  --text: #e7edf4;
+  --text-muted: #93a1b0;
+  --text-faint: #5c6773;
+
+  /* Lamp accent — warm amber, the "light is on" color */
+  --accent: #f0b429;
+  --accent-strong: #ffc84d;
+  --accent-soft: rgba(240, 180, 41, 0.14);
+  --accent-glow: rgba(240, 180, 41, 0.35);
+
+  /* Status */
+  --ok: #46c26a;
+  --ok-soft: rgba(70, 194, 106, 0.14);
+  --warn: #e3a008;
+  --warn-soft: rgba(227, 160, 8, 0.15);
+  --err: #f2555a;
+  --err-soft: rgba(242, 85, 90, 0.13);
+  --info: #4da3ff;
+  --info-soft: rgba(77, 163, 255, 0.13);
+  /* Desired ≠ applied ("dirty") shares the warn hue */
+  --dirty: #e3a008;
+  --dirty-soft: rgba(227, 160, 8, 0.12);
+
+  /* Derived surfaces: row hover wash, soft row separators, floating shadow,
+   * text on solid accent fills (readable on amber in both themes). */
+  --hover: rgba(35, 44, 56, 0.5);
+  --border-soft: rgba(42, 51, 64, 0.5);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --accent-contrast: #14161a;
+
+  /* Shape & type */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale (px): 4 8 12 16 24 32 */
+}
+body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+.page { max-width: 820px; margin: 0 auto; padding: 20px 24px 60px; }
+
+.head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.head h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.crumb { font-size: 12px; color: var(--text-faint); }
+.sub { font-size: 12.5px; color: var(--text-muted); margin: 0 0 16px; }
+
+/* One record per board, shown once per state: each state gets its own
+   labelled copy of the page rather than a toggle. */
+.state-label { display: flex; align-items: center; gap: 8px; margin: 36px 0 14px; }
+.state-label .ln { flex: 1; height: 1px; background: var(--border); }
+.state-label span { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+.panel > h2 { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; margin: 0; padding: 10px 15px; border-bottom: 1px solid var(--border); }
+.panel .body { padding: 6px 15px; }
+.panel .body.flush { padding: 0; }
+
+.srow { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid var(--border-soft); }
+.srow .lbl { flex: 1; min-width: 0; }
+.srow .lbl .n { font-size: 13px; color: var(--text); font-weight: 500; }
+.srow .lbl .d { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.srow .ctl { flex: none; padding-top: 1px; text-align: right; }
+
+.toggle { display: inline-block; width: 34px; height: 19px; border-radius: 999px; background: var(--overlay);
+  border: 1px solid var(--border-strong); position: relative; vertical-align: middle; }
+.toggle i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--text-faint); }
+.toggle.on { background: var(--accent-soft); border-color: rgba(240,180,41,.5); }
+.toggle.on i { left: 17px; background: var(--accent); }
+
+.inp { display: inline-block; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 5px 8px; font-family: var(--mono); min-width: 60px; text-align: right; }
+.inp.wide { min-width: 170px; text-align: left; }
+.inp.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+.inp.dirty { border-color: var(--dirty); background: var(--dirty-soft); }
+.sel { display: inline-block; background: var(--raised); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; padding: 4px 8px; }
+.sel.locked { color: var(--text-faint); background: transparent; border-style: dashed; }
+.sel.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+
+/* A refusal is put beside the field the server named, in words: an error
+   code on a toast says what went wrong but not where to look. */
+.fielderr { display: block; font-size: 10.5px; color: var(--err); margin-top: 5px; text-align: right; max-width: 260px; margin-left: auto; }
+
+/* Verdicts are status, not lamp state: green, warn and err, never the amber. */
+.verdict { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 3px 9px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--raised); color: var(--text-muted); white-space: nowrap; }
+.verdict.ok { background: var(--ok-soft); border-color: rgba(70,194,106,.4); color: var(--ok); }
+.verdict.warn { background: var(--warn-soft); border-color: rgba(227,160,8,.35); color: var(--warn); }
+.verdict.err { background: var(--err-soft); border-color: rgba(242,85,90,.5); color: var(--err); }
+.verdict.off { color: var(--text-faint); }
+.addr { font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.mono { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+.unit { font-size: 11px; color: var(--text-faint); }
+
+/* Lists of boards: the house table. Address and board are mono because they
+   are typed into a browser or matched against a label on the box. The table
+   scrolls sideways when it is wider than the panel, and Open and Forget sit
+   in the pinned action column of the data table, reachable at any width. */
+.mt { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mt th { text-align: left; font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .07em;
+  font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.mt td { padding: 8px 10px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+.mt tr:last-child td { border-bottom: 0; }
+.mt .g { font-family: var(--mono); color: var(--text-muted); }
+.mt .acts-col { position: sticky; right: 0; background: var(--surface); border-left: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.none { font-size: 12px; color: var(--text-faint); padding: 12px 15px; }
+
+.chips { display: flex; gap: 5px; flex-wrap: wrap; padding: 10px 0 4px; }
+.selchip { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--raised); color: var(--text-muted); font-family: var(--mono); }
+.selchip.on { background: var(--accent-soft); border-color: rgba(240,180,41,.4); color: var(--accent-strong); }
+.hint { font-size: 11.5px; color: var(--text-faint); margin: 4px 0 10px; }
+
+.btn { display: inline-block; padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: var(--raised); color: var(--text); font-size: 11.5px; font-weight: 500; text-decoration: none; cursor: pointer; }
+.btn.primary { background: var(--accent-soft); border-color: rgba(240,180,41,.45); color: var(--accent-strong); }
+.btn.ghost { background: transparent; color: var(--text-muted); }
+.btn.sure { color: var(--err); border-color: rgba(242,85,90,.45); background: var(--err-soft); }
+.btn:disabled { opacity: .4; cursor: default; }
+
+/* The page is long, so the Apply bar stays at the foot of the view: it
+   counts the unsaved fields and names them, so a forgotten edit three
+   panels up is visible without scrolling back to it. */
+.footer-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 11px 15px;
+  background: rgba(14,17,22,.92); backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: var(--radius); }
+.footer-bar.idle { position: static; background: transparent; backdrop-filter: none; border-color: transparent; }
+.footer-bar .n { font-size: 12px; color: var(--text-muted); min-width: 0; }
+.footer-bar .n b { color: var(--text); font-weight: 600; }
+.footer-bar .spacer { flex: 1; }
+
+/* Standby: the same page, every control inert and dimmed, under a banner
+   that says where the settings come from and where to change them. */
+.req { background: var(--warn-soft); border: 1px solid rgba(227,160,8,.35); border-radius: var(--radius-sm);
+  padding: 8px 11px; font-size: 12px; color: var(--warn); margin: 0 0 14px; }
+.req a { color: var(--info); text-decoration: none; font-weight: 600; }
+.ro { opacity: .6; pointer-events: none; }
+.errbar { background: var(--err-soft); border: 1px solid rgba(242,85,90,.45); border-radius: var(--radius-sm);
+  padding: 8px 11px; font-size: 12px; color: var(--err); margin: 0 0 10px; }
+.note { font-size: 11.5px; color: var(--text-faint); margin: 8px 0 0; line-height: 1.5; }
+.note b { color: var(--text-muted); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="state-label"><span>Cluster off — never configured</span><span class="ln"></span></div>
+  <div class="head"><h1>Cluster</h1><span class="crumb">Settings · this node only</span></div>
+  <p class="sub">Up to eight controllers in one Ethernet segment act as one lighting system. Channels and scenes of the cluster live under Control; this page holds this node's own parameters.</p>
+
+  <div class="panel">
+    <h2>This node</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Enabled</div><div class="d">Off by default. Talks to the other nodes over this network; only the active board of a pair transmits.</div></div><div class="ctl"><span class="toggle"><i></i></span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Cluster name</div><div class="d">Required to enable. Boards with another name are ignored, and listed below.</div></div><div class="ctl"><span class="inp wide">&nbsp;</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Node number</div><div class="d">0–7, one per installation. Both boards of a pair share it.</div></div><div class="ctl"><span class="sel">0</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Port</div><div class="d">UDP, the same on every node.</div></div><div class="ctl"><span class="inp">47810</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Status</div></div><div class="ctl"><span class="verdict off">off</span></div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Nodes heard</h2>
+    <div class="none">Nothing is heard while the cluster is off.</div>
+  </div>
+  <div class="footer-bar idle"><span class="n">No unsaved changes</span><span class="spacer"></span><button class="btn ghost" disabled>Discard</button><button class="btn primary" disabled>Apply</button></div>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Running — nodes heard, the number fixed by records</span><span class="ln"></span></div>
+  <div class="head"><h1>Cluster</h1><span class="crumb">Settings · this node only</span></div>
+  <p class="sub">Up to eight controllers in one Ethernet segment act as one lighting system. Channels and scenes of the cluster live under Control; this page holds this node's own parameters.</p>
+
+  <div class="panel">
+    <h2>This node</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Enabled</div><div class="d">Off by default. Talks to the other nodes over this network; only the active board of a pair transmits.</div></div><div class="ctl"><span class="toggle on"><i></i></span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Cluster name</div><div class="d">Required to enable. Boards with another name are ignored, and listed below.</div></div><div class="ctl"><span class="inp wide">dali-cluster</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Node number</div><div class="d">Fixed while this node is the home of 3 channels and 3 scenes. Both boards of a pair share it.</div></div><div class="ctl"><span class="sel locked">0</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Port</div><div class="d">UDP, the same on every node.</div></div><div class="ctl"><span class="inp">47810</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Status</div></div><div class="ctl"><span class="verdict ok">running</span><div class="addr">dali-3fa2c1</div></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Nodes heard</h2>
+    <div class="body flush">
+      <table class="mt">
+        <thead><tr><th>Node</th><th>Board</th><th>Address</th><th>Heard</th><th>Settings</th><th class="acts-col"></th></tr></thead>
+        <tbody>
+          <tr><td class="g">1</td><td class="mono">dali-9b07e4</td><td class="mono">192.168.13.41</td><td><span class="verdict ok">3 s ago</span></td><td><span class="verdict">own bus</span> <span class="unit">shows the cluster in Home Assistant</span></td><td class="acts-col"><a class="btn" href="#">Open</a></td></tr>
+          <tr><td class="g">2</td><td class="mono">dali-51c0aa</td><td class="mono">192.168.13.42</td><td><span class="verdict warn">4 min ago</span></td><td><span class="verdict">same bus as node 1</span> <span class="verdict warn">loop protection off</span></td><td class="acts-col"><a class="btn" href="#">Open</a> <button class="btn">Forget</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Heard, but not part of this cluster</h2>
+    <div class="body flush">
+      <table class="mt">
+        <thead><tr><th>Board</th><th>Address</th><th>Why it is ignored</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">dali-77d210</td><td class="mono">192.168.13.50</td><td>Another cluster name: <span class="mono">dali-clustre</span></td></tr>
+          <tr><td class="mono">dali-0a11f3</td><td class="mono">192.168.13.51</td><td>Says it is node 1, which dali-9b07e4 holds. Give it a free number.</td></tr>
+          <tr><td class="mono">dali-5e6f70</td><td class="mono">192.168.13.52</td><td>Waits for node 2, which another board holds.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Forward group commands given by</h2>
+    <div class="body">
+      <div class="chips"><span class="selchip on">Operator</span><span class="selchip on">Home Assistant</span><span class="selchip">HCL</span><span class="selchip">Foreign master</span></div>
+      <div class="hint">Commands to this node's own groups go to the cluster when their source is on.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Share and accept</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Send “all lamps” commands</div><div class="d">A broadcast given on this node's DALI bus is sent to every node.</div></div><div class="ctl"><span class="toggle"><i></i></span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Accept “all lamps” commands</div><div class="d">A cluster-wide “all” becomes a broadcast on this node's DALI bus.</div></div><div class="ctl"><span class="toggle"><i></i></span></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>DALI bus</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">This node's DALI bus</div><div class="d">Leave it on “own bus” unless another node is wired to the same DALI bus. One node of a shared bus keeps “own bus”; the others choose that node.</div></div><div class="ctl"><span class="sel">Own bus</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">On the shared bus</div><div class="d">Only one node of a bus carries out cluster commands and forwards the foreign master.</div></div><div class="ctl"><span class="verdict ok">this node executes</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Loop protection</div><div class="d">Cannot be turned off while the foreign master is forwarded and the bus is shared.</div></div><div class="ctl"><span class="toggle on"><i></i></span></div></div>
+    </div>
+  </div>
+
+  <div class="footer-bar idle"><span class="n">No unsaved changes</span><span class="spacer"></span><button class="btn ghost" disabled>Discard</button><button class="btn primary" disabled>Apply</button></div>
+  <p class="note"><b>Open</b> goes to that node's own web UI at its address. <b>Forget</b> appears only on a silent node: a node still heard would come back with its next pulse.</p>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Forget — the second press</span><span class="ln"></span></div>
+  <div class="panel">
+    <h2>Nodes heard</h2>
+    <div class="body flush">
+      <table class="mt">
+        <thead><tr><th>Node</th><th>Board</th><th>Address</th><th>Heard</th><th>Settings</th><th class="acts-col"></th></tr></thead>
+        <tbody>
+          <tr><td class="g">2</td><td class="mono">dali-51c0aa</td><td class="mono">192.168.13.42</td><td><span class="verdict warn">4 min ago</span></td><td><span class="verdict">own bus</span></td><td class="acts-col"><a class="btn" href="#">Open</a> <button class="btn sure">Sure?</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="note">The first press turns the button into <b>Sure?</b> for three seconds; only the second forgets. If the node spoke again in between, the controller refuses and the toast says so: “Node 2 is heard again; only a silent node can be forgotten.”</p>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Editing — Apply refused, the cause beside its field</span><span class="ln"></span></div>
+  <div class="errbar">Not applied: a cluster needs a name before it can be turned on.</div>
+  <div class="panel">
+    <h2>This node</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Enabled</div><div class="d">Off by default. Talks to the other nodes over this network; only the active board of a pair transmits.</div></div><div class="ctl"><span class="toggle on"><i></i></span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Cluster name</div><div class="d">Required to enable. Boards with another name are ignored, and listed below.</div></div><div class="ctl"><span class="inp wide err">&nbsp;</span><span class="fielderr">A cluster needs a name before it can be turned on.</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Node number</div><div class="d">0–7, one per installation. Both boards of a pair share it.</div></div><div class="ctl"><span class="sel">3</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Port</div><div class="d">UDP, the same on every node.</div></div><div class="ctl"><span class="inp">47810</span></div></div>
+    </div>
+  </div>
+  <div class="footer-bar"><span class="n"><b>2</b> unsaved changes · Enabled, Node number</span><span class="spacer"></span><button class="btn ghost">Discard</button><button class="btn primary">Apply</button></div>
+  <p class="note">The draft survives the refusal; Discard puts the stored values back. The other causes land the same way: <b>wire_names_this_node</b> under the DALI bus select (“This node cannot name its own bus”), <b>wire_protection_required</b> under Loop protection, <b>cluster_node_number_pinned</b> under Node number. A refusal that names no field (a value out of range, a standby) stays in the bar above the panels.</p>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Standby board — read-only</span><span class="ln"></span></div>
+  <div class="head"><h1>Cluster</h1><span class="crumb">Settings · this node only</span></div>
+  <div class="req">This board is the standby of its pair: the settings come from the active board and are replaced every 30 s. <a href="#">Open the active board</a> to change them.</div>
+  <div class="ro">
+    <div class="panel">
+      <h2>This node</h2>
+      <div class="body">
+        <div class="srow"><div class="lbl"><div class="n">Enabled</div></div><div class="ctl"><span class="toggle on"><i></i></span></div></div>
+        <div class="srow"><div class="lbl"><div class="n">Node number</div></div><div class="ctl"><span class="sel locked">1</span></div></div>
+        <div class="srow"><div class="lbl"><div class="n">Status</div></div><div class="ctl"><span class="verdict">listening — standby</span></div></div>
+      </div>
+    </div>
+  </div>
+  <p class="note">Nodes heard and the boards ignored stay readable; Forget is not offered here. The Apply bar is not shown.</p>
+</div>
+
+</body>
+</html>

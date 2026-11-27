@@ -91,8 +91,9 @@
 - **Разрушительное действие** — в два нажатия: первое превращает кнопку в «Sure?» на
   несколько секунд, выполняет только второе.
 - Сайдбар показывает индикатор соединения внизу, рядом с переключателем темы
-  ([`websocket.md`](websocket.md)), и значок роли на стэндбае у названия
-  ([`redundancy.md`](redundancy.md)).
+  ([`websocket.md`](websocket.md)), значок роли на стэндбае у названия
+  ([`redundancy.md`](redundancy.md)) и под названием строку узла кластера, пока кластер
+  включён ([`settings-cluster.md`](settings-cluster.md)).
 
 ## Экраны
 
@@ -119,6 +120,7 @@
 | `#/settings/time` | Время и часовой пояс контроллера | — |
 | `#/settings/home-assistant` | Мост Home Assistant | — |
 | `#/settings/redundancy` | Отказоустойчивость пары | [`redundancy.md`](redundancy.md) |
+| `#/settings/cluster` | Узел кластера: параметры, слышимые узлы и платы | [`settings-cluster.md`](settings-cluster.md) |
 | `#/policies` | Политики без контроллера | — |
 
 Экраны без отдельной спецификации описаны своей карточкой в `web/design-system/screens/`

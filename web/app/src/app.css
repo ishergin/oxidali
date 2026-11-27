@@ -146,6 +146,7 @@ body {
 .btn:hover { background: var(--overlay); }
 .btn.primary { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent-strong); }
 .btn.sm { padding: 4px 9px; font-size: 11px; }
+a.btn { text-decoration: none; display: inline-block; }
 .btn.ghost { border-color: var(--border); color: var(--text-muted); background: transparent; }
 .btn.icon { font-family: var(--mono); min-width: 34px; text-align: center; }
 .btn.apply { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 600; padding: 7px 18px; }
@@ -834,6 +835,29 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
   .fieldrow .fc .presets { justify-content: flex-start; }
   .fieldrow .fc .req { text-align: left; }
 }
+
+.nodeline { display: flex; flex-direction: column; gap: 1px; margin: -10px 0 12px; padding: 5px 10px;
+  border-radius: var(--radius-sm); text-decoration: none; color: var(--text-muted); }
+.nodeline:hover { background: var(--raised); }
+.nodeline .board { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.nodeline .node { font-size: 11.5px; }
+.nodeline.warn .node { color: var(--warn); }
+.nodeline.err .node { color: var(--err); }
+
+.fieldrow .fc .fielderr { flex-basis: 100%; text-align: right; font-size: 10.5px; color: var(--err); }
+.fieldrow .fc .sel:disabled { color: var(--text-faint); background: transparent; border-style: dashed; cursor: default; }
+.fieldrow .fc .sel.err { border-color: rgba(242,85,90,.55); background: var(--err-soft); }
+.fieldrow .fc .chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.errbar { margin: 0 0 14px; padding: 9px 12px; border-radius: var(--radius-sm); background: var(--err-soft);
+  border: 1px solid rgba(242,85,90,.45); font-size: 12px; line-height: 1.5; color: var(--err); max-width: 78ch; }
+.ro { opacity: .6; pointer-events: none; }
+.table-wrap td .unit { font-size: 11px; color: var(--text-faint); }
+.table-wrap td .chip + .chip { margin-left: 4px; }
+.footer-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 11px 15px;
+  background: var(--overlay); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow); z-index: 30; }
+.footer-bar.idle { position: static; background: transparent; border-color: transparent; box-shadow: none; }
+.footer-bar .n { font-size: 12px; color: var(--text-muted); min-width: 0; }
 
 .side-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px;
   margin: 10px 10px 0; position: sticky; bottom: 14px; }

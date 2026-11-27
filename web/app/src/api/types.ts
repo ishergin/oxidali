@@ -327,6 +327,135 @@ export interface RedundancySettings {
   peer_url: string
 }
 
+export interface ClusterBlock {
+  first: number
+  last: number
+}
+
+export interface ClusterSettings {
+  enabled: boolean
+  cluster_name: string
+  node_number: number
+  port: number
+  wire_same_as: number | null
+  forward_operator: boolean
+  forward_home_assistant: boolean
+  forward_hcl: boolean
+  forward_foreign_master: boolean
+  accept_all_lamps: boolean
+  send_all_lamps: boolean
+  accept_single_lamps: boolean
+  wire_protection: boolean
+  read_only: boolean
+  block: ClusterBlock
+}
+
+export type ClusterSettingsPatch = Partial<Omit<ClusterSettings, 'read_only' | 'block'>>
+
+export type ClusterOwnState =
+  | 'off'
+  | 'no_address'
+  | 'bind_failed'
+  | 'standby'
+  | 'listening'
+  | 'waiting'
+  | 'running'
+
+export interface ClusterWireOwner {
+  node: number
+  board: string
+  this_node: boolean
+}
+
+export interface ClusterOwn {
+  state: ClusterOwnState
+  node_number: number
+  wire: number
+  board: string | null
+  boot_epoch: number | null
+  wire_owner: ClusterWireOwner | null
+  split_pair: boolean
+  wire_chain: boolean
+  number_held_by: string | null
+}
+
+export interface ClusterNode {
+  node: number
+  board: string
+  address: string
+  installation: string
+  wire: number
+  wire_protection: boolean
+  home_assistant_face: boolean | null
+  heard: boolean
+  age_ms: number
+  sequence_gaps: number
+  split: boolean
+}
+
+export type ClusterIgnoredReason = 'other_cluster' | 'waiting' | 'number_held'
+
+export interface ClusterIgnored {
+  board: string
+  address: string
+  node: number
+  reason: ClusterIgnoredReason
+  cluster_name: string | null
+  age_ms: number
+}
+
+export interface ClusterStatus {
+  own: ClusterOwn
+  nodes: ClusterNode[]
+  ignored: ClusterIgnored[]
+}
+
+export type ClusterInfoSource = 'own' | 'cached' | 'stale'
+
+export interface ClusterInfoNode {
+  node: number
+  source: ClusterInfoSource
+  set: number | null
+  age_ms: number | null
+  channels: number
+  scenes: number
+  channel_parts: number
+  scene_parts: number
+  skipped: number
+}
+
+export interface ClusterBirthMark {
+  generation: number
+  nonce: number
+}
+
+export interface ClusterPartRecord {
+  number: number
+  birth_mark: ClusterBirthMark
+}
+
+export interface ClusterPart {
+  adapter: number
+  group?: number
+  scene?: number
+  record: ClusterPartRecord
+  send: boolean
+  accept: boolean
+  revision: number
+}
+
+export type ClusterPartLink = 'live' | 'orphan' | 'unknown'
+
+export interface ClusterNodePart extends ClusterPart {
+  node: number
+  source: ClusterInfoSource
+  link: ClusterPartLink
+}
+
+export interface ClusterInfo {
+  nodes: ClusterInfoNode[]
+}
+
 export interface RedundancyTransition {
   now_active: boolean
   reason: string

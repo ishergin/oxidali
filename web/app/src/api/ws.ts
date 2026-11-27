@@ -15,6 +15,7 @@ export type WsChannel =
   | 'input'
   | 'rules'
   | 'logs'
+  | 'cluster'
 
 export interface WsEvent {
   type: string

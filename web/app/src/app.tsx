@@ -24,6 +24,9 @@ import { PoliciesScreen } from './screens/policies'
 import { SettingsDali } from './screens/settings-dali'
 import { SettingsTime } from './screens/settings-time'
 import { SettingsRedundancy } from './screens/settings-redundancy'
+import { SettingsCluster } from './screens/settings-cluster'
+import { useClusterStatus } from './cluster-feed'
+import { nodeLine, toneClass } from './screens/cluster-view'
 import { SettingsPoller } from './screens/settings-poller'
 import { SettingsDisplay } from './screens/settings-display'
 import { Logs } from './screens/logs'
@@ -74,6 +77,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: '#/settings/time', icon: '◷', label: 'Time', match: ['settings-time'] },
       { href: '#/settings/home-assistant', icon: '⌂', label: 'Home Assistant', match: ['settings-home-assistant'] },
       { href: '#/settings/redundancy', icon: '⇄', label: 'Redundancy', match: ['settings-redundancy'] },
+      { href: '#/settings/cluster', icon: '⁘', label: 'Cluster', match: ['settings-cluster'] },
       { href: '#/policies', icon: '⛨', label: 'Policies', match: ['policies'] },
     ],
   },
@@ -120,6 +124,20 @@ function RoleChip() {
       title="This controller is not driving the bus. Reads work; anything that touches the wire is refused."
     >
       standby
+    </a>
+  )
+}
+
+const SIDEBAR_CLUSTER_POLL_MS = 15_000
+
+function NodeLine() {
+  const { status } = useClusterStatus(SIDEBAR_CLUSTER_POLL_MS)
+  const line = nodeLine(status)
+  if (!line) return null
+  return (
+    <a class={toneClass('nodeline', line.tone)} href={line.href}>
+      {line.board && <span class="board">{line.board}</span>}
+      <span class="node">{line.text}</span>
     </a>
   )
 }
@@ -207,6 +225,8 @@ function Screen() {
       return <SettingsHomeAssistant />
     case 'settings-redundancy':
       return <SettingsRedundancy />
+    case 'settings-cluster':
+      return <SettingsCluster />
     case 'policies':
       return <PoliciesScreen />
   }
@@ -223,6 +243,7 @@ export function App() {
           <span class="name">dali2rust</span>
           <RoleChip />
         </div>
+        <NodeLine />
         <nav class="nav">
           {NAV_GROUPS.map((group) => (
             <div class="navgroup" key={group.title}>
