@@ -340,6 +340,7 @@ export function planApply(draft: Draft, records: Records, own: OwnParts): Step[]
     const kind = kindOfKey(key)
     const item = `${recordLabel(kind, rec.number)} name`
     const name = clipName(edit.name)
+    if (name === rec.name) continue
     if (name === '') steps.push({ op: 'refuse', key, item, kind, text: EMPTY_NAME })
     else steps.push({ op: 'rename', key, item, kind, number: rec.number, name, revision: edit.revision })
   }
@@ -405,17 +406,32 @@ function heldBack(step: Step, stuck: Set<string>, links: Map<string, number>): s
   return null
 }
 
+function keptGroups(steps: Step[], links: Map<string, number>): Set<string> {
+  const kept = new Set(steps.flatMap((s) => (s.op === 'refuse' && s.keeps !== undefined ? [`${s.kind}:${s.keeps}`] : [])))
+  const unlinks = steps.filter((s): s is Extract<Step, { op: 'unlink' }> => s.op === 'unlink')
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const u of unlinks) {
+      const next = links.get(u.key)
+      if (next === undefined || !kept.has(`${u.kind}:${next}`) || kept.has(`${u.kind}:${u.local}`)) continue
+      kept.add(`${u.kind}:${u.local}`)
+      grew = true
+    }
+  }
+  return kept
+}
+
 export async function runApply(steps: Step[], ports: ApplyPorts): Promise<Outcome[]> {
   const out: Outcome[] = []
-  const stuck = new Set<string>()
   const links = new Map(steps.flatMap((s) => (s.op === 'link' ? [[s.key, s.local] as const] : [])))
+  const stuck = keptGroups(steps, links)
   for (const step of steps) {
     const what = step.item.endsWith(' name') ? 'name' : 'part'
     const base = { key: step.key, item: step.item, what, stale: false } as const
     const held = step.op === 'refuse' ? step.text : heldBack(step, stuck, links)
     if (held !== null) {
-      if (step.op === 'refuse' && step.keeps !== undefined) stuck.add(`${step.kind}:${step.keeps}`)
-      if (step.op === 'unlink') stuck.add(step.key)
+      if (step.op === 'unlink') stuck.add(step.key).add(`${step.kind}:${step.local}`)
       out.push({ ...base, ok: false, text: held })
       continue
     }
@@ -480,9 +496,10 @@ export function recallsOn(kind: Kind, number: number, parts: ClusterNodePart[]):
   return live.map((p) => `N${p.node} ${localLabel(kind, localOf(p), p.adapter)}`).join(' · ')
 }
 
-export function unreadText(nodes: number[]): string {
+export function unreadText(nodes: number[], others = false): string {
   const noun = nodes.length === 1 ? 'node' : 'nodes'
-  return `${noun} ${nodes.join(', ')} not read`
+  const named = nodes.length > 0 ? [`${noun} ${nodes.join(', ')} not read`] : []
+  return [...named, ...(others ? ['other nodes not read'] : [])].join(' · ')
 }
 
 export function partNodes(info: ClusterInfo | null, kind: Kind, ownNode: number): number[] {

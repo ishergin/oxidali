@@ -474,6 +474,8 @@ test('a group chosen twice in one draft names the other draft claim, not a part'
 test('nodes whose parts could not be read are named, not drawn as empty', () => {
   assert.equal(unreadText([2]), 'node 2 not read')
   assert.equal(unreadText([1, 3]), 'nodes 1, 3 not read')
+  assert.equal(unreadText([], true), 'other nodes not read')
+  assert.equal(unreadText([2], true), 'node 2 not read · other nodes not read')
 })
 
 test('a part whose home node is not heard is listed apart, holds its group, and is unlinked, not finished', () => {
@@ -484,4 +486,38 @@ test('a part whose home node is not heard is listed apart, holds its group, and 
   assert.deepEqual(strayFace(own[0]), { chip: 'home node 2 not heard', act: 'Unlink' })
   assert.deepEqual(strayFace(part(CH2, 7, { link: 'orphan' })), { chip: 'left over', act: 'Finish delete' })
   assert.deepEqual(holderOf('channel', 8, own, EMPTY_DRAFT, recordKey('channel', CH5)), { label: 'CH40 · not heard', drafted: false })
+})
+
+const CH12 = rec(12, { name: 'Attic' })
+
+test('a kept group is kept down the chain, whatever the order of the unlinks', async () => {
+  const records: Records = { channel: [CH2, CH5, CH9, CH12], scene: [] }
+  const own: OwnParts = { channel: [part(CH2, 5), part(CH5, 4), part(CH9, 1), part(CH12, 7)], scene: [] }
+  let d = editPart(EMPTY_DRAFT, 'channel', CH2, own.channel, { local: 4 })
+  d = editPart(d, 'channel', CH12, own.channel, { local: 1 })
+  d = editPart(d, 'channel', CH9, own.channel, { local: 5 })
+  const sent: string[] = []
+  const ports: ApplyPorts = {
+    rename: async () => undefined,
+    unlink: async (_k, local) => {
+      sent.push(`unlink G${local}`)
+    },
+    link: async (_k, local) => {
+      sent.push(`link G${local}`)
+    },
+    refusal: (e) => (e as Error).message,
+  }
+  const out = await runApply(planApply(d, records, own), ports)
+  assert.deepEqual(sent, [])
+  assert.deepEqual(
+    out.filter((o) => o.ok).map((o) => o.item),
+    [],
+  )
+  assert.equal(out.length, 5)
+})
+
+test('a name that differs from the stored one only by outer spaces sends no rename', () => {
+  const { records, own } = world()
+  const d = editName(EMPTY_DRAFT, 'channel', CH5, 'Hall ')
+  assert.deepEqual(planApply(d, records, own), [])
 })

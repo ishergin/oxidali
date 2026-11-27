@@ -91,6 +91,7 @@ interface World {
   own: OwnParts
   all: OwnParts
   unread: Record<Kind, number[]>
+  infoUnread: boolean
   locals: Record<Kind, LocalInfo[]>
 }
 
@@ -117,14 +118,15 @@ async function readLocals(): Promise<Record<Kind, LocalInfo[]>> {
 }
 
 async function readWorld(): Promise<World> {
-  const [settings, info, channel, scene, locals] = await Promise.all([
+  const [settings, read, channel, scene, locals] = await Promise.all([
     api.clusterSettings(),
-    api.clusterInfo().catch(() => null),
+    api.clusterInfo().catch(() => undefined),
     api.clusterRecords('channel'),
     api.clusterRecords('scene'),
     readLocals(),
   ])
   const me = settings.node_number
+  const info = read ?? null
   const [ch, sc] = await Promise.all([
     readParts('channel', partNodes(info, 'channel', me), me),
     readParts('scene', partNodes(info, 'scene', me), me),
@@ -132,7 +134,8 @@ async function readWorld(): Promise<World> {
   const mine = (p: ClusterNodePart) => p.node === me
   const own = { channel: ch.parts.filter(mine), scene: sc.parts.filter(mine) }
   const all = { channel: ch.parts, scene: sc.parts }
-  return { settings, info, records: { channel, scene }, own, all, unread: { channel: ch.unread, scene: sc.unread }, locals }
+  const unread = { channel: ch.unread, scene: sc.unread }
+  return { settings, info, infoUnread: read === undefined, records: { channel, scene }, own, all, unread, locals }
 }
 
 interface RowErr {
@@ -184,12 +187,12 @@ function OpenNode({ node, label = 'Open' }: { node: ClusterNode | null; label?: 
   )
 }
 
-function Unread({ nodes, lead }: { nodes: number[]; lead: boolean }) {
-  if (nodes.length === 0) return null
+function Unread({ nodes, others, lead }: { nodes: number[]; others: boolean; lead: boolean }) {
+  if (nodes.length === 0 && !others) return null
   return (
     <span class="silent" title="these nodes' parts could not be read">
       {lead ? ' · ' : ''}
-      {unreadText(nodes)}
+      {unreadText(nodes, others)}
     </span>
   )
 }
@@ -201,7 +204,7 @@ function NodesCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
     return (
       <td class="nodes">
         {recalls}
-        <Unread nodes={unread} lead={recalls !== ''} />
+        <Unread nodes={unread} others={ctx.world.infoUnread} lead={recalls !== ''} />
       </td>
     )
   }
@@ -220,7 +223,7 @@ function NodesCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
           )}
         </Fragment>
       ))}
-      <Unread nodes={unread} lead={nodes.length > 0} />
+      <Unread nodes={unread} others={ctx.world.infoUnread} lead={nodes.length > 0} />
     </td>
   )
 }
@@ -265,6 +268,7 @@ function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
         }}
         onBlur={(e) => {
           e.currentTarget.value = '0'
+          delete e.currentTarget.dataset.drag
         }}
       />
     </span>
@@ -358,7 +362,10 @@ function deleteRecord(ctx: Ctx, rec: ClusterRecord) {
       ctx.edit((d) => ({ names: without(d.names, key), parts: without(d.parts, key) }), key)
       ctx.reload()
     })
-    .catch((e) => ctx.setErr(key, 'name', refusalFrom(e, 'records').text))
+    .catch((e) => {
+      ctx.setErr(key, 'name', refusalFrom(e, 'records').text)
+      if (e instanceof ApiError && e.status === 404) ctx.reload()
+    })
 }
 
 function without<T>(map: Record<string, T>, key: string): Record<string, T> {
