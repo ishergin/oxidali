@@ -19,7 +19,7 @@ use crate::http::handler::ApiHandler;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    json_err, json_stream_dto, parse_body_object, parse_resource_id_param, wait_apply_counter,
+    check_body_keys, json_err, json_stream_dto, parse_body_object, parse_resource_id_param, wait_apply_counter,
     write_json_array_items, APPLY_WATCH_BUDGET_MS,
 };
 
@@ -31,6 +31,8 @@ const ADAPTER_PARAM: &str = "adapter_id";
 
 const PUT_KEYS: &[&str] = &["record", "send", "accept"];
 const PUT_READ_ONLY: &[&str] = &["adapter", "group", "scene", "revision"];
+const RECORD_KEYS: &[&str] = &["number", "birth_mark"];
+const MARK_KEYS: &[&str] = &["generation", "nonce"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClusterPartRoute {
@@ -190,18 +192,20 @@ fn flag(obj: &JsonObject, key: &str) -> Result<bool, HttpResponse> {
     field(obj, key)?.as_bool().ok_or_else(invalid)
 }
 
-fn object<'a>(obj: &'a JsonObject, key: &str) -> Result<&'a JsonObject, HttpResponse> {
-    field(obj, key)?.as_object().ok_or_else(invalid)
+fn object<'a>(obj: &'a JsonObject, key: &str, keys: &[&str]) -> Result<&'a JsonObject, HttpResponse> {
+    let inner = field(obj, key)?.as_object().ok_or_else(invalid)?;
+    check_body_keys(inner, keys, &[])?;
+    Ok(inner)
 }
 
 fn record_ref(obj: &JsonObject) -> Result<ClusterRecordRef, HttpResponse> {
-    let mark = object(obj, "birth_mark")?;
+    let mark = object(obj, "birth_mark", MARK_KEYS)?;
     let mark = ClusterBirthMark { generation: uint(mark, "generation")?, nonce: uint(mark, "nonce")? };
     Ok(ClusterRecordRef { number: uint(obj, "number")?, mark })
 }
 
 fn part_link(obj: &JsonObject) -> Result<ClusterPartLink, HttpResponse> {
-    let record = record_ref(object(obj, "record")?)?;
+    let record = record_ref(object(obj, "record", RECORD_KEYS)?)?;
     Ok(ClusterPartLink { record, send: flag(obj, "send")?, accept: flag(obj, "accept")? })
 }
 
@@ -235,6 +239,8 @@ mod tests {
             body(serde_json::json!({ "number": 1, "birth_mark": { "generation": -1, "nonce": 5 } })),
             body(serde_json::json!({ "number": 1, "birth_mark": { "generation": 1, "nonce": 1_u64 << 32 } })),
             body(serde_json::json!({ "number": 1, "birth_mark": 7 })),
+            body(serde_json::json!({ "number": 1, "birth_mark": mark, "home_node": 0 })),
+            body(serde_json::json!({ "number": 1, "birth_mark": { "generation": 1, "nonce": 5, "seed": 2 } })),
             serde_json::json!({ "record": { "number": 1, "birth_mark": mark }, "send": 1, "accept": false }),
             serde_json::json!({ "record": { "number": 1, "birth_mark": mark }, "send": true }),
         ];

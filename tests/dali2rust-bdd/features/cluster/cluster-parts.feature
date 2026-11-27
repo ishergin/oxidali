@@ -230,3 +230,26 @@ Feature: Cluster — this node's parts of channels and cluster scenes
       | channel-parts | {"record":{"number":20,"birth_mark":{"generation":1,"nonce":5}},"send":true,"accept":true,"revision":1} | 422    | unsupported_field |
       | scene-parts   | {"record":{"number":20,"birth_mark":{"generation":1,"nonce":5}},"send":true,"accept":true,"adapter":0}  | 422    | unsupported_field |
       | scene-parts   | {"record":{"number":20,"birth_mark":{"generation":1,"nonce":4294967296}},"send":true,"accept":true}     | 422    | invalid_value     |
+      | channel-parts | {"record":{"number":20,"birth_mark":{"generation":1,"nonce":5},"home_node":0},"send":true,"accept":true} | 400    | unknown_field     |
+      | scene-parts   | {"record":{"number":20,"birth_mark":{"generation":1,"nonce":5,"seed":2}},"send":true,"accept":true}    | 400    | unknown_field     |
+
+  @id:CLU-056
+  Scenario Outline: The parts travel with the configuration a standby pulls
+    Given in-memory slice persistence is enabled for the host stack
+    When I PUT JSON {"record":{"number":20,"birth_mark":{"generation":1,"nonce":5}},"send":true,"accept":true} to "/api/v1/cluster/<parts>/0/3"
+    Then the response status should be 200
+    When I send a GET request to "/api/v1/config/slices"
+    Then the response body should contain "<slice>"
+    When I export "/api/v1/config/slices/<slice>" once it is stored and keep the body
+    And I PUT JSON {"record":{"number":21,"birth_mark":{"generation":1,"nonce":5}},"send":false,"accept":true} to "/api/v1/cluster/<parts>/0/3"
+    Then the response status should be 200
+    When I PUT the kept body to "/api/v1/config/slices/<slice>"
+    Then the response status should be 202
+    And the last operation eventually succeeds
+    And the JSON pointer "/record/number" at "/api/v1/cluster/<parts>/0/3" should eventually be "20"
+    And the JSON pointer "/send" at "/api/v1/cluster/<parts>/0/3" should eventually be "true"
+
+    Examples:
+      | parts         | slice                 |
+      | channel-parts | cluster_channel_parts |
+      | scene-parts   | cluster_scene_parts   |

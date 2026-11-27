@@ -243,7 +243,8 @@ filtered: they address one device.
   record deleted under it leaves an orphan that names a mark no live record carries. A
   part out of range, out of order, with generation or revision `0`, or a record linked
   twice on one adapter breaks its slice; a reset erases that kind's parts and nothing
-  else.
+  else. Liveness is checked when a part is written, not kept: after a node-number change
+  a stored part may name a number of the new block with a mark no live record carries.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

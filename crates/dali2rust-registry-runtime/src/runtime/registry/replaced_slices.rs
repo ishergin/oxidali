@@ -746,6 +746,8 @@ mod tests {
             SliceKey::HomeAssistantSettings,
             SliceKey::DisplaySettings,
             SliceKey::ClusterSettings,
+            SliceKey::ClusterChannelParts,
+            SliceKey::ClusterSceneParts,
         ];
         let mut named = 0;
         for key in keys {

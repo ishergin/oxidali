@@ -19,7 +19,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-010 SET-DALI-011 RED-034 SET-DALI-015 SET-DALI-016 RED-035 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022 INP-105 INP-106 INP-107 INP-108 INP-109 CLU-014 CLU-015 CLU-016 CLU-017 CLU-018 CLU-020 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-010 SET-DALI-011 RED-034 SET-DALI-015 SET-DALI-016 RED-035 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022 INP-105 INP-106 INP-107 INP-108 INP-109 CLU-014 CLU-015 CLU-016 CLU-017 CLU-018 CLU-020 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-056
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -71,7 +71,7 @@ async fn export_and_keep(world: &mut DaliWorld, path: String) {
     assert!(!world.kept_body.is_empty(), "export of {path} was empty");
 }
 
-// CFG-012 CFG-013 RED-033 RED-032 CLU-014
+// CFG-012 CFG-013 RED-033 RED-032 CLU-014 CLU-056
 #[when(regex = r#"^I export "([^"]+)" once it is stored and keep the body$"#)]
 async fn export_once_stored_and_keep(world: &mut DaliWorld, path: String) {
     let stored = |world: &mut DaliWorld| {
@@ -91,7 +91,7 @@ async fn export_is_kept_body(world: &mut DaliWorld, path: String) {
     assert!(response.body == world.kept_body, "the stored slice moved under a refused import");
 }
 
-// CFG-009 CFG-010 CFG-011 CFG-013 CLU-014
+// CFG-009 CFG-010 CFG-011 CFG-013 CLU-014 CLU-056
 #[when(regex = r#"^I PUT the kept body to "([^"]+)"$"#)]
 async fn put_kept_body(world: &mut DaliWorld, path: String) {
     let body = world.kept_body.clone();

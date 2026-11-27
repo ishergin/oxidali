@@ -114,14 +114,14 @@ impl PartEdit {
 
 pub(crate) fn plan_part_edit(inner: &Inner, command: &ClusterPartUpdateCommand) -> Result<PartEdit, ClusterRefusal> {
     let (kind, adapter, local) = (command.kind, command.adapter, command.local);
-    if !inner.adapter_exists(adapter) || local >= CLUSTER_PART_LOCALS {
-        return Err(ClusterRefusal::PartNotFound);
-    }
     let set = inner.cluster_parts.set(kind);
     let held = set.entry(adapter, local);
     let Some(link) = command.link else {
         return held.map(|_| PartEdit::Remove { kind, adapter, local }).ok_or(ClusterRefusal::PartNotFound);
     };
+    if !inner.adapter_exists(adapter) || local >= CLUSTER_PART_LOCALS {
+        return Err(ClusterRefusal::PartNotFound);
+    }
     check_link(inner, kind, &link)?;
     let elsewhere = |other: &&ClusterPartEntry| other.adapter == adapter && other.local != local;
     if set.entries.iter().filter(elsewhere).any(|other| other.link.record.number == link.record.number) {
@@ -261,7 +261,8 @@ pub(crate) fn hydrate_scene_parts_inner(inner: &mut Inner, slice: &PersistableCl
 #[cfg(test)]
 mod tests {
     use dali2rust_contracts::msg::{
-        fixed_text_64, ClusterRecordAction, ClusterRecordUpdateCommand, ClusterTextField, ClusterTextUpdateCommand,
+        fixed_text_64, ClusterForwarding, ClusterRecordAction, ClusterRecordUpdateCommand, ClusterSettingsField,
+        ClusterSettingsUpdateCommand, ClusterTextField, ClusterTextUpdateCommand,
     };
     use dali2rust_domain::registry::ClusterSettingsReadPort;
 
@@ -338,6 +339,47 @@ mod tests {
         assert_eq!(put(&store, CHANNEL, 0, 4, link(live, true)), not_live, "the channel block holds no record 2");
         put(&store, SCENE, 0, 4, link(live, true)).expect("the live mark links");
         assert_eq!(revision(&store, SCENE, 0, 4), Some(1));
+    }
+
+    fn node_number(node: u8) -> ClusterPatch {
+        let mut body = ClusterSettingsUpdateCommand {
+            series: SERIES,
+            patch_mask: 0,
+            enabled: false,
+            node_number: node,
+            port: 0,
+            wire_same_as: None,
+            forwarding: ClusterForwarding::FACTORY,
+            accept_all_lamps: false,
+            send_all_lamps: false,
+            accept_single_lamps: false,
+            wire_protection: true,
+        };
+        body.patch(ClusterSettingsField::NodeNumber);
+        ClusterPatch::Settings(body)
+    }
+
+    #[test]
+    fn the_own_block_follows_the_node_number() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![node_number(1)]).expect("node 1");
+        let not_live = Err(ClusterRefusal::Record(ClusterRecordConflict::RecordNotLive));
+        assert_eq!(put(&store, CHANNEL, 0, 3, link(reference(FOREIGN, 1, 5), true)), not_live, "20 is node 1's own");
+        put(&store, CHANNEL, 0, 4, link(reference(2, 1, 5), true)).expect("2 is node 0's, kept as given");
+        let live = own_record(&store, CHANNEL, FOREIGN);
+        put(&store, CHANNEL, 0, 3, link(live, true)).expect("the live record 20 links");
+    }
+
+    #[test]
+    fn a_part_of_an_adapter_the_node_no_longer_has_is_read_and_removed_but_not_written() {
+        let store = RegistryStore::with_adapter_count(1);
+        let slice = PersistableClusterPartsSlice { parts: vec![stored(1, 2, FOREIGN)] };
+        hydrate_channel_parts_inner(&mut store.write_inner(), &slice);
+        assert_eq!(revision(&store, CHANNEL, 1, 2), Some(3));
+        let changed = put(&store, CHANNEL, 1, 2, link(reference(FOREIGN, 2, 9), false));
+        assert_eq!(changed, Err(ClusterRefusal::PartNotFound));
+        commit(&store, vec![part(CHANNEL, 1, 2, None)]).expect("removed");
+        assert_eq!(store.cluster_part(CHANNEL, 1, 2), None);
     }
 
     #[test]
@@ -445,7 +487,10 @@ mod tests {
         for (case, break_it) in BREAKS {
             let mut parts = held.clone();
             break_it(&mut parts);
-            assert_eq!(stored_parts(&PersistableClusterPartsSlice { parts }), None, "{case}");
+            let data = PersistableClusterPartsSlice { parts };
+            let envelope = PersistenceEnvelope { version: CLUSTER_CHANNEL_PARTS_SLICE_VERSION, data };
+            let bytes = encode_persistence_blob(&envelope).expect("encode");
+            assert!(decode_channel_parts(&bytes).is_err(), "{case}");
         }
     }
 
