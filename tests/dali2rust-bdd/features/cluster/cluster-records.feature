@@ -7,7 +7,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
   under the same number, and the name with its revision. A record of another
   node's block is not this node's to create.
 
-  @id:CLU-015
+  @id:CLU-028
   Scenario Outline: A record created without a number takes the lowest number of this node's block
     When I PATCH JSON {"node_number":2} to "/api/v1/cluster"
     Then the response status should be 200
@@ -37,7 +37,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-016
+  @id:CLU-029
   Scenario Outline: A record created without a name is named after its kind and number
     When I POST JSON {"number":4} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -48,7 +48,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels | Channel 4 |
       | scenes   | Scene 4   |
 
-  @id:CLU-017
+  @id:CLU-030
   Scenario Outline: A number set by hand inside this node's block is issued as asked
     When I POST JSON {"number":9,"name":"Hall"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -62,7 +62,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-018
+  @id:CLU-031
   Scenario Outline: A number of another node's block is not this node's to issue
     When I POST JSON {"number":16,"name":"Hall"} to "/api/v1/cluster/<kind>"
     Then the response status should be 409
@@ -76,7 +76,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-019
+  @id:CLU-032
   Scenario Outline: A number that is already a record is not issued twice
     When I POST JSON {"number":3,"name":"First"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -91,7 +91,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-020
+  @id:CLU-033
   Scenario Outline: A block of sixteen numbers holds sixteen records
     When I POST JSON {} to "/api/v1/cluster/<kind>" 16 times
     And I POST JSON {} to "/api/v1/cluster/<kind>"
@@ -106,7 +106,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-021
+  @id:CLU-034
   Scenario Outline: A rename names the revision it saw and moves it on
     When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -124,7 +124,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-022
+  @id:CLU-035
   Scenario Outline: An edit that names a stale revision changes nothing
     When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/<kind>"
     And I PATCH JSON {"name":"Hall","revision":1} to "/api/v1/cluster/<kind>/2"
@@ -145,7 +145,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-023
+  @id:CLU-036
   Scenario Outline: A delete names the revision it saw and removes the record
     When I POST JSON {"number":6,"name":"Corridor"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -161,7 +161,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-024
+  @id:CLU-037
   Scenario Outline: A number deleted and issued again is another record
     When I POST JSON {"number":5,"name":"Old"} to "/api/v1/cluster/<kind>"
     And I DELETE JSON {"revision":1} to "/api/v1/cluster/<kind>/5"
@@ -176,7 +176,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-025
+  @id:CLU-038
   Scenario Outline: A freed number is issued again only when no number is left that was never issued
     When I POST JSON {} to "/api/v1/cluster/<kind>"
     And I DELETE JSON {"revision":1} to "/api/v1/cluster/<kind>/0"
@@ -194,7 +194,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-026
+  @id:CLU-039
   Scenario Outline: A record this node is not home to is not found, and a number past the last is no record
     When I POST JSON {"number":4} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -217,7 +217,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | scenes   | 7      |
       | scenes   | 20     |
 
-  @id:CLU-027
+  @id:CLU-040
   Scenario Outline: The node number cannot change while the node is home to a record
     When I POST JSON {"name":"Corridor"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -237,7 +237,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-028
+  @id:CLU-041
   Scenario Outline: The node keeps the generation of a number across a change of node number
     When I POST JSON {"number":3} to "/api/v1/cluster/<kind>"
     And I DELETE JSON {"revision":1} to "/api/v1/cluster/<kind>/3"
@@ -252,7 +252,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-029
+  @id:CLU-042
   Scenario Outline: Records and the generations of deleted numbers survive a controller restart
     Given in-memory slice persistence is enabled for the host stack
     When I POST JSON {"number":1,"name":"Gone"} to "/api/v1/cluster/<kind>"
@@ -274,7 +274,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | channels |
       | scenes   |
 
-  @id:CLU-030
+  @id:CLU-043
   Scenario Outline: A standby reads the records and refuses to write them
     When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
@@ -301,7 +301,7 @@ Feature: Cluster — channel and cluster-scene records on their home node
       | scenes   | DELETE | scenes/2   | {"revision":1}                |
       | scenes   | DELETE | scenes/5   | {"revision":1}                |
 
-  @id:CLU-031
+  @id:CLU-044
   Scenario Outline: A record write refuses a body it does not take
     When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/<kind>"
     Then the response status should be 201
