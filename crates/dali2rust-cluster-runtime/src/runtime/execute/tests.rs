@@ -225,13 +225,13 @@ fn a_scene_recalled_on_a_channel_needs_both_parts_to_accept_and_runs_on_the_chan
 }
 
 #[test]
-fn steps_stop_fade_and_the_other_targets_are_not_executed_by_this_slice() {
+fn a_lamp_target_and_go_to_last_active_level_are_not_executed_by_this_stage() {
     let rig = rig(vec![group(0, 3, true)]);
     let actions = [
-        on_channel(LightVerb::Transition(LevelTransition::Up)),
-        on_channel(LightVerb::StopFade),
-        Action::Light { target: Target::All, verb: LightVerb::StopFade },
+        on_channel(LightVerb::Transition(LevelTransition::GoToLastActiveLevel)),
+        Action::Light { target: Target::All, verb: LightVerb::Transition(LevelTransition::GoToLastActiveLevel) },
         Action::Light { target: Target::Lamp(LAMP), verb: LightVerb::Setpoint(level(1)) },
+        Action::Light { target: Target::Lamp(LAMP), verb: LightVerb::StopFade },
     ];
     for action in actions {
         assert!(!is_supported(&action));
@@ -240,6 +240,48 @@ fn steps_stop_fade_and_the_other_targets_are_not_executed_by_this_slice() {
     }
     assert_eq!(rig.read(|c| &c.commands_dropped_unsupported_total), 4);
     rig.published(0);
+}
+
+fn relative_verbs() -> Vec<(LightVerb, BusCommandPayload)> {
+    let (adapter, group) = (0, 3);
+    let transition = |transition, payload: BusCommandPayload| (LightVerb::Transition(transition), payload);
+    vec![
+        transition(LevelTransition::Up, DaliDimCommand::for_group(adapter, group, DimDirection::Up).into()),
+        transition(LevelTransition::Down, DaliDimCommand::for_group(adapter, group, DimDirection::Down).into()),
+        transition(LevelTransition::StepUp, DaliStepCommand::for_group(adapter, group, StepKind::Up).into()),
+        transition(LevelTransition::StepDown, DaliStepCommand::for_group(adapter, group, StepKind::Down).into()),
+        transition(LevelTransition::OnAndStepUp, DaliStepCommand::for_group(adapter, group, StepKind::OnAndUp).into()),
+        transition(LevelTransition::StepDownAndOff, DaliStepCommand::for_group(adapter, group, StepKind::DownAndOff).into()),
+        (LightVerb::StopFade, DaliStopFadeCommand::for_group(adapter, group).into()),
+    ]
+}
+
+#[test]
+fn each_relative_verb_on_a_channel_runs_as_its_own_semantic_command_on_the_part_s_group() {
+    for (verb, expected) in relative_verbs() {
+        let rig = rig(vec![group(0, 3, true)]);
+        let action = on_channel(verb.clone());
+        assert!(is_supported(&action), "{verb:?}");
+        let outcome = rig.execution.execute(&action, stamp(true), Gate::Accepting);
+        assert_eq!(outcome.queued, 1, "{verb:?}");
+        let published = rig.published(1);
+        assert_eq!(published[0].payload, expected, "{verb:?}");
+        assert_eq!(published[0].meta.origin, Origin::Cluster);
+    }
+}
+
+#[test]
+fn a_relative_verb_to_all_lamps_is_a_broadcast_of_the_same_command() {
+    let accepting = ClusterSettingsView { accept_all_lamps: true, ..ClusterSettingsView::default() };
+    let rig = rig_with(Vec::new(), accepting);
+    rig.execution.execute(&to_all(LightVerb::Transition(LevelTransition::Up)), stamp(false), Gate::Accepting);
+    rig.execution.execute(&to_all(LightVerb::Transition(LevelTransition::StepDown)), stamp(true), Gate::Accepting);
+    rig.execution.execute(&to_all(LightVerb::StopFade), stamp(true), Gate::Accepting);
+    let published = rig.published(3);
+    let up = DaliDimCommand { hold_hcl: false, ..DaliDimCommand::broadcast(0, DimDirection::Up) };
+    assert_eq!(published[0].payload, BusCommandPayload::from(up));
+    assert_eq!(published[1].payload, BusCommandPayload::from(DaliStepCommand::broadcast(0, StepKind::Down)));
+    assert_eq!(published[2].payload, BusCommandPayload::from(DaliStopFadeCommand::broadcast(0)));
 }
 
 fn to_all(verb: LightVerb) -> Action {

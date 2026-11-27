@@ -1352,6 +1352,7 @@ export type StatsCluster = {
   commands_sent_total: number
   commands_delayed_total: number
   commands_superseded_total: number
+  relative_verbs_dropped_total: number
   commands_received_total: number
   commands_executed_total: number
   commands_rejected_total: number

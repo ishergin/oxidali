@@ -14,7 +14,7 @@ use crate::confirmation_bridge::PendingConfirmationSlots;
 use crate::http::cluster_info_state::{ClusterInfoHttpState, ClusterView};
 use crate::http::dispatcher::{dispatch_and_wait_for_success, CorrelationIdAllocator};
 use crate::http::handler::ApiHandler;
-use crate::http::target_state_request::{parse_target_request, TargetRequest, TargetStateBody};
+use crate::http::target_state_request::{parse_group_target_request, GroupTargetRequest, TargetRequest, TargetStateBody};
 use crate::http::types::HttpResponse;
 
 use super::common::{json_err, parse_body_object, parse_resource_id_param, parse_typed_body, serialize_or_log};
@@ -80,7 +80,7 @@ impl ApiHandler for ClusterCommandHandler {
 impl ClusterCommandHandler {
     fn channel_action(&self, params: &HashMap<String, String>, body: &[u8]) -> Result<ClusterAction, HttpResponse> {
         let channel = self.known(ClusterRecordKind::Channel, path_number(params)?)?;
-        let request = parse_target_request(&parse_typed_body::<TargetStateBody>(body)?, |_| true)?;
+        let request = parse_group_target_request(&parse_typed_body::<TargetStateBody>(body)?, |_| true)?;
         Ok(ClusterAction::Light { target: ClusterTarget::Channel(channel), verb: light_verb(request) })
     }
 
@@ -125,10 +125,15 @@ fn recall_channel(body: &[u8]) -> Result<Option<u8>, HttpResponse> {
     number.and_then(|number| u8::try_from(number).ok()).map(Some).ok_or_else(|| json_err(422, "invalid_value"))
 }
 
-const fn light_verb(request: TargetRequest) -> ClusterLightVerb {
+const fn light_verb(request: GroupTargetRequest) -> ClusterLightVerb {
     match request {
-        TargetRequest::Setpoint(setpoint) => ClusterLightVerb::Setpoint(setpoint),
-        TargetRequest::Recall(LevelPreset::MaxLevel) => ClusterLightVerb::Transition(LevelTransition::RecallMaxLevel),
-        TargetRequest::Recall(LevelPreset::MinLevel) => ClusterLightVerb::Transition(LevelTransition::RecallMinLevel),
+        GroupTargetRequest::Target(TargetRequest::Setpoint(setpoint)) => ClusterLightVerb::Setpoint(setpoint),
+        GroupTargetRequest::Target(TargetRequest::Recall(LevelPreset::MaxLevel)) => {
+            ClusterLightVerb::Transition(LevelTransition::RecallMaxLevel)
+        }
+        GroupTargetRequest::Target(TargetRequest::Recall(LevelPreset::MinLevel)) => {
+            ClusterLightVerb::Transition(LevelTransition::RecallMinLevel)
+        }
+        GroupTargetRequest::Relative(verb) => verb.light_verb(),
     }
 }

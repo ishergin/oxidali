@@ -32,7 +32,7 @@ pub use kinds::{
     AttributeGroupReadOutcome, ChannelKind, ColorMode, ConfigWriteResource, DaliAttributeGroup, DisplayPage,
     DaliTargetScope,
     BusUnitNvmRow, DecodeStatus, DeliveryStatus, DeviceCommandScope, DeviceType, DeviceTypeSet, DiscoveryMode, LastDapcSource,
-    DimDirection, LevelPreset, LevelTransition,
+    DimDirection, LevelPreset, LevelTransition, StepKind,
     MemoryBankReadPreset,
     CommissioningStep, IdentifyMechanism, InitialiseScope, InputDeviceLifecycleKind,
     InputEventKind, ManualConfigSource, MessageKind, ObservedFrameWidth, ObservedKind,
@@ -112,6 +112,7 @@ pub use commands::DaliBusHealthProbeCommand;
 pub use commands::DaliStopFadeCommand;
 pub use commands::DaliRecallLevelPresetCommand;
 pub use commands::DaliDimCommand;
+pub use commands::DaliStepCommand;
 pub use commands::RegistryLevelTransitionCommand;
 pub use commands::{
     DaliWriteMemoryLuminaireCommand, LuminaireNumbers, LuminaireText, LuminaireTextField,
@@ -124,7 +125,7 @@ pub use commands::{
     ClusterSettingsCommitCommand, ClusterSettingsField,
     ClusterSettingsUpdateCommand, ClusterTextUpdateCommand,
 };
-pub use events::{ClusterSettingsChangedEvent, ClusterStateChangedEvent};
+pub use events::{ClusterSettingsChangedEvent, ClusterStateChangedEvent, DaliStopFadeAppliedEvent};
 pub use events::DaliSettingsChangedEvent;
 pub use events::{
     Dali103ArbitrationProbedEvent, PoliciesChangedEvent, Dali103HandoverSentEvent, RegistrySliceReloadedEvent, APPLICATION_ACTIVE_UNMOVED, APPLICATION_ACTIVE_MOVED_BY_COMMAND, APPLICATION_ACTIVE_MOVED_BY_WIRE, RedundancySettingsChangedEvent,

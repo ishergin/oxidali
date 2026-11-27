@@ -12,6 +12,7 @@ const RECALL_SCENE: &str = "DaliRecallSceneCommand";
 const STOP_FADE: &str = "DaliStopFadeCommand";
 const RECALL_LEVEL_PRESET: &str = "DaliRecallLevelPresetCommand";
 const DIM: &str = "DaliDimCommand";
+const STEP: &str = "DaliStepCommand";
 
 struct WireClass {
     variant: &'static str,
@@ -81,6 +82,14 @@ const WIRE_CLASSES: &[WireClass] = &[
     // IEC 62386-101 §9.4
     class(
         DIM,
+        WirePriority::Interactive,
+        YieldGranularity::Never,
+        true,
+        TransactionPriority::UserAction,
+    ),
+    // IEC 62386-101 §9.4
+    class(
+        STEP,
         WirePriority::Interactive,
         YieldGranularity::Never,
         true,
@@ -293,7 +302,8 @@ fn refine_by_origin(variant: &str, default: WirePriority, origin: Origin) -> Wir
         (
             SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET,
             Origin::Mqtt | Origin::Cluster | Origin::ClusterHcl,
-        ) => WirePriority::Attended,
+        )
+        | (DIM | STEP | STOP_FADE, Origin::Cluster | Origin::ClusterHcl) => WirePriority::Attended,
         (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET, Origin::Rules) => {
             WirePriority::Interactive
         }
@@ -475,6 +485,7 @@ mod tests {
             STOP_FADE,
             RECALL_LEVEL_PRESET,
             DIM,
+            STEP,
         ];
         expected.sort_unstable();
         assert_eq!(flagged, expected, "the set of lamp-driving commands moved");
@@ -520,6 +531,19 @@ mod tests {
             assert_eq!(wire_priority(variant, Origin::ClusterHcl), wire_priority(variant, Origin::Cluster), "{variant}");
             let class = transaction_priority(variant, Origin::ClusterHcl);
             assert_eq!(class, transaction_priority(variant, Origin::Cluster), "{variant}");
+        }
+    }
+
+    #[test]
+    fn a_neighbour_s_relative_verb_queues_as_its_absolute_commands_do_and_a_rule_s_stays_interactive() {
+        for variant in [DIM, STEP, STOP_FADE] {
+            for origin in [Origin::Cluster, Origin::ClusterHcl] {
+                assert_eq!(wire_priority(variant, origin), Some(WirePriority::Attended), "{variant} {origin:?}");
+                assert_eq!(transaction_priority(variant, origin), Some(TransactionPriority::UserAction));
+            }
+            assert_eq!(wire_priority(variant, Origin::Rules), Some(WirePriority::Interactive), "{variant}");
+            assert_eq!(wire_priority(variant, Origin::Api), Some(WirePriority::Interactive), "{variant}");
+            assert_eq!(drives_lamp_state(variant), Some(true), "{variant} must keep its place among lamp writers");
         }
     }
 

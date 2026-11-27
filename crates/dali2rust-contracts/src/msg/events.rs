@@ -962,6 +962,25 @@ declare_bus_payloads! {
     }
     budget = ClusterStateChangedEvent { subject: ClusterSubject::Status };
 
+    pub struct DaliStopFadeAppliedEvent {
+        pub registry_adapter_id: u8,
+        pub scope: DaliTargetScope,
+        pub virtual_lamp_id: Option<u8>,
+        pub short_address: Option<u8>,
+        pub group_id: Option<u8>,
+        pub source: RuntimeSource,
+        pub applied_at_mono_ms: u32,
+    }
+    budget = DaliStopFadeAppliedEvent {
+        registry_adapter_id: u8::MAX,
+        scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: Some(63),
+        short_address: Some(63),
+        group_id: Some(15),
+        source: RuntimeSource::Sniffer,
+        applied_at_mono_ms: u32::MAX,
+    };
+
 }
 
 impl DaliInputManualConfigEvent {

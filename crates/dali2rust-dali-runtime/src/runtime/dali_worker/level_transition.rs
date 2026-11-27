@@ -1,7 +1,7 @@
 use super::*;
 use dali2rust_contracts::msg::{
-    DaliDimCommand, DaliLevelTransitionAppliedEvent, DaliRecallLevelPresetCommand, DimDirection, LevelPreset,
-    LevelTransition,
+    DaliDimCommand, DaliLevelTransitionAppliedEvent, DaliRecallLevelPresetCommand, DaliStepCommand, DimDirection,
+    LevelPreset, LevelTransition, StepKind,
 };
 
 pub(super) struct LevelTransitionRequest {
@@ -49,6 +49,27 @@ impl From<&DaliDimCommand> for LevelTransitionRequest {
                 DimDirection::Down => StandardCommand::Down,
             },
             transition: command.direction.transition(),
+        }
+    }
+}
+
+// IEC 62386-102 §11.3.5, §11.3.6, §11.3.9, §11.3.10
+impl From<&DaliStepCommand> for LevelTransitionRequest {
+    fn from(command: &DaliStepCommand) -> Self {
+        Self {
+            registry_adapter_id: command.registry_adapter_id,
+            scope: command.scope,
+            virtual_lamp_id: command.virtual_lamp_id,
+            short_address: command.short_address,
+            group_id: command.group_id,
+            hold_hcl: command.hold_hcl,
+            command: match command.step {
+                StepKind::Up => StandardCommand::StepUp,
+                StepKind::Down => StandardCommand::StepDown,
+                StepKind::OnAndUp => StandardCommand::OnAndStepUp,
+                StepKind::DownAndOff => StandardCommand::StepDownAndOff,
+            },
+            transition: command.step.transition(),
         }
     }
 }

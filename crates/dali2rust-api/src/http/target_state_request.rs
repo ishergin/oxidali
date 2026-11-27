@@ -7,8 +7,9 @@ use crate::http::handlers::common::{json_err, parse_color_mode, parse_power};
 use crate::http::lenient::{MaybeF64, MaybeObj, MaybeString, MaybeU64};
 use crate::http::types::HttpResponse;
 use dali2rust_contracts::msg::{
-    BusCommandPayload, ColorMode, ColorValue, DaliRecallLevelPresetCommand,
-    DaliSetTargetStateCommand, LevelPreset, LightSetpoint, PowerState,
+    BusCommandPayload, ClusterLightVerb, ColorMode, ColorValue, DaliDimCommand, DaliRecallLevelPresetCommand,
+    DaliSetTargetStateCommand, DaliStepCommand, DaliStopFadeCommand, DimDirection, LevelPreset,
+    LightSetpoint, PowerState, StepKind,
 };
 
 pub const TARGET_STATE_ALLOWED_KEYS: &[&str] = &[
@@ -21,6 +22,7 @@ pub const TARGET_STATE_ALLOWED_KEYS: &[&str] = &[
     "rgbwaf",
     "transition",
     "recall",
+    "dim",
 ];
 
 pub const TARGET_STATE_RUNTIME_READONLY_KEYS: &[&str] = &[
@@ -122,13 +124,14 @@ pub struct TargetStateBody {
     #[allow(dead_code, reason = "`transition` is allowed and ignored (legacy-pinned): a known field so it never lands in `extra`, but its value is never read")]
     transition: Option<IgnoredAny>,
     recall: Option<MaybeString>,
+    dim: Option<MaybeString>,
     #[serde(flatten)]
     extra: BTreeMap<String, IgnoredAny>,
 }
 
 impl TargetStateBody {
     pub(crate) fn recalling(recall: Option<MaybeString>) -> Self {
-        Self { setpoint: SetpointFields::default(), transition: None, recall, extra: BTreeMap::new() }
+        Self { setpoint: SetpointFields::default(), transition: None, recall, dim: None, extra: BTreeMap::new() }
     }
 
     pub(crate) fn setpoint_mut(&mut self) -> &mut SetpointFields {
@@ -165,11 +168,82 @@ impl TargetRequest {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelativeVerb {
+    Dim(DimDirection),
+    Step(StepKind),
+    StopFade,
+}
+
+impl RelativeVerb {
+    pub fn for_group(self, registry_adapter_id: u8, group_id: u8) -> BusCommandPayload {
+        match self {
+            Self::Dim(direction) => DaliDimCommand::for_group(registry_adapter_id, group_id, direction).into(),
+            Self::Step(step) => DaliStepCommand::for_group(registry_adapter_id, group_id, step).into(),
+            Self::StopFade => DaliStopFadeCommand::for_group(registry_adapter_id, group_id).into(),
+        }
+    }
+
+    pub const fn light_verb(self) -> ClusterLightVerb {
+        match self {
+            Self::Dim(direction) => ClusterLightVerb::Transition(direction.transition()),
+            Self::Step(step) => ClusterLightVerb::Transition(step.transition()),
+            Self::StopFade => ClusterLightVerb::StopFade,
+        }
+    }
+}
+
+pub const RELATIVE_VERBS: [(&str, RelativeVerb); 7] = [
+    ("up", RelativeVerb::Dim(DimDirection::Up)),
+    ("down", RelativeVerb::Dim(DimDirection::Down)),
+    ("step_up", RelativeVerb::Step(StepKind::Up)),
+    ("step_down", RelativeVerb::Step(StepKind::Down)),
+    ("on_and_step_up", RelativeVerb::Step(StepKind::OnAndUp)),
+    ("step_down_and_off", RelativeVerb::Step(StepKind::DownAndOff)),
+    ("stop_fade", RelativeVerb::StopFade),
+];
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GroupTargetRequest {
+    Target(TargetRequest),
+    Relative(RelativeVerb),
+}
+
+impl GroupTargetRequest {
+    pub fn for_group(&self, registry_adapter_id: u8, group_id: u8) -> BusCommandPayload {
+        match self {
+            Self::Target(target) => target.for_group(registry_adapter_id, group_id),
+            Self::Relative(verb) => verb.for_group(registry_adapter_id, group_id),
+        }
+    }
+}
+
+pub fn parse_group_target_request(
+    body: &TargetStateBody,
+    supports_color_mode: impl Fn(ColorMode) -> bool,
+) -> Result<GroupTargetRequest, HttpResponse> {
+    let Some(dim) = &body.dim else {
+        return parse_target_request(body, supports_color_mode).map(GroupTargetRequest::Target);
+    };
+    validate_target_state_keys(&body.extra)?;
+    if body.recall.is_some() || body.setpoint.has_any_value() {
+        return Err(json_err(422, "invalid_value"));
+    }
+    let MaybeString::Valid(name) = dim else {
+        return Err(json_err(422, "invalid_value"));
+    };
+    let verb = RELATIVE_VERBS.iter().find(|(verb_name, _)| *verb_name == name.as_str());
+    verb.map(|&(_, verb)| GroupTargetRequest::Relative(verb)).ok_or_else(|| json_err(422, "invalid_enum"))
+}
+
 pub fn parse_target_request(
     body: &TargetStateBody,
     supports_color_mode: impl Fn(ColorMode) -> bool,
 ) -> Result<TargetRequest, HttpResponse> {
     validate_target_state_keys(&body.extra)?;
+    if body.dim.is_some() {
+        return Err(json_err(422, "unsupported_field"));
+    }
     match &body.recall {
         Some(recall) => parse_recall(recall, &body.setpoint).map(TargetRequest::Recall),
         None => apply_setpoint_fields(&body.setpoint, supports_color_mode).map(TargetRequest::Setpoint),

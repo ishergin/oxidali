@@ -173,6 +173,26 @@ struct SupersedeKey {
     scope: u8,
     identity: u8,
     hold_hcl: bool,
+    stretch: u16,
+}
+
+type LastByKey = std::collections::HashMap<SupersedeKey, usize>;
+
+fn supersede_keys(batch: &[Queued], adapter_id: BusId) -> Vec<Option<SupersedeKey>> {
+    let mut stretch: u16 = 0;
+    let mut keys = Vec::with_capacity(batch.len());
+    for queued in batch {
+        let key = supersede_coalesce_key(&queued.frame, adapter_id);
+        keys.push(key.map(|key| SupersedeKey { stretch, ..key }));
+        if key.is_none() && writes_lamp_state(&queued.frame, adapter_id) {
+            stretch = stretch.wrapping_add(1);
+        }
+    }
+    keys
+}
+
+fn last_index_by_key(keys: &[Option<SupersedeKey>]) -> LastByKey {
+    keys.iter().enumerate().filter_map(|(index, key)| key.map(|key| (key, index))).collect()
 }
 
 fn supersede_coalesce_key(frame: &BusFrame, adapter_id: BusId) -> Option<SupersedeKey> {
@@ -199,6 +219,7 @@ fn recall_key(rc: &dali2rust_contracts::msg::DaliRecallSceneCommand) -> Supersed
         scope: rc.scope as u8,
         identity: recall_identity(rc),
         hold_hcl: rc.hold_hcl,
+        stretch: 0,
     }
 }
 
@@ -212,6 +233,7 @@ fn operator_read_key(ar: &dali2rust_contracts::msg::DaliReadAttributesCommand) -
         scope: DaliTargetScope::Short as u8,
         identity: ar.short_address,
         hold_hcl: false,
+        stretch: 0,
     }
 }
 
@@ -230,6 +252,7 @@ fn target_state_key(
         scope: ts.scope as u8,
         identity,
         hold_hcl: ts.hold_hcl,
+        stretch: 0,
     })
 }
 
@@ -267,11 +290,7 @@ fn frame_with_setpoint(frame: &BusFrame, setpoint: LightSetpoint) -> Option<BusF
     Some(BusFrame::command(envelope))
 }
 
-fn is_displaced(
-    key: Option<SupersedeKey>,
-    index: usize,
-    last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
-) -> bool {
+fn is_displaced(key: Option<SupersedeKey>, index: usize, last_by_key: &LastByKey) -> bool {
     key.is_some_and(|key| last_by_key.get(&key) != Some(&index))
 }
 
@@ -284,7 +303,8 @@ fn same_origin(a: &BusFrame, b: &BusFrame) -> bool {
 
 fn fold_displaced_setpoints(
     batch: &mut [Queued],
-    last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
+    keys: &[Option<SupersedeKey>],
+    last_by_key: &LastByKey,
     adapter_id: BusId,
 ) -> Vec<(usize, usize)> {
     let mut carried = Vec::new();
@@ -295,15 +315,7 @@ fn fold_displaced_setpoints(
         let Some(original) = target_state_setpoint(&batch[survivor].frame).cloned() else {
             continue;
         };
-        let acc = fold_one_key(
-            batch,
-            last_by_key,
-            adapter_id,
-            key,
-            survivor,
-            original.clone(),
-            &mut carried,
-        );
+        let acc = fold_one_key(batch, (keys, last_by_key), adapter_id, (key, survivor), original.clone(), &mut carried);
         if acc != original {
             if let Some(folded) = frame_with_setpoint(&batch[survivor].frame, acc) {
                 batch[survivor].frame = folded;
@@ -315,17 +327,16 @@ fn fold_displaced_setpoints(
 
 fn fold_one_key(
     batch: &[Queued],
-    last_by_key: &std::collections::HashMap<SupersedeKey, usize>,
+    (keys, last_by_key): (&[Option<SupersedeKey>], &LastByKey),
     adapter_id: BusId,
-    key: SupersedeKey,
-    survivor: usize,
+    (key, survivor): (SupersedeKey, usize),
     survivor_setpoint: LightSetpoint,
     carried: &mut Vec<(usize, usize)>,
 ) -> LightSetpoint {
     let mut acc = survivor_setpoint;
     for index in (0..survivor).rev() {
         let frame = &batch[index].frame;
-        let frame_key = supersede_coalesce_key(frame, adapter_id);
+        let frame_key = keys[index];
         if frame_key != Some(key) {
             if writes_lamp_state(frame, adapter_id) && !is_displaced(frame_key, index, last_by_key)
             {
@@ -358,21 +369,10 @@ fn supersede_stale_target_state(
     if batch.len() < 2 {
         return;
     }
-    let mut last_by_key: std::collections::HashMap<SupersedeKey, usize> =
-        std::collections::HashMap::new();
-    for (index, queued) in batch.iter().enumerate() {
-        if let Some(key) = supersede_coalesce_key(&queued.frame, adapter_id) {
-            last_by_key.insert(key, index);
-        }
-    }
-    let carried = fold_displaced_setpoints(batch, &last_by_key, adapter_id);
-    let displaced: Vec<bool> = batch
-        .iter()
-        .enumerate()
-        .map(|(index, queued)| {
-            is_displaced(supersede_coalesce_key(&queued.frame, adapter_id), index, &last_by_key)
-        })
-        .collect();
+    let keys = supersede_keys(batch, adapter_id);
+    let last_by_key = last_index_by_key(&keys);
+    let carried = fold_displaced_setpoints(batch, &keys, &last_by_key, adapter_id);
+    let displaced: Vec<bool> = (0..batch.len()).map(|index| is_displaced(keys[index], index, &last_by_key)).collect();
     let superseded_frames = displaced.iter().filter(|displaced| **displaced).count();
     counters
         .target_state_superseded
@@ -513,6 +513,50 @@ mod tests {
     #[test]
     fn a_read_nobody_cancelled_keeps_its_place() {
         assert_eq!(read_key(Origin::Poller, 5), None, "a poller read awaits its own outcome");
+    }
+
+    fn group_frame(correlation_id: u64, payload: impl Into<BusCommandPayload>) -> Queued {
+        Queued::new(BusFrame::command(dali2rust_contracts::bus::command_envelope(
+            SOURCE_ID_UNSPECIFIED,
+            correlation_id,
+            BusId::default().0,
+            Some(Origin::Api),
+            payload,
+        )))
+    }
+
+    fn group_setpoint(correlation_id: u64, group: u8, level: u8) -> Queued {
+        let setpoint = LightSetpoint { power: PowerState::On, level: Some(level), color: None };
+        group_frame(correlation_id, dali2rust_contracts::msg::DaliSetTargetStateCommand::for_group(0, group, &setpoint))
+    }
+
+    fn group_step(correlation_id: u64, group: u8) -> Queued {
+        let step = dali2rust_contracts::msg::StepKind::Up;
+        group_frame(correlation_id, dali2rust_contracts::msg::DaliStepCommand::for_group(0, group, step))
+    }
+
+    fn displaced(batch: &[Queued]) -> Vec<bool> {
+        let keys = supersede_keys(batch, BusId::default());
+        let last_by_key = last_index_by_key(&keys);
+        (0..batch.len()).map(|index| is_displaced(keys[index], index, &last_by_key)).collect()
+    }
+
+    #[test]
+    fn a_setpoint_before_a_step_is_not_displaced_by_the_setpoint_after_it() {
+        let batch = [group_setpoint(FIRST, 3, 100), group_step(SECOND, 3), group_setpoint(RIDER, 3, 50)];
+        assert_eq!(displaced(&batch), [false, false, false], "the step would run from the wrong level");
+    }
+
+    #[test]
+    fn a_step_on_another_group_still_keeps_the_setpoint_before_it() {
+        let batch = [group_setpoint(FIRST, 3, 100), group_step(SECOND, 4), group_setpoint(RIDER, 3, 50)];
+        assert_eq!(displaced(&batch), [false, false, false]);
+    }
+
+    #[test]
+    fn steps_are_never_displaced_and_setpoints_with_nothing_between_still_are() {
+        let batch = [group_step(FIRST, 3), group_step(SECOND, 3), group_setpoint(RIDER, 3, 50), group_setpoint(73, 3, 60)];
+        assert_eq!(displaced(&batch), [false, false, true, false], "two steps are two steps");
     }
 
     #[test]

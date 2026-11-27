@@ -33,6 +33,7 @@ impl NodeSender<'_> {
             Admission::Now(queued) => self.send_command(reading, queued, now_ms),
             Admission::AfterCopy => {}
             Admission::Later { superseded } => self.delayed(superseded),
+            Admission::Dropped(queued) => self.dropped(&queued),
             Admission::Full(queued) => self.refuse(queued.correlation_id, ErrorCode::Conflict, CLUSTER_BUSY),
         }
     }
@@ -60,6 +61,11 @@ impl NodeSender<'_> {
             bump(&self.ports.counters.commands_superseded_total);
             self.refuse(earlier.correlation_id, ErrorCode::Superseded, SUPERSEDED);
         }
+    }
+
+    fn dropped(&self, queued: &Queued) {
+        bump(&self.ports.counters.relative_verbs_dropped_total);
+        self.refuse(queued.correlation_id, ErrorCode::Conflict, CLUSTER_BUSY);
     }
 
     fn refuse(&self, correlation_id: u64, code: ErrorCode, cause: &str) {

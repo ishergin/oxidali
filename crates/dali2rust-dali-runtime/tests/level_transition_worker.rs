@@ -5,8 +5,8 @@ use dali2rust_adapters::dali::transport::mock::MockDaliTransport;
 use dali2rust_bus::{BusChannel, BusConfig, BusFrame, BusHost, BusId, PublishResult};
 use dali2rust_contracts::msg::{
     BusCommandPayload, BusEventPayload, DaliDimCommand, DaliLevelTransitionAppliedEvent,
-    DaliRecallLevelPresetCommand, DaliTargetScope, DeliveryStatus, DimDirection, ErrorCode, LevelPreset,
-    LevelTransition, Origin, RuntimeSource,
+    DaliRecallLevelPresetCommand, DaliStepCommand, DaliStopFadeCommand, DaliTargetScope, DeliveryStatus,
+    DimDirection, ErrorCode, LevelPreset, LevelTransition, Origin, RuntimeSource, StepKind,
 };
 use dali2rust_dali_runtime::{
     spawn_dali_worker, DaliController, DaliRuntimeConfig, DaliWorkerCounters, StdClock,
@@ -18,6 +18,7 @@ use dali2rust_domain::dali::types::DaliAddress;
 use dali2rust_registry_runtime::RegistryStore;
 
 const APPLIED: &str = "DaliLevelTransitionAppliedEvent";
+const STOP_FADE_APPLIED: &str = "DaliStopFadeAppliedEvent";
 
 fn frame_of(address: DaliAddress, command: StandardCommand) -> u16 {
     DaliCommand::Standard { address, command }.to_forward_frame().raw()
@@ -38,7 +39,7 @@ fn spawn_stack(scripted: &[u16]) -> Stack {
             (
                 reg.subscribe_commands(16, DALI_WORKER_HANDLED_COMMANDS),
                 reg.subscribe_confirmations(16),
-                reg.subscribe_events(16, &[APPLIED]),
+                reg.subscribe_events(16, &[APPLIED, STOP_FADE_APPLIED]),
             )
         });
     let transport = Arc::new(std::sync::Mutex::new(MockDaliTransport::new()));
@@ -207,4 +208,55 @@ fn a_dim_of_an_unbound_virtual_lamp_is_refused_before_the_wire() {
     assert_eq!(error.code, ErrorCode::VlUnbound);
     assert!(stack.events.recv_timeout(Duration::from_millis(100)).is_err(), "a refused dim states no transition");
     assert!(stack.transport.lock().expect("mock lock").sent_frames().is_empty());
+}
+
+#[test]
+fn each_step_on_a_group_is_its_own_opcode_and_closes_with_its_transition() {
+    for (corr, step, frame, transition) in [
+        (81u64, StepKind::Up, 0x8B03u16, LevelTransition::StepUp),
+        (82, StepKind::Down, 0x8B04, LevelTransition::StepDown),
+        (83, StepKind::OnAndUp, 0x8B08, LevelTransition::OnAndStepUp),
+        (84, StepKind::DownAndOff, 0x8B07, LevelTransition::StepDownAndOff),
+    ] {
+        let stack = spawn_stack(&[frame]);
+        publish(&stack, corr, Origin::Cluster, DaliStepCommand::for_group(0, 5, step));
+
+        assert_eq!(confirmation(&stack).status, DeliveryStatus::Ok, "{step:?}");
+        let fact = applied(&stack);
+        assert_eq!((fact.scope, fact.group_id, fact.transition), (DaliTargetScope::Group, Some(5), transition));
+        assert_eq!(fact.source, RuntimeSource::Cluster, "{step:?}");
+        assert_eq!(stack.transport.lock().expect("mock lock").sent_frames(), vec![frame], "{step:?}");
+    }
+}
+
+#[test]
+fn two_steps_published_together_are_two_frames_and_two_facts() {
+    let frame = frame_of(DaliAddress::Broadcast, StandardCommand::StepUp);
+    let stack = spawn_stack(&[frame, frame]);
+    publish(&stack, 85, Origin::Api, DaliStepCommand::broadcast(0, StepKind::Up));
+    publish(&stack, 86, Origin::Api, DaliStepCommand::broadcast(0, StepKind::Up));
+
+    for _ in 0..2 {
+        assert_eq!(confirmation(&stack).status, DeliveryStatus::Ok);
+        assert_eq!(applied(&stack).transition, LevelTransition::StepUp);
+    }
+    assert_eq!(stack.transport.lock().expect("mock lock").sent_frames(), vec![0xFF03, 0xFF03]);
+}
+
+#[test]
+fn a_stopped_fade_on_a_group_states_its_fact_before_the_answer() {
+    let stack = spawn_stack(&[0x8AFF]);
+    publish(&stack, 87, Origin::Api, DaliStopFadeCommand::for_group(0, 5));
+
+    let BusFrame::Event(ev) = stack.events.recv_timeout(Duration::from_secs(1)).expect("the stopped fade's fact")
+    else {
+        panic!("expected an event frame");
+    };
+    let BusEventPayload::DaliStopFadeAppliedEvent(fact) = &ev.payload else {
+        panic!("expected the stopped fade's fact, got {:?}", ev.payload.variant_name());
+    };
+    assert_eq!((fact.scope, fact.group_id, fact.short_address), (DaliTargetScope::Group, Some(5), None));
+    assert_eq!(fact.source, RuntimeSource::Api);
+    assert_eq!(confirmation(&stack).status, DeliveryStatus::Ok);
+    assert_eq!(stack.transport.lock().expect("mock lock").sent_frames(), vec![0x8AFF]);
 }

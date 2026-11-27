@@ -4,8 +4,9 @@ use std::sync::Arc;
 use dali2rust_bus::{publish_or_drop, BusChannel, BusFrame, BusId, BusPublisher, PublishResult};
 use dali2rust_contracts::bus::command_envelope;
 use dali2rust_contracts::msg::{
-    BusCommandPayload, ClusterRecordKind, ConfirmationEnvelope, DaliRecallLevelPresetCommand, DaliRecallSceneCommand,
-    DaliSetTargetStateCommand, DeliveryStatus, LevelPreset, LevelTransition, LightSetpoint, Origin,
+    BusCommandPayload, ClusterRecordKind, ConfirmationEnvelope, DaliDimCommand, DaliRecallLevelPresetCommand,
+    DaliRecallSceneCommand, DaliSetTargetStateCommand, DaliStepCommand, DaliStopFadeCommand, DeliveryStatus,
+    DimDirection, LevelPreset, LevelTransition, LightSetpoint, Origin, StepKind,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{AdapterReadPort, ClusterPartReadPort, ClusterPartView, ClusterSettingsReadPort};
@@ -100,16 +101,33 @@ impl Outcome {
 enum Verb {
     Setpoint(LightSetpoint),
     Preset(LevelPreset),
+    Dim(DimDirection),
+    Step(StepKind),
+    StopFade,
 }
 
 impl Verb {
     fn of(verb: &LightVerb) -> Option<Self> {
         match verb {
             LightVerb::Setpoint(setpoint) => Some(Self::Setpoint(setpoint.clone())),
-            LightVerb::Transition(LevelTransition::RecallMaxLevel) => Some(Self::Preset(LevelPreset::MaxLevel)),
-            LightVerb::Transition(LevelTransition::RecallMinLevel) => Some(Self::Preset(LevelPreset::MinLevel)),
-            LightVerb::Transition(_) | LightVerb::StopFade => None,
+            LightVerb::Transition(transition) => Self::of_transition(*transition),
+            LightVerb::StopFade => Some(Self::StopFade),
         }
+    }
+
+    const fn of_transition(transition: LevelTransition) -> Option<Self> {
+        let verb = match transition {
+            LevelTransition::RecallMaxLevel => Self::Preset(LevelPreset::MaxLevel),
+            LevelTransition::RecallMinLevel => Self::Preset(LevelPreset::MinLevel),
+            LevelTransition::Up => Self::Dim(DimDirection::Up),
+            LevelTransition::Down => Self::Dim(DimDirection::Down),
+            LevelTransition::StepUp => Self::Step(StepKind::Up),
+            LevelTransition::StepDown => Self::Step(StepKind::Down),
+            LevelTransition::OnAndStepUp => Self::Step(StepKind::OnAndUp),
+            LevelTransition::StepDownAndOff => Self::Step(StepKind::DownAndOff),
+            LevelTransition::GoToLastActiveLevel => return None,
+        };
+        Some(verb)
     }
 
     fn on_group(&self, part: &ClusterPartView, hold_hcl: bool) -> BusCommandPayload {
@@ -122,6 +140,13 @@ impl Verb {
                 let command = DaliRecallLevelPresetCommand::for_group(part.adapter, part.local, *preset);
                 DaliRecallLevelPresetCommand { hold_hcl, ..command }.into()
             }
+            Self::Dim(direction) => {
+                DaliDimCommand { hold_hcl, ..DaliDimCommand::for_group(part.adapter, part.local, *direction) }.into()
+            }
+            Self::Step(step) => {
+                DaliStepCommand { hold_hcl, ..DaliStepCommand::for_group(part.adapter, part.local, *step) }.into()
+            }
+            Self::StopFade => DaliStopFadeCommand::for_group(part.adapter, part.local).into(),
         }
     }
 
@@ -133,6 +158,9 @@ impl Verb {
             Self::Preset(preset) => {
                 DaliRecallLevelPresetCommand { hold_hcl, ..DaliRecallLevelPresetCommand::broadcast(adapter, *preset) }.into()
             }
+            Self::Dim(direction) => DaliDimCommand { hold_hcl, ..DaliDimCommand::broadcast(adapter, *direction) }.into(),
+            Self::Step(step) => DaliStepCommand { hold_hcl, ..DaliStepCommand::broadcast(adapter, *step) }.into(),
+            Self::StopFade => DaliStopFadeCommand::broadcast(adapter).into(),
         }
     }
 }

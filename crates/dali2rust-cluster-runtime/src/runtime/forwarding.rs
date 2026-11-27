@@ -60,6 +60,10 @@ impl Fact {
                 let reach = Reach::of(applied.scope, applied.group_id)?;
                 (applied.registry_adapter_id, reach, deed, applied.source, applied.hold_hcl)
             }
+            BusEventPayload::DaliStopFadeAppliedEvent(applied) => {
+                let reach = Reach::of(applied.scope, applied.group_id)?;
+                (applied.registry_adapter_id, reach, Deed::Light(LightVerb::StopFade), applied.source, false)
+            }
             BusEventPayload::DaliSceneRecalledEvent(recalled) if recalled.error.is_none() => {
                 let reach = Reach::of(recalled.scope, Some(recalled.group_id))?;
                 (recalled.registry_adapter_id, reach, Deed::Scene(recalled.scene_id), recalled.source, recalled.hold_hcl)
@@ -91,8 +95,18 @@ impl Fact {
 }
 
 fn forwarded_transition(transition: LevelTransition) -> Option<LightVerb> {
-    let absolute = matches!(transition, LevelTransition::RecallMaxLevel | LevelTransition::RecallMinLevel);
-    absolute.then_some(LightVerb::Transition(transition))
+    let forwarded = match transition {
+        LevelTransition::RecallMaxLevel
+        | LevelTransition::RecallMinLevel
+        | LevelTransition::Up
+        | LevelTransition::Down
+        | LevelTransition::StepUp
+        | LevelTransition::StepDown
+        | LevelTransition::OnAndStepUp
+        | LevelTransition::StepDownAndOff => true,
+        LevelTransition::GoToLastActiveLevel => false,
+    };
+    forwarded.then_some(LightVerb::Transition(transition))
 }
 
 fn sent_record(parts: &dyn ClusterPartReadPort, kind: ClusterRecordKind, adapter: u8, local: u8) -> Option<RecordRef> {
