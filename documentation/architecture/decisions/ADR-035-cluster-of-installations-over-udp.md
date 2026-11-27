@@ -179,7 +179,7 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   `sdkconfig.p4.defaults`, which only a flash proves.
 - The cluster's counters are a block in `/api/v1/stats`, and its worker one more command
   and event subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 6912 against a measured worst case of 6849,
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 6976 against a measured worst case of 6886,
   `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8768 against 8749. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15857: eight nodes and 24 ignored boards, every text at its widest. The floor of

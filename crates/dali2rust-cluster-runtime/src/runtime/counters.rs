@@ -15,6 +15,7 @@ pub struct ClusterCounters {
     pub unknown_version_frames_total: AtomicU32,
     pub rejected_frames_total: AtomicU32,
     pub duplicates_total: AtomicU32,
+    pub stale_link_frames_total: AtomicU32,
     pub sequence_gaps_total: AtomicU32,
     pub withheld_standby_total: AtomicU32,
     pub boards_evicted_total: AtomicU32,

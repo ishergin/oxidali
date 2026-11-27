@@ -1179,6 +1179,7 @@ export type StatsCluster = {
   unknown_version_frames_total: number
   rejected_frames_total: number
   duplicates_total: number
+  stale_link_frames_total: number
   sequence_gaps_total: number
   withheld_standby_total: number
   boards_evicted_total: number

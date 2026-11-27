@@ -66,8 +66,10 @@ fn a_datagram_read_from_a_link_already_given_up_is_not_taken() {
     presence.clear();
     deliver(&presence, &counters, &pulse(NAME, BARN, 1, 1), given_up, START_MS);
     assert_eq!(boards(&presence), 0);
+    assert_eq!(counters.stale_link_frames_total.load(Ordering::Relaxed), 1);
     deliver(&presence, &counters, &pulse(NAME, BARN, 1, 2), presence.link(), START_MS);
     assert_eq!(boards(&presence), 1);
+    assert_eq!(counters.stale_link_frames_total.load(Ordering::Relaxed), 1);
 }
 
 #[test]
