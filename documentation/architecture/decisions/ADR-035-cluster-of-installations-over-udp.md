@@ -98,8 +98,9 @@ A part's group is either an existing group linked as it is, or a free group the 
 for the channel. A node decides that a group is free from the membership of every gear it
 knows, not only its own lamps, and checks it on the wire by a presence query with a positive
 control before it takes the group; a gear that is powered off and unknown to the registry
-escapes both. A taken group is edited only in the channel. Who edits a group linked as it
-is stays open until the channel editor is built.
+escapes both. Any group linked to a channel, taken by the node or linked as it is, is edited
+in the channel, and its column on the Groups screen is closed and labelled with the
+channel.
 
 A cluster scene is built the same way: a record on a home node, and on each node a part
 naming that node's scene. A recall addresses a whole node or a channel.
@@ -177,10 +178,10 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   in the datagram header, and the bus envelope's `cluster_origin_id` is not stamped.
 - The UDP receive mailbox, today at the ESP-IDF default, and the socket count are raised in
   `sdkconfig.p4.defaults`, which only a flash proves.
-- The cluster's counters are a block in `/api/v1/stats`, and its worker one more command
-  and event subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 7168 against a measured worst case of 7109,
-  `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8768 against 8749. The status resource goes out
+- The cluster's counters are a block in `/api/v1/stats`, and its worker one more command,
+  event and confirmation subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 7744 against a measured worst case of 7712,
+  `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8832 against 8805. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15857: eight nodes and 24 ignored boards, every text at its widest. The per-node
   summary of announced channel and scene info goes out in one `ClusterInfo` frame, whose

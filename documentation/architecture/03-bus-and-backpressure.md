@@ -73,7 +73,7 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 | Rules funnel | 128 |
 | OTA commands | 2 |
 | Redundancy: arbitration / replication / supervisor events | 16 / 8 / 4 |
-| Cluster funnel | 16 |
+| Cluster funnel / confirmations | 16 / 32 |
 
 - The two 128-deep event inboxes belong to the slowest consumers (per-event JSON
   projection, per-event rule evaluation), where a loss is visible to an operator.
@@ -126,6 +126,11 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   its cause (`adapter_disabled`, `controller_passive`), never the generic
   `execution_failed` an unanswering gear produces. Every kind the DALI worker handles
   drives some adapter's wire, so the adapter switch gates every one of them.
+- A command the cluster worker publishes to execute a cluster frame waits for nobody, so
+  the cluster worker holds its own confirmations inbox and counts every refusal of a
+  command it published (`commands_rejected_total` in `/api/v1/stats`). Its correlation ids
+  carry a tag of their own, so it recognises its commands without a table of pending
+  ones.
 
 ## Required events
 
