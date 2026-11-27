@@ -24,6 +24,7 @@ const V1_CHANNELS: &[&str] = &[
     "rules",
     "logs",
     "health",
+    "cluster",
 ];
 
 const COUNTER_SETTLE: Duration = Duration::from_secs(3);
@@ -84,7 +85,7 @@ async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009 POLICY-022 WS-060 WS-061
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009 POLICY-022 WS-060 WS-061 CLU-022
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -167,7 +168,7 @@ async fn when_subscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).subscribe(&channels);
 }
 
-// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052 PERS-008 POLICY-022 WS-060 WS-061
+// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052 PERS-008 POLICY-022 WS-060 WS-061 CLU-022
 #[given(regex = r#"^the WebSocket client is subscribed to "([^"]+)"$"#)]
 async fn given_subscribed(world: &mut DaliWorld, channels: String) {
     let c = last_client(world);

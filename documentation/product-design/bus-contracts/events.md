@@ -28,7 +28,7 @@
 | Изменения реестра | `AdapterSettingsChangedEvent`, `VirtualLampChangedEvent`, `PhysicalDeviceChangedEvent`, `GroupChangedEvent`, `GroupMatrixChangedEvent`, `SceneChangedEvent`, `SceneMatrixChangedEvent`, `InputDeviceChangedEvent` | registry worker | WS; MQTT (лампы, устройства, группы, матрица групп, сцены, устройства ввода); правила (лампы, устройства, группы, сцены, устройства ввода — перекомпиляция имён) | best-effort |
 | Расписания HCL | `HclScheduleChangedEvent` | registry worker | HCL, дисплей | best-effort |
 | Runtime | `RuntimeStateChangedEvent` | registry worker | WS, MQTT, HCL, правила | best-effort |
-| Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent`, `DisplaySettingsChangedEvent`, `ClusterSettingsChangedEvent` | registry worker | поллер; арбитраж и правила; — ; воркер репликации; — ; дисплей; — | best-effort |
+| Настройки | `PollerSettingsChangedEvent`, `DaliSettingsChangedEvent`, `HomeAssistantSettingsChangedEvent`, `RedundancySettingsChangedEvent`, `PoliciesChangedEvent`, `DisplaySettingsChangedEvent`, `ClusterSettingsChangedEvent` | registry worker | поллер; арбитраж, правила и кластер; — ; воркер репликации; — ; дисплей; кластер | best-effort |
 | Операции | `OperationStatusChangedEvent` | operation tracker | WS, дисплей | best-effort |
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
@@ -39,7 +39,8 @@
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
 | Home Assistant | `HomeAssistantDiscoveryPublishedEvent` | MQTT bridge | operation tracker | **required** |
 | Сообщения брокера | `MqttRuleMessageEvent` | MQTT bridge | правила (`when mqtt`) | **required** |
-| Загрузка и сервис | `IpAddressAssignedEvent`, `PersistenceLoadResultEvent`, `StatsReportedEvent`, `DaliEventPayload` | композиция; `DaliWorker` | дисплей; остальные observed-only | best-effort |
+| Кластер | `ClusterStateChangedEvent` | воркер кластера | WS | best-effort |
+| Загрузка и сервис | `IpAddressAssignedEvent`, `PersistenceLoadResultEvent`, `StatsReportedEvent`, `DaliEventPayload` | композиция; `DaliWorker` | дисплей и кластер; остальные observed-only | best-effort |
 
 ## Изменения реестра
 
@@ -235,12 +236,17 @@
   из read-port и событием не управляются.
 - `DisplaySettingsChangedEvent` будит выключенный дисплей, который по секундному
   таймеру не обновляется; настройки воркер берёт из снимка реестра.
-- `ClusterSettingsChangedEvent` несёт только `enabled` и только будит: настройки узла
-  читаются из read-port. Подписчика нет, пока воркер кластера не в композиции.
+- `ClusterSettingsChangedEvent` несёт только `enabled` и только будит воркер кластера:
+  настройки узла он читает из read-port.
+- `ClusterStateChangedEvent` несёт только предмет (`Status`) и только будит: воркер
+  WebSocket строит кадр `ClusterStatus` из порта присутствия. Воркер кластера публикует
+  его, когда меняется отпечаток статуса, не чаще раза за такт, и повторяет на следующем
+  такте, если вход шины кадр не принял.
 
 ## Загрузка и сервис
 
-- `IpAddressAssignedEvent` — адрес получен; потребитель — дисплей.
+- `IpAddressAssignedEvent` — адрес получен; потребители — дисплей и воркер кластера,
+  которого адрес только будит: аренду он читает из порта сети.
 - `PersistenceLoadResultEvent` — по одному на слайс при гидрации на старте
   (`Loaded` / `Defaults` / `Failed`, при `Failed` применены умолчания). Сводка
   гидрации на шину не публикуется.

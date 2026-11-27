@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use crate::DaliWorld;
 
+pub mod cluster_steps;
 pub mod commissioning_steps;
 pub mod contracts_steps;
 pub mod diagnostic_steps;

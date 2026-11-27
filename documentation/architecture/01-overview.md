@@ -42,7 +42,7 @@ Scope: crate responsibilities and cross-crate rules; each subsystem has its own 
 | `dali2rust-rules-runtime` | Rules document store and worker, its persistence, the engine |
 | `dali2rust-redundancy-runtime` | Controller redundancy: arbitration lease, supervisor, arbitration and replication workers ([ADR-018](decisions/ADR-018-controller-redundancy.md)) |
 | `dali2rust-ota-runtime` | Firmware update over the network ([ADR-024](decisions/ADR-024-ota-over-ethernet.md)) |
-| `dali2rust-cluster-runtime` | The cluster's datagram frames, their codec and the per-sender duplicate window ([ADR-035](decisions/ADR-035-cluster-of-installations-over-udp.md)) |
+| `dali2rust-cluster-runtime` | The cluster's datagram frames, their codec, the per-sender duplicate window and the presence worker: pulse, hello and the table of heard boards ([ADR-035](decisions/ADR-035-cluster-of-installations-over-udp.md)) |
 | `dali2rust-bsp` | Board support: thread spawner, stack classes, task registry, PSRAM box, heap stats, slice-store flash binding |
 | `dali2rust-test-support` | Shared host-side test helpers and port doubles |
 | `dali2rust-firmware` | The binary and the only production composition root |
@@ -115,9 +115,10 @@ flowchart LR
 
 Composed: DALI worker, registry, operations and apply orchestrator, state fan-out and
 sniffer translator, display, HCL scheduler, poller, WebSocket, Home Assistant MQTT
-bridge, statistics, rules engine, controller redundancy, OTA. Not composed: the cluster,
-whose network port and frame codec exist without a worker, and the adapter proxy, which is
-designed only ([`../product-design/runtime-modules/`](../product-design/runtime-modules/README.md)).
+bridge, statistics, rules engine, controller redundancy, OTA, and the cluster's presence:
+pulse, hello and the table of heard boards. Not composed: the cluster's commands, records
+and parts, which travel over no route yet, and the adapter proxy, which is designed only
+([`../product-design/runtime-modules/`](../product-design/runtime-modules/README.md)).
 Stage status: [`../product-design/status.md`](../product-design/status.md).
 
 ## System-wide properties

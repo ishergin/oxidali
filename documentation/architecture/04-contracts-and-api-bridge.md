@@ -88,6 +88,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   so dropping a board's own frame is the receiver's job, by the sender MAC in the header,
   which is the one `NetworkLink::hardware_address` reports. Tests connect link ends
   through `ClusterHub` in `dali2rust-test-support`.
+- The worker opens and closes the port through `ClusterLinkBinder`: `UdpClusterBinder` on
+  the board, `NoClusterLink` where the composition wires no network, which the status
+  shows as `bind_failed`, and `ClusterHubBinder` on the hub in tests. A switched-off
+  cluster holds no socket.
 
 ## JSON boundaries
 

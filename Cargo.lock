@@ -643,6 +643,7 @@ dependencies = [
  "log",
  "postcard",
  "serde",
+ "serde_json",
  "tiny_http",
  "tungstenite",
 ]
@@ -675,6 +676,7 @@ dependencies = [
  "dali2rust-api",
  "dali2rust-bsp",
  "dali2rust-bus",
+ "dali2rust-cluster-runtime",
  "dali2rust-contracts",
  "dali2rust-domain",
  "dali2rust-gear-model",
