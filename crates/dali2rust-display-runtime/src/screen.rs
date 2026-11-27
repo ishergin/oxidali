@@ -4,7 +4,11 @@ use dali2rust_contracts::msg::{BusHealthVerdict, DisplayPage, RuntimeSource};
 
 use crate::source::DisplaySample;
 
+mod cluster;
 mod pages;
+
+pub(crate) use cluster::shows_a_cluster_fault;
+use cluster::{row_hcl_and_cluster, CLUSTER_ROW};
 
 pub const SCREEN_COLS: usize = 21;
 const MS_PER_SECOND: u32 = 1000;
@@ -254,7 +258,7 @@ fn summary_row(state: &ScreenState, row: usize) -> ScreenRow {
         0 => row_address(state),
         1 => row_devices(state),
         2 => row_bus(state),
-        3 => row_hcl(state),
+        CLUSTER_ROW => row_hcl_and_cluster(state),
         4 => row_services(state),
         5 => row_input(state),
         _ => row_live(state),

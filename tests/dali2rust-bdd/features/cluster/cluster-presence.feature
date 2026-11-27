@@ -150,3 +150,24 @@ Feature: Cluster — presence of the nodes
     When a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 0 of cluster "hall" for installation "site-a"
     Then the JSON pointer "/own/split_pair" at "/api/v1/cluster/status" should eventually be "true"
     And the JSON pointer "/nodes/0/split" at "/api/v1/cluster/status" should eventually be "true"
+
+  @id:CLU-120
+  Scenario: The display names this node and how many of the other nodes it hears, and nothing of the cluster while it is off
+    Then the display panel should eventually show a row starting with "HCL  "
+    When I PATCH JSON {"cluster_name":"hall","node_number":2,"enabled":true} to "/api/v1/cluster"
+    Then the response status should be 200
+    And the display panel should eventually show a row ending with "N2 ALONE"
+    When a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 of cluster "hall" for installation "site-b"
+    Then the display panel should eventually show a row ending with "N2 1/1"
+    When the board "02:00:00:0a:0b:02" stops pulsing
+    Then the display panel should eventually show a row ending with "N2 0/1"
+    When I PATCH JSON {"enabled":false} to "/api/v1/cluster"
+    Then the response status should be 200
+    And the display panel should eventually show a row starting with "HCL  "
+
+  @id:CLU-121
+  Scenario: A number another installation holds takes the display's HCL row for the fault
+    When a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 2 of cluster "hall" for installation "site-b"
+    And I PATCH JSON {"cluster_name":"hall","node_number":2,"enabled":true} to "/api/v1/cluster"
+    Then the response status should be 200
+    And the display panel should eventually show a row starting with "NODE 2 NUMBER TAKEN"

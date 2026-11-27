@@ -184,6 +184,7 @@ pub(crate) struct DisplaySeams {
     pub ws: Arc<dali2rust_ws_runtime::WsCounters>,
     pub mqtt: Arc<dali2rust_mqtt_runtime::MqttCounters>,
     pub clock: Arc<dyn dali2rust_platform::wall_clock::WallClock>,
+    pub cluster: Arc<dyn dali2rust_cluster_runtime::ClusterPresenceReadPort>,
 }
 
 #[derive(Clone)]
@@ -796,6 +797,7 @@ fn display_source(
         mqtt: seams.mqtt,
         ws: seams.ws,
         clock: seams.clock,
+        cluster: seams.cluster,
         adapter_id: SNIFFER_REGISTRY_ADAPTER_ID,
     })
 }
@@ -819,6 +821,7 @@ pub(crate) struct WorkerSpawnInputs {
     pub ota: Option<OtaWorkerDeps>,
     pub persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
     pub bus_unit_identity: dali2rust_platform::bus_unit::BusUnitIdentity,
+    pub cluster_presence: Arc<dyn dali2rust_cluster_runtime::ClusterPresenceReadPort>,
 }
 
 pub(crate) struct OtaWorkerDeps {
@@ -891,6 +894,7 @@ struct ServiceInputs {
     ota: Option<OtaWorkerDeps>,
     transfer: TransferSeams,
     persisted: Arc<dali2rust_redundancy_runtime::PersistedConfigMark>,
+    cluster_presence: Arc<dyn dali2rust_cluster_runtime::ClusterPresenceReadPort>,
 }
 
 impl WorkerSpawnInputs {
@@ -927,6 +931,7 @@ impl WorkerSpawnInputs {
                 ota: self.ota,
                 transfer,
                 persisted: self.persisted,
+                cluster_presence: self.cluster_presence,
             },
         )
     }
@@ -992,6 +997,7 @@ fn display_seams_from(inputs: &ServiceInputs, wire: &WireSeams) -> DisplaySeams 
         ws: Arc::clone(&inputs.ws_counters),
         mqtt: Arc::clone(&inputs.mqtt_counters),
         clock: Arc::clone(&inputs.hcl.clock),
+        cluster: Arc::clone(&inputs.cluster_presence),
     }
 }
 
