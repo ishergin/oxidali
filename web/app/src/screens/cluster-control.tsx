@@ -228,15 +228,46 @@ function NodesCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   )
 }
 
+function BlindLevel({ label, off, onLevel }: { label: string; off: boolean; onLevel: (level: number) => void }) {
+  const sendLevel = (el: HTMLInputElement) => {
+    const level = Number(el.value)
+    el.value = '0'
+    onLevel(level)
+  }
+  return (
+    <input
+      class="slider mini blind"
+      type="range"
+      min="0"
+      max={LEVEL_TOP}
+      defaultValue="0"
+      disabled={off}
+      aria-label={`Level of ${label}`}
+      title="Drag and release to send; with the keyboard, move and press Enter"
+      onPointerDown={(e) => {
+        e.currentTarget.dataset.drag = '1'
+      }}
+      onChange={(e) => {
+        const el = e.currentTarget
+        if (el.dataset.drag !== '1') return
+        delete el.dataset.drag
+        sendLevel(el)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') sendLevel(e.currentTarget)
+      }}
+      onBlur={(e) => {
+        e.currentTarget.value = '0'
+        delete e.currentTarget.dataset.drag
+      }}
+    />
+  )
+}
+
 function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   const label = recordLabel('channel', rec.number)
   const send = (title: string, body: ReturnType<typeof levelBody>) =>
     ctx.command(rec, `${label} ${title}`, () => api.clusterChannelTarget(rec.number, body))
-  const sendLevel = (el: HTMLInputElement) => {
-    const level = Number(el.value)
-    el.value = '0'
-    send(`level ${level}`, levelBody(level))
-  }
   return (
     <span class="btns">
       <button class="btn sm" disabled={ctx.readOnly} onClick={() => send('on', { power: 'on' })}>
@@ -245,32 +276,7 @@ function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
       <button class="btn sm" disabled={ctx.readOnly} onClick={() => send('off', { power: 'off' })}>
         Off
       </button>
-      <input
-        class="slider mini blind"
-        type="range"
-        min="0"
-        max={LEVEL_TOP}
-        defaultValue="0"
-        disabled={ctx.readOnly}
-        aria-label={`Level of ${label}`}
-        title="Drag and release to send; with the keyboard, move and press Enter"
-        onPointerDown={(e) => {
-          e.currentTarget.dataset.drag = '1'
-        }}
-        onChange={(e) => {
-          const el = e.currentTarget
-          if (el.dataset.drag !== '1') return
-          delete el.dataset.drag
-          sendLevel(el)
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') sendLevel(e.currentTarget)
-        }}
-        onBlur={(e) => {
-          e.currentTarget.value = '0'
-          delete e.currentTarget.dataset.drag
-        }}
-      />
+      <BlindLevel label={label} off={ctx.readOnly} onLevel={(level) => send(`level ${level}`, levelBody(level))} />
     </span>
   )
 }
