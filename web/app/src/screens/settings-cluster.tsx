@@ -490,6 +490,9 @@ function ClusterHead() {
   )
 }
 
+const STANDBY_TEXT =
+  'This board is the standby of its pair: the settings come from the active board and are replaced every 30 s.'
+
 export function SettingsCluster() {
   const { data, busy, save } = useSettingsDraft(() => api.clusterSettings())
   const { read, reload } = useClusterStatus()
@@ -506,12 +509,7 @@ export function SettingsCluster() {
   return (
     <div>
       <ClusterHead />
-      {readOnly && (
-        <StandbyBanner peerUrl={peerUrl}>
-          This board is the standby of its pair: the settings come from the active board and are
-          replaced every 30 s.
-        </StandbyBanner>
-      )}
+      {readOnly && <StandbyBanner peerUrl={peerUrl}>{STANDBY_TEXT}</StandbyBanner>}
       {refusal && (
         <p class="errbar" role="alert">
           Not applied: {refusal.text}
