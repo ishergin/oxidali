@@ -131,7 +131,8 @@ impl ClusterPresence {
         };
         let mut state = self.lock();
         if state.link != delivery.link {
-            return;
+            drop(state);
+            return bump(&counters.stale_link_frames_total);
         }
         let taken = state.take(&decoded, delivery, self.timing, counters);
         drop(state);

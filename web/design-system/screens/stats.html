@@ -429,10 +429,11 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       </div>
 
       <!-- The cluster worker's datagrams, both ways. Received counts every
-           datagram the socket handed over; the next five say why one did not
+           datagram the socket handed over; the next six say why one did not
            reach the board table — our own echo, another cluster's tag, a
            version this build cannot read, a frame the codec refused, a repeat
-           inside the sequence window. Gaps are sequence numbers a live board
+           inside the sequence window, a frame read from a socket the node had
+           already left on a port change. Gaps are sequence numbers a live board
            skipped, withheld are pulses a standby board kept to itself, evicted
            are boards pushed out of a full table. None is `fault`: what an
            operator acts on — a port that will not bind, a split pair, a wire
@@ -449,6 +450,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr"><span class="k">Unknown version frames total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Rejected frames total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Duplicates total</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Stale link frames total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Sequence gaps total</span><span class="v">1</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Withheld standby total</span><span class="v">0</span><span class="delta"></span></div>
         <div class="attr"><span class="k">Boards evicted total</span><span class="v">0</span><span class="delta"></span></div>
