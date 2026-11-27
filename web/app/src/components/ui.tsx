@@ -465,14 +465,16 @@ export function RgbInputs({
 export function SelChip({
   on,
   onClick,
+  disabled,
   children,
 }: {
   on: boolean
   onClick: () => void
+  disabled?: boolean
   children: string
 }) {
   return (
-    <button type="button" class={on ? 'selchip on' : 'selchip'} onClick={onClick}>
+    <button type="button" class={on ? 'selchip on' : 'selchip'} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   )
@@ -500,13 +502,14 @@ export function FieldRow({
   )
 }
 
-export function Switch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+export function Switch({ on, onToggle, disabled }: { on: boolean; onToggle: () => void; disabled?: boolean }) {
   return (
     <span
       class={`switch${on ? ' on' : ''}`}
       role="switch"
       aria-checked={on}
-      onClick={onToggle}
+      aria-disabled={disabled}
+      onClick={disabled ? undefined : onToggle}
     >
       <span class="knob" />
     </span>

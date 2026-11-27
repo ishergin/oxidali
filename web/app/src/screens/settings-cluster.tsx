@@ -54,7 +54,7 @@ function refusalFrom(e: unknown): Refusal {
 function FieldError({ refusal, field }: { refusal: Refusal | null; field: ClusterField }) {
   if (refusal?.field !== field) return null
   return (
-    <span class="fielderr" role="alert">
+    <span class="fielderr">
       {refusal.text}
     </span>
   )
@@ -97,7 +97,7 @@ function Select({
 
 function Dim({ on, children }: { on: boolean; children: ComponentChildren }) {
   return on ? (
-    <div class="ro" inert>
+    <div class="ro">
       {children}
     </div>
   ) : (
@@ -128,7 +128,7 @@ function ThisNode({
         label="Enabled"
         hint="Off by default. Talks to the other nodes over this network; only the active board of a pair transmits."
       >
-        <Switch on={s.enabled} onToggle={() => edit({ enabled: !s.enabled })} />
+        <Switch on={s.enabled} disabled={readOnly} onToggle={() => edit({ enabled: !s.enabled })} />
       </FieldRow>
       <FieldRow
         label="Cluster name"
@@ -303,8 +303,8 @@ function NodesHeard({
   reload: () => Promise<void>
 }) {
   const [armed, tap] = useConfirmTap<string>()
-  const now = useTick(AGE_TICK_MS)
   const status = read?.status ?? null
+  const now = useTick(AGE_TICK_MS, (status?.nodes.length ?? 0) > 0)
   const forget = (node: number) => void forgetNode(node).then(reload)
   return (
     <Card title="Nodes heard">
@@ -375,7 +375,7 @@ const SOURCES: [keyof ClusterSettings & `forward_${string}`, string][] = [
   ['forward_foreign_master', 'Foreign master'],
 ]
 
-function Forwarding({ s, edit }: PanelProps) {
+function Forwarding({ s, edit, readOnly }: PanelProps) {
   return (
     <Card title="Forward group commands given by">
       <FieldRow
@@ -385,7 +385,7 @@ function Forwarding({ s, edit }: PanelProps) {
       >
         <div class="chips">
           {SOURCES.map(([key, label]) => (
-            <SelChip key={key} on={s[key]} onClick={() => edit({ [key]: !s[key] })}>
+            <SelChip key={key} on={s[key]} disabled={readOnly} onClick={() => edit({ [key]: !s[key] })}>
               {label}
             </SelChip>
           ))}
@@ -395,14 +395,18 @@ function Forwarding({ s, edit }: PanelProps) {
   )
 }
 
-function ShareAccept({ s, edit }: PanelProps) {
+function ShareAccept({ s, edit, readOnly }: PanelProps) {
   return (
     <Card title="Share and accept">
       <FieldRow
         label="Send “all lamps” commands"
         hint="A broadcast given on this node's DALI bus is sent to every node."
       >
-        <Switch on={s.send_all_lamps} onToggle={() => edit({ send_all_lamps: !s.send_all_lamps })} />
+        <Switch
+          on={s.send_all_lamps}
+          disabled={readOnly}
+          onToggle={() => edit({ send_all_lamps: !s.send_all_lamps })}
+        />
       </FieldRow>
       <FieldRow
         label="Accept “all lamps” commands"
@@ -410,6 +414,7 @@ function ShareAccept({ s, edit }: PanelProps) {
       >
         <Switch
           on={s.accept_all_lamps}
+          disabled={readOnly}
           onToggle={() => edit({ accept_all_lamps: !s.accept_all_lamps })}
         />
       </FieldRow>
@@ -444,7 +449,11 @@ function DaliBus({ s, edit, refusal, readOnly, status }: PanelProps & { status: 
         label="Loop protection"
         hint="Cannot be turned off while the foreign master is forwarded and the bus is shared."
       >
-        <Switch on={s.wire_protection} onToggle={() => edit({ wire_protection: !s.wire_protection })} />
+        <Switch
+          on={s.wire_protection}
+          disabled={readOnly}
+          onToggle={() => edit({ wire_protection: !s.wire_protection })}
+        />
         <FieldError refusal={refusal} field="wire_protection" />
       </FieldRow>
     </Card>

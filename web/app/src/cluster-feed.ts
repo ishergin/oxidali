@@ -4,6 +4,7 @@ import { api } from './api/client'
 import type { ClusterInfo, ClusterStatus } from './api/types'
 import type { WsEvent } from './api/ws'
 import { DEFAULT_POLL_MS, useLive } from './hooks'
+import { pollIsCurrent } from './screens/cluster-view'
 
 export interface StatusRead {
   status: ClusterStatus
@@ -38,7 +39,7 @@ export function useClusterStatus(intervalMs: number = DEFAULT_POLL_MS): {
 } {
   const { data, reload } = useLive(pollStatus, ['cluster'], { intervalMs, onEvent: takeStatus })
   useEffect(() => {
-    if (data && data.framesBefore === framesTaken) clusterStatus.value = { status: data.status, at: Date.now() }
+    if (data && pollIsCurrent(data.framesBefore, framesTaken)) clusterStatus.value = { status: data.status, at: Date.now() }
   }, [data])
   return { read: clusterStatus.value, reload }
 }

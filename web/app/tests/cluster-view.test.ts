@@ -16,6 +16,7 @@ import {
   ignoredReason,
   nodeHref,
   nodeLine,
+  pollIsCurrent,
   nodeNumberOptions,
   nodesEmptyText,
   nodeSummary,
@@ -263,15 +264,15 @@ test('on the standby the stored values are shown, and a pending draft is dropped
   assert.equal(draftOnRead(NO_DRAFT, standby), NO_DRAFT)
 })
 
-test('the age of a node grows with the time since the status was read', () => {
+test('a silent node ages by the time since the read, a heard one shows its own age', () => {
   assert.equal(ageText(9_000), '9 s ago')
   assert.equal(ageText(240_000), '4 min ago')
   assert.equal(ageText(7_200_000), '2 h ago')
   assert.equal(ageText(2 * 86_400_000), '2 d ago')
   assert.equal(ageText(2 ** 30), 'over 12 days ago')
-  assert.deepEqual(heardVerdict(node(2, { age_ms: 9_000 }), 41_000), { tone: 'ok', text: '50 s ago' })
-  assert.deepEqual(heardVerdict(node(2, { heard: false, age_ms: 9_000 }), 0), { tone: 'warn', text: '9 s ago' })
-  assert.equal(heardVerdict(node(2, { age_ms: 2 ** 30 }), 5_000).text, 'over 12 days ago')
+  assert.deepEqual(heardVerdict(node(2, { heard: false, age_ms: 9_000 }), 41_000), { tone: 'warn', text: '50 s ago' })
+  assert.deepEqual(heardVerdict(node(2, { heard: false, age_ms: 9_000 }), -800), { tone: 'warn', text: '9 s ago' })
+  assert.deepEqual(heardVerdict(node(2, { age_ms: 1_500 }), 41_000), { tone: 'ok', text: '1 s ago' })
 })
 
 test('the own status names a port that is not bound, and a waiting node names the holder, in err', () => {
@@ -292,6 +293,11 @@ test('an unread status is not drawn as a cluster that is off', () => {
 
 test('Open goes to the node by its address', () => {
   assert.equal(nodeHref(node(3)), 'http://192.168.13.43/')
+})
+
+test('a poll answer counts only when no status frame was taken while it was in flight', () => {
+  assert.equal(pollIsCurrent(4, 4), true)
+  assert.equal(pollIsCurrent(4, 5), false)
 })
 
 test('a name is clipped by whole characters, never inside one', () => {

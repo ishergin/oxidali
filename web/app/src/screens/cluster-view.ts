@@ -172,8 +172,12 @@ export interface Verdict {
 }
 
 export function heardVerdict(node: ClusterNode, sinceReadMs: number): Verdict {
-  const age = node.age_ms >= LONGEST_AGE_MS ? node.age_ms : node.age_ms + Math.max(0, sinceReadMs)
-  return { tone: node.heard ? 'ok' : 'warn', text: ageText(age) }
+  if (node.heard) return { tone: 'ok', text: ageText(node.age_ms) }
+  return { tone: 'warn', text: ageText(node.age_ms + Math.max(0, sinceReadMs)) }
+}
+
+export function pollIsCurrent(framesBeforePoll: number, framesNow: number): boolean {
+  return framesBeforePoll === framesNow
 }
 
 export function nodeSummary(node: ClusterNode, own: ClusterOwn): Verdict[] {
