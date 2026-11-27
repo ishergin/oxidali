@@ -9,7 +9,8 @@ use crate::runtime::registry::RegistryStore;
 
 use super::adapter::handle_adapter_settings;
 use super::cluster_settings::{
-    handle_cluster_settings_commit, handle_cluster_settings_update, handle_cluster_text_update,
+    handle_cluster_record_update, handle_cluster_settings_commit, handle_cluster_settings_update,
+    handle_cluster_text_update,
 };
 use super::command_ctx::{CommandCtx, ReloadPorts};
 use super::config_write::handle_config_write_commit;
@@ -142,4 +143,6 @@ dali2rust_contracts::dispatch_bus_commands! {
         handle_cluster_text_update(ctx, body),
     ClusterSettingsCommitCommand(body) =>
         handle_cluster_settings_commit(ctx, body),
+    ClusterRecordUpdateCommand(body) =>
+        handle_cluster_record_update(ctx, body),
 }

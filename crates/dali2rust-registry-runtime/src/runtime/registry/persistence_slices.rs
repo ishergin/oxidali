@@ -15,7 +15,7 @@ pub const REDUNDANCY_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const POLICIES_SLICE_VERSION: u32 = 2;
 pub const HOME_ASSISTANT_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const DISPLAY_SETTINGS_SLICE_VERSION: u32 = 1;
-pub const CLUSTER_SETTINGS_SLICE_VERSION: u32 = 1;
+pub const CLUSTER_SETTINGS_SLICE_VERSION: u32 = 2;
 
 
 
@@ -187,6 +187,19 @@ pub struct PersistableClusterSettingsSlice {
     pub send_all_lamps: bool,
     pub accept_single_lamps: bool,
     pub wire_protection: bool,
+    pub channels: Vec<PersistableClusterRecord>,
+    pub channel_generations: [u32; 16],
+    pub scenes: Vec<PersistableClusterRecord>,
+    pub scene_generations: [u32; 16],
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PersistableClusterRecord {
+    pub index: u8,
+    pub generation: u32,
+    pub nonce: u32,
+    pub name: String,
+    pub revision: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

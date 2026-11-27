@@ -73,6 +73,16 @@ pub enum RouteKey {
     ClusterSettingsPatch,
     ClusterStatusGet,
     ClusterNodeForget,
+    ClusterChannelsList,
+    ClusterChannelCreate,
+    ClusterChannelGet,
+    ClusterChannelRename,
+    ClusterChannelDelete,
+    ClusterScenesList,
+    ClusterSceneCreate,
+    ClusterSceneGet,
+    ClusterSceneRename,
+    ClusterSceneDelete,
     SettingsDaliGet,
     SettingsDaliPatch,
     SettingsRedundancyGet,
@@ -372,6 +382,16 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
     (RouteKey::ClusterSettingsPatch, HttpMethod::Patch, "/api/v1/cluster"),
     (RouteKey::ClusterStatusGet, HttpMethod::Get, "/api/v1/cluster/status"),
     (RouteKey::ClusterNodeForget, HttpMethod::Delete, "/api/v1/cluster/nodes/{node}"),
+    (RouteKey::ClusterChannelsList, HttpMethod::Get, "/api/v1/cluster/channels"),
+    (RouteKey::ClusterChannelCreate, HttpMethod::Post, "/api/v1/cluster/channels"),
+    (RouteKey::ClusterChannelGet, HttpMethod::Get, "/api/v1/cluster/channels/{number}"),
+    (RouteKey::ClusterChannelRename, HttpMethod::Patch, "/api/v1/cluster/channels/{number}"),
+    (RouteKey::ClusterChannelDelete, HttpMethod::Delete, "/api/v1/cluster/channels/{number}"),
+    (RouteKey::ClusterScenesList, HttpMethod::Get, "/api/v1/cluster/scenes"),
+    (RouteKey::ClusterSceneCreate, HttpMethod::Post, "/api/v1/cluster/scenes"),
+    (RouteKey::ClusterSceneGet, HttpMethod::Get, "/api/v1/cluster/scenes/{number}"),
+    (RouteKey::ClusterSceneRename, HttpMethod::Patch, "/api/v1/cluster/scenes/{number}"),
+    (RouteKey::ClusterSceneDelete, HttpMethod::Delete, "/api/v1/cluster/scenes/{number}"),
     (
         RouteKey::SettingsDaliGet,
         HttpMethod::Get,
@@ -586,7 +606,7 @@ mod route_table_tests {
 
     #[test]
     fn route_table_is_complete_and_unique() {
-        assert_eq!(ROUTE_TABLE.len(), 100, "route table row count");
+        assert_eq!(ROUTE_TABLE.len(), 110, "route table row count");
         let mut keys = HashSet::new();
         let mut routes = HashSet::new();
         for (key, method, path) in ROUTE_TABLE {

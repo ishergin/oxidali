@@ -230,6 +230,12 @@ filtered: they address one device.
   node, the storm combination — does not decode, and is rejected and rewritten with
   defaults like any other. A reset (a bump or a rejection) takes the node out of the
   cluster (`enabled: false`, node `0`, the factory forwarding) and touches no other slice.
+- The node's channel and cluster-scene records live in that same slice, beside the
+  generation each number has reached, so a slice imported alone cannot move the node
+  number away from records it holds. Records are stored by their index in the node's
+  block; a record whose generation was never issued, whose index repeats or leaves the
+  block, or whose revision is `0` breaks the slice. A reset also erases the records and
+  the generation memory: a record another node's part names is gone for it.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

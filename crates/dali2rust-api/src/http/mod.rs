@@ -22,6 +22,7 @@ pub mod redundancy_state;
 pub mod role;
 pub mod firmware_state;
 pub mod poller_settings_state;
+pub mod cluster_records_state;
 pub mod cluster_settings_state;
 pub mod cluster_status_state;
 pub mod display_settings_state;

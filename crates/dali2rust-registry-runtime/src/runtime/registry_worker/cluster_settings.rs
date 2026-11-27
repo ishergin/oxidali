@@ -1,5 +1,6 @@
 use dali2rust_contracts::msg::{
-    ClusterSettingsCommitCommand, ClusterSettingsUpdateCommand, ClusterTextUpdateCommand,
+    ClusterRecordUpdateCommand, ClusterSettingsCommitCommand, ClusterSettingsUpdateCommand,
+    ClusterTextUpdateCommand,
 };
 
 use crate::runtime::registry::cluster_settings::{ClusterPatch, ClusterRefusal};
@@ -13,6 +14,10 @@ pub(super) fn handle_cluster_settings_update(ctx: &CommandCtx<'_>, body: &Cluste
 
 pub(super) fn handle_cluster_text_update(ctx: &CommandCtx<'_>, body: &ClusterTextUpdateCommand) {
     stage(ctx, body.series, ClusterPatch::Text(body.clone()));
+}
+
+pub(super) fn handle_cluster_record_update(ctx: &CommandCtx<'_>, body: &ClusterRecordUpdateCommand) {
+    stage(ctx, body.series, ClusterPatch::Record(body.clone()));
 }
 
 pub(super) fn handle_cluster_settings_commit(ctx: &CommandCtx<'_>, body: &ClusterSettingsCommitCommand) {
