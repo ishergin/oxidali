@@ -1,14 +1,19 @@
 use dali2rust_contracts::msg::ColorMode;
 use dali2rust_domain::registry::CapabilityFlagsView;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use super::brightness::ha_to_level;
+use crate::http::handlers::common::json_err;
+use crate::http::lenient::{MaybeString, MaybeU64};
 use crate::http::target_state_request::{
-    parse_target_request, TargetRequest, TargetStateBody, LEVEL_PRESETS,
+    parse_target_request, SetpointFields, TargetRequest, TargetStateBody, LEVEL_PRESETS,
 };
 use crate::http::types::HttpResponse;
 
 const HA_COMMAND_MAX_DEPTH: usize = 2;
+const XY_KEYS: [&str; 2] = ["x", "y"];
+const RGB_KEYS: [&str; 3] = ["r", "g", "b"];
 
 pub fn ha_effects() -> impl Iterator<Item = &'static str> {
     LEVEL_PRESETS.iter().map(|&(name, _)| name)
@@ -27,70 +32,65 @@ pub fn ha_light_command_to_request(
     supports_color_mode: impl Fn(ColorMode) -> bool,
 ) -> Result<TargetRequest, HttpResponse> {
     if crate::json_depth::depth_exceeds(payload, HA_COMMAND_MAX_DEPTH) {
-        return Err(crate::http::handlers::common::json_err(400, "invalid_json"));
+        return Err(json_err(400, "invalid_json"));
     }
-    let raw: Value = serde_json::from_slice(payload)
-        .map_err(|_| crate::http::handlers::common::json_err(400, "invalid_json"))?;
-    let obj = raw
-        .as_object()
-        .ok_or_else(|| crate::http::handlers::common::json_err(400, "invalid_json"))?;
-    let translated = Value::Object(translate(obj));
-    let body: TargetStateBody = serde_json::from_value(translated)
-        .map_err(|_| crate::http::handlers::common::json_err(422, "invalid_value"))?;
+    let raw: Value = serde_json::from_slice(payload).map_err(|_| json_err(400, "invalid_json"))?;
+    let command = raw.as_object().ok_or_else(|| json_err(400, "invalid_json"))?;
+    resolve_ha_command(command, supports_color_mode)
+}
+
+fn resolve_ha_command(
+    command: &Map<String, Value>,
+    supports_color_mode: impl Fn(ColorMode) -> bool,
+) -> Result<TargetRequest, HttpResponse> {
+    let effect = command.get("effect").filter(|effect| !effect.is_null());
+    let recall = effect.map(lenient::<MaybeString>).transpose()?;
+    let mut body = TargetStateBody::recalling(recall);
+    fill_setpoint_fields(command, effect.is_some(), body.setpoint_mut())?;
     parse_target_request(&body, supports_color_mode)
 }
 
-fn translate(obj: &Map<String, Value>) -> Map<String, Value> {
-    let mut out = Map::new();
-    let effect = obj.get("effect").filter(|effect| !effect.is_null());
-    if let Some(effect) = effect {
-        out.insert("recall".into(), effect.clone());
+fn fill_setpoint_fields(
+    command: &Map<String, Value>,
+    recalls: bool,
+    fields: &mut SetpointFields,
+) -> Result<(), HttpResponse> {
+    let state = command.get("state").and_then(Value::as_str);
+    let power = state.map(|state| state.eq_ignore_ascii_case("ON")).filter(|&on| !recalls || !on);
+    fields.power = power.map(|on| text(if on { "on" } else { "off" }));
+    let brightness = command.get("brightness").and_then(Value::as_u64);
+    fields.level = brightness
+        .map(|b| MaybeU64::Valid(u64::from(ha_to_level(u8::try_from(b).unwrap_or(u8::MAX)))));
+    if let Some(kelvin) = command.get("color_temp").and_then(Value::as_u64) {
+        fields.color_mode = Some(text("cct"));
+        fields.color_temperature_kelvin = Some(MaybeU64::Valid(kelvin));
     }
-    let state = obj.get("state").and_then(Value::as_str);
-    if let Some(state) = state.filter(|state| effect.is_none() || !state.eq_ignore_ascii_case("ON")) {
-        out.insert(
-            "power".into(),
-            Value::String(if state.eq_ignore_ascii_case("ON") {
-                "on".into()
-            } else {
-                "off".into()
-            }),
-        );
+    match command.get("color") {
+        Some(color) => color_fields(color, fields),
+        None => Ok(()),
     }
-    if let Some(b) = obj.get("brightness").and_then(Value::as_u64) {
-        out.insert(
-            "level".into(),
-            Value::from(ha_to_level(u8::try_from(b).unwrap_or(u8::MAX))),
-        );
-    }
-    if let Some(k) = obj.get("color_temp").and_then(Value::as_u64) {
-        out.insert("color_mode".into(), Value::String("cct".into()));
-        out.insert("color_temperature_kelvin".into(), Value::from(k));
-    }
-    translate_color(obj, &mut out);
-    out
 }
 
-fn translate_color(obj: &Map<String, Value>, out: &mut Map<String, Value>) {
-    let Some(color) = obj.get("color").and_then(Value::as_object) else {
-        return;
+fn color_fields(color: &Value, fields: &mut SetpointFields) -> Result<(), HttpResponse> {
+    let Some(members) = color.as_object() else {
+        return Ok(());
     };
-    if let (Some(x), Some(y)) = (color.get("x"), color.get("y")) {
-        out.insert("color_mode".into(), Value::String("xy".into()));
-        let mut xy = Map::new();
-        xy.insert("x".into(), x.clone());
-        xy.insert("y".into(), y.clone());
-        out.insert("xy".into(), Value::Object(xy));
-        return;
+    if XY_KEYS.iter().all(|key| members.contains_key(*key)) {
+        fields.color_mode = Some(text("xy"));
+        fields.xy = Some(lenient(color)?);
+    } else if RGB_KEYS.iter().all(|key| members.contains_key(*key)) {
+        fields.color_mode = Some(text("rgb"));
+        fields.rgb = Some(lenient(color)?);
     }
-    if let (Some(r), Some(g), Some(b)) = (color.get("r"), color.get("g"), color.get("b")) {
-        out.insert("color_mode".into(), Value::String("rgb".into()));
-        let mut rgb = Map::new();
-        rgb.insert("r".into(), r.clone());
-        rgb.insert("g".into(), g.clone());
-        rgb.insert("b".into(), b.clone());
-        out.insert("rgb".into(), Value::Object(rgb));
-    }
+    Ok(())
+}
+
+fn text(value: &str) -> MaybeString {
+    MaybeString::Valid(value.to_owned())
+}
+
+fn lenient<T: DeserializeOwned>(value: &Value) -> Result<T, HttpResponse> {
+    T::deserialize(value).map_err(|_| json_err(422, "invalid_value"))
 }
 
 #[cfg(test)]
@@ -187,5 +187,121 @@ mod tests {
     #[test]
     fn an_impossible_colour_temperature_is_still_refused() {
         assert!(ha_light_command_to_request(br#"{"color_temp":99999}"#, anything).is_err());
+    }
+
+    fn refusal(payload: &[u8]) -> String {
+        let Err(err) = ha_light_command_to_request(payload, anything) else {
+            panic!("expected {} to be refused", String::from_utf8_lossy(payload));
+        };
+        let body: Value = serde_json::from_slice(&err.into_body_bytes()).expect("error json");
+        body["error"].as_str().expect("error code").to_string()
+    }
+
+    fn rgb_of(payload: &str) -> (ColorMode, u8, u8, u8) {
+        let color = parse(payload).color.expect("colour slot");
+        (color.mode, color.r, color.g, color.b)
+    }
+
+    #[test]
+    fn only_a_json_object_is_a_command() {
+        for payload in [&b"[1]"[..], b"1", b"null", br#""ON""#, b"", br#"[{"state":"ON"}]"#] {
+            assert_eq!(refusal(payload), "invalid_json", "{}", String::from_utf8_lossy(payload));
+        }
+    }
+
+    #[test]
+    fn a_repeated_key_takes_its_last_value() {
+        assert_eq!(parse(r#"{"state":"ON","state":"OFF"}"#).power, PowerState::Off);
+        assert_eq!(parse(r#"{"state":"OFF","state":5}"#).power, PowerState::Unknown);
+        assert_eq!(parse(r#"{"brightness":40,"brightness":"x"}"#).level, None);
+        assert_eq!(rgb_of(r#"{"color":{"r":1,"g":2,"b":3,"r":9}}"#), (ColorMode::Rgb, 9, 2, 3));
+        assert_eq!(rgb_of(r#"{"color":{"r":1,"g":2,"b":3},"color":5}"#).0, ColorMode::None);
+        assert_eq!(parse(r#"{"effect":"max_level","effect":null,"state":"ON"}"#).power, PowerState::On);
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored_and_an_escaped_key_is_its_name() {
+        let sp = parse(r#"{"state":"ON","transition":2,"foo":{"bar":1},"baz":[1,"2"],"color_mode":"xy"}"#);
+        assert_eq!((sp.power, sp.color.map(|c| c.mode)), (PowerState::On, Some(ColorMode::None)));
+        assert_eq!(parse(r#"{"st\u0061te":"OFF"}"#).power, PowerState::Off);
+    }
+
+    #[test]
+    fn a_state_that_is_not_on_is_off_and_one_that_is_not_text_is_absent() {
+        assert_eq!(parse(r#"{"state":"on"}"#).power, PowerState::On);
+        assert_eq!(parse(r#"{"state":"BLAH"}"#).power, PowerState::Off);
+        for payload in [r#"{"state":1}"#, r#"{"state":true}"#, r#"{"state":null}"#, r#"{"state":["ON"]}"#] {
+            assert_eq!(parse(payload).power, PowerState::Unknown, "{payload}");
+        }
+    }
+
+    #[test]
+    fn a_brightness_or_colour_temperature_that_is_not_an_unsigned_integer_is_absent() {
+        for value in ["180.0", "-5", "\"180\"", "null", "18446744073709551616", "-0", "{}"] {
+            assert_eq!(parse(&format!(r#"{{"brightness":{value}}}"#)).level, None, "{value}");
+            let sp = parse(&format!(r#"{{"color_temp":{value}}}"#));
+            assert_eq!(sp.color.map(|c| c.mode), Some(ColorMode::None), "{value}");
+        }
+        assert_eq!(parse(r#"{"brightness":300}"#).level, Some(254));
+    }
+
+    #[test]
+    fn only_a_null_effect_is_absent() {
+        assert_eq!(parse(r#"{"effect":null,"state":"ON"}"#).power, PowerState::On);
+        assert_eq!(refusal(br#"{"effect":5,"state":"ON"}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"effect":{}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"effect":"MAX_LEVEL"}"#), "invalid_enum");
+    }
+
+    #[test]
+    fn a_colour_is_chosen_by_which_keys_it_carries() {
+        assert_eq!(rgb_of(r#"{"color":"red"}"#).0, ColorMode::None);
+        assert_eq!(rgb_of(r#"{"color":{"r":1,"g":2}}"#).0, ColorMode::None);
+        assert_eq!(rgb_of(r#"{"color":{"x":0.3,"r":1,"g":2,"b":3}}"#), (ColorMode::Rgb, 1, 2, 3));
+        assert_eq!(parse(r#"{"color":{"x":0.3,"y":0.3,"r":1,"g":2,"b":3}}"#).color.unwrap().mode, ColorMode::Xy);
+        assert_eq!(rgb_of(r#"{"color":{"r":1,"g":2,"b":3,"h":1,"s":2}}"#), (ColorMode::Rgb, 1, 2, 3));
+        assert_eq!(refusal(br#"{"color":{"x":null,"y":0.4}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"color":{"r":"a","g":1,"b":2}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"color":{"r":-1,"g":1,"b":2}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"color":{"r":1.0,"g":1,"b":2}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"color":{"r":256,"g":1,"b":2}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"color":{"x":"a","y":0.4}}"#), "invalid_value");
+        let xy = parse(r#"{"color":{"x":0,"y":1}}"#).color.unwrap();
+        assert_eq!((xy.mode, xy.x, xy.y), (ColorMode::Xy, 0, 65535));
+        assert_eq!(refusal(br#"{"color":{"x":-1,"y":0.5}}"#), "invalid_value");
+        assert_eq!(refusal(br#"{"color":{"r":null,"g":1,"b":2}}"#), "invalid_value");
+    }
+
+    #[test]
+    fn a_colour_beside_a_colour_temperature_wins_the_mode_and_keeps_the_kelvin() {
+        let color = parse(r#"{"color_temp":3000,"color":{"r":1,"g":2,"b":3}}"#).color.unwrap();
+        assert_eq!((color.mode, color.color_temperature_kelvin, color.b), (ColorMode::Rgb, 3000, 3));
+        let color = parse(r#"{"color":{"x":0.5,"y":0.25},"color_temp":3000}"#).color.unwrap();
+        assert_eq!((color.mode, color.color_temperature_kelvin, color.x), (ColorMode::Xy, 3000, 32767));
+    }
+
+    #[test]
+    fn a_truncated_or_malformed_command_is_invalid_json_whatever_it_read_first() {
+        for payload in [
+            &br#"{"state":"ON","color":{"r":1,"g":2"#[..],
+            br#"{"state":"ON","color":{"r":1,"g":2,"b":3}"#,
+            br#"{"state":"ON"} x"#,
+            br#"{"state":"ON",}"#,
+            b"{\"state\":\"ON\",\"foo\":\"\xff\"}",
+            br#"{"state":"ON","foo":"\ud800"}"#,
+            br#"{"state":"ON","foo":["\ud800"]}"#,
+            br#"{"state":"ON","foo":1e400}"#,
+            br#"{"color":{"x":0.3,"r":1,"g":2,"b":3,"q":"\q"}}"#,
+        ] {
+            assert_eq!(refusal(payload), "invalid_json", "{}", String::from_utf8_lossy(payload));
+        }
+    }
+
+    #[test]
+    fn a_colour_object_of_any_width_is_read_and_one_nested_deeper_is_refused() {
+        let wide: String = (0..2000).map(|i| format!(r#""k{i}":{i},"#)).collect();
+        let payload = format!(r#"{{"color":{{{wide}"r":1,"g":2,"b":3}}}}"#);
+        assert_eq!(rgb_of(&payload), (ColorMode::Rgb, 1, 2, 3));
+        assert_eq!(refusal(br#"{"color":{"r":{"v":1},"g":2,"b":3}}"#), "invalid_json");
     }
 }
