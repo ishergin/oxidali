@@ -16,6 +16,7 @@ export interface Route {
     | 'hcl'
     | 'hcl-schedule'
     | 'rules'
+    | 'cluster'
     | 'console'
     | 'sniffer'
   | 'logs'
@@ -48,6 +49,9 @@ const ROUTES: { re: RegExp; name: Route['name']; keys: string[] }[] = [
   { re: /^\/hcl$/, name: 'hcl', keys: [] },
   { re: /^\/hcl\/([a-z0-9_-]+)$/, name: 'hcl-schedule', keys: ['id'] },
   { re: /^\/rules$/, name: 'rules', keys: [] },
+  { re: /^\/cluster$/, name: 'cluster', keys: [] },
+  { re: /^\/cluster\/(channels|scenes)$/, name: 'cluster', keys: ['tab'] },
+  { re: /^\/cluster\/(channels|scenes)\/(\d+)$/, name: 'cluster', keys: ['tab', 'open'] },
   { re: /^\/operations$/, name: 'operations', keys: [] },
   { re: /^\/operations\/([^/]+)$/, name: 'operation', keys: ['id'] },
   { re: /^\/console$/, name: 'console', keys: [] },

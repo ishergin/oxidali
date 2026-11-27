@@ -112,6 +112,16 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .cell.rm .x { text-decoration: line-through; opacity: .8; }
 .cell.dis { background: transparent; border-color: color-mix(in srgb, var(--border) 40%, transparent); cursor: default; }
 
+/* A group linked to a cluster channel has one editor, the channel: its
+   column is closed, the tick shown without a hover, and the header names the
+   channel and links to its row instead of opening the rename popover. */
+.matrix-wrap thead th.gname.locked { cursor: pointer; color: var(--text-faint); background: var(--surface); }
+.cell.lock { cursor: default; border-style: dashed; background: transparent; color: var(--text-faint); }
+.cell.lock:hover { border-color: var(--border); background: transparent; }
+.chref { color: var(--info); text-decoration: none; }
+.pop .pnote { font-size: 12px; color: var(--text-muted); line-height: 1.45; font-family: var(--font); white-space: normal; }
+.lockhint { font-size: 12px; color: var(--text-faint); margin: 10px 2px 0; max-width: 90ch; line-height: 1.5; }
+
 /* Apply bar */
 .applybar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 14px; background: var(--overlay);
@@ -242,9 +252,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
             </span>
           </th>
           <th class="gname" title="Click to rename">G2<span class="cnt">— · 0</span></th>
-          <th class="gname" title="Click to rename">G3<span class="cnt">— · 2</span></th>
+          <th class="gname locked" title="Linked to CH2 · Corridor: click for the channel">G3<span class="cnt">CH2 · 2</span></th>
           <th class="gname" title="Click to rename">G4<span class="cnt">— · 1</span></th>
-          <th class="gname" title="Click to rename">G5<span class="cnt">— · 0</span></th>
+          <th class="gname locked" title="Linked to CH5 · Hall: click for the channel">G5<span class="cnt">CH5 · 0</span></th>
           <th class="gname" title="Click to rename">G6<span class="cnt">— · 5</span></th>
           <th class="gname" title="Click to rename">G7<span class="cnt">— · 0</span></th>
           <th class="gname" title="Click to rename">G8<span class="cnt">— · 0</span></th>
@@ -261,8 +271,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 00</span><span class="nm">Kitchen main</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell on">✓</span></td><td><span class="cell add">✓</span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
-          <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
+          <td><span class="cell on">✓</span></td><td><span class="cell lock"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -272,8 +282,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 01</span><span class="nm">Kitchen island</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell on">✓</span></td><td><span class="cell rm"><span class="x">✓</span></span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -283,8 +293,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr>
           <td class="lamp"><span class="vl">VL 02</span><span class="nm">Hall spot 1</span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell on">✓</span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -294,8 +304,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr class="rowdirty">
           <td class="lamp"><span class="vl">VL 03</span><span class="nm">Hall spot 2</span><button class="act" title="Re-read the gear's group membership — heals a corrupted readback">re-read</button></td>
           <td><span class="cell add">✓</span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell on">✓</span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock">✓</span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -305,8 +315,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr>
           <td class="lamp"><span class="vl">VL 04</span><span class="nm">Living CCT</span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -316,8 +326,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <tr>
           <td class="lamp"><span class="vl">VL 05</span><span class="nm">TV strip</span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
-          <td><span class="cell"></span></td><td><span class="cell"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
+          <td><span class="cell"></span></td><td><span class="cell lock"></span></td>
           <td><span class="cell on">✓</span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
           <td><span class="cell"></span></td><td><span class="cell"></span></td>
@@ -339,6 +349,8 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     </table>
   </div>
 
+  <p class="lockhint">G3 is linked to cluster channel CH2 · Corridor and G5 to CH5 · Hall, and a group linked to a channel is edited in the channel: their columns are closed here, and a click on their header opens the channel's link and the Home Assistant switch, not a name field. The channel's lamp editor is not built yet, so their lamps cannot be changed from this UI until it is; to change them here, unlink the group in its channel first. <a class="chref" href="#">Open CH2</a> · <a class="chref" href="#">Open CH5</a></p>
+
   <!-- With unsaved edits the apply bar counts those edits alone, and Discard
        clears exactly what it counts. With none, it stays while a bound row
        differs from its gear, and offers only the apply (shown below). -->
@@ -346,6 +358,29 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <span class="txt"><b>3 pending edits</b> — 2 add · 1 remove</span>
     <button class="btn discard">Discard</button>
     <button class="btn apply">Apply to bus</button>
+  </div>
+
+  <div class="state-label"><span>A locked column — its header opened</span><span class="ln"></span></div>
+  <div class="matrix-wrap" style="max-height: none; padding-bottom: 150px;">
+    <table style="width: auto;">
+      <thead>
+        <tr>
+          <th class="lamp">Virtual lamp</th>
+          <th class="gname locked" title="Linked to CH2 · Corridor: click for the channel">G3<span class="cnt">CH2 · 2</span>
+            <span class="pop">
+              <span class="ph">Group G3 · in CH2</span>
+              <span class="pb">
+                <span class="pnote">Edited in cluster channel CH2 · Corridor, not here. <a class="chref" href="#">Open CH2</a></span>
+                <span class="prow">
+                  <span class="pl">Home Assistant</span>
+                  <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span>
+                </span>
+              </span>
+            </span>
+          </th>
+        </tr>
+      </thead>
+    </table>
   </div>
 
   <div class="state-label"><span>Save and apply — one toast per operation</span><span class="ln"></span></div>

@@ -1,16 +1,76 @@
 import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { GroupMembershipMatrix } from '../api/types'
+import type { WsEvent } from '../api/ws'
 import { Chip, EditableName, MatrixCell, Switch } from '../components/ui'
 import { ADAPTER, GROUP_COUNT, pad2 } from '../format'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify, saveThenApply, trackOp } from '../toast'
 import { applyBar, boundLamps } from './apply-bar'
-import { gearDiffers } from './groups-view'
+import { type GroupLock, gearDiffers, groupLocks, lockHint, lockHref, lockLabel } from './groups-view'
 
 const MATRIX_POLL_MS = 10_000
 
 const editKey = (vl: number, g: number) => `${vl}:${g}`
+
+function statusOnly(event: WsEvent): boolean {
+  return event.type === 'ClusterStatus'
+}
+
+async function readLocks(): Promise<Map<number, GroupLock>> {
+  try {
+    const [parts, records] = await Promise.all([api.clusterOwnParts('channel'), api.clusterRecords('channel')])
+    return groupLocks(ADAPTER, parts, records)
+  } catch {
+    return new Map()
+  }
+}
+
+function useGroupLocks(): Map<number, GroupLock> {
+  const { data } = useLive(readLocks, ['cluster'], { intervalMs: MATRIX_POLL_MS, onEvent: statusOnly })
+  return data ?? new Map()
+}
+
+function LockedPop({ g, lock, ha, onHa }: { g: number; lock: GroupLock; ha: boolean; onHa: () => void }) {
+  return (
+    <span class="pop" onClick={(e) => e.stopPropagation()}>
+      <span class="ph">
+        Group G{g} · in CH{lock.channel}
+      </span>
+      <span class="pb">
+        <span class="pnote">
+          Edited in cluster channel {lockLabel(lock)}, not here.{' '}
+          <a class="chref" href={lockHref(lock)}>
+            Open CH{lock.channel}
+          </a>
+        </span>
+        <span class="prow">
+          <span class="pl">Home Assistant</span>
+          <Switch on={ha} onToggle={onHa} />
+        </span>
+      </span>
+    </span>
+  )
+}
+
+function LockHint({ locks }: { locks: Map<number, GroupLock> }) {
+  const text = lockHint(locks)
+  if (!text) return null
+  const entries = [...locks.entries()].sort(([a], [b]) => a - b)
+  return (
+    <p class="lockhint">
+      {text}{' '}
+      {entries.map(([g, lock], i) => (
+        <span key={g}>
+          {i > 0 && ' · '}
+          <a class="chref" href={lockHref(lock)}>
+            Open CH{lock.channel}
+          </a>
+        </span>
+      ))}
+    </p>
+  )
+}
 
 export function Groups() {
   const { data, reload } = useLive(async () => {
@@ -33,6 +93,7 @@ export function Groups() {
   const [filter, setFilter] = useState('')
   const [busy, setBusy] = useState(false)
   const [renaming, setRenaming] = useState<number | null>(null)
+  const locks = useGroupLocks()
 
   if (!data) return <div class="empty">Loading group matrix…</div>
   const { matrix, bound, names, shorts, haEnabled } = data
@@ -148,13 +209,35 @@ export function Groups() {
           <thead>
             <tr>
               <th class="lamp">Virtual lamp</th>
-              {matrix.groups.map((grp, g) => (
+              {matrix.groups.map((grp, g) => {
+                const lock = locks.get(g)
+                return lock ? (
+                <th
+                  key={g}
+                  class="gname locked"
+                  title={`Linked to ${lockLabel(lock)}: click for the channel`}
+                  onClick={() => setRenaming((cur) => (cur === g ? null : g))}
+                >
+                  G{g}
+                  <span class="cnt">
+                    CH{lock.channel} · {desiredCount(g)}
+                  </span>
+                  {renaming === g && (
+                    <LockedPop
+                      g={g}
+                      lock={lock}
+                      ha={haEnabled.get(g) !== false}
+                      onHa={() => void toggleGroupHa(g, haEnabled.get(g) === false)}
+                    />
+                  )}
+                </th>
+                ) : (
                 <th
                   key={g}
                   class={`gname${grp.dirty ? ' dirty' : ''}`}
                   title="Click to rename"
                   onClick={() => {
-                    setRenaming((cur) => (cur === null ? g : cur))
+                    setRenaming((cur) => (cur === null || locks.has(cur) ? g : cur))
                   }}
                 >
                   G{g}
@@ -184,7 +267,8 @@ export function Groups() {
                     </span>
                   )}
                 </th>
-              ))}
+                )
+              })}
             </tr>
           </thead>
           <tbody>
@@ -216,6 +300,7 @@ export function Groups() {
                         desired={desiredOf(row, g)}
                         applied={row.applied[g]}
                         disabled={!isBound}
+                        locked={locks.has(g)}
                         onToggle={() => toggle(vl, g, row.desired[g])}
                       />
                     </td>
@@ -226,6 +311,7 @@ export function Groups() {
           </tbody>
         </table>
       </div>
+      <LockHint locks={locks} />
 
       {bar && (
         <div class="applybar">
