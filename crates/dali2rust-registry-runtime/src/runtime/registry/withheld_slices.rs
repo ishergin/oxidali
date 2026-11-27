@@ -16,8 +16,10 @@ const FIRST_INPUT_DEVICE_BANK: u32 = 8;
 const ALL_INPUT_DEVICE_BANKS: u8 = (1 << SliceKey::INPUT_DEVICE_BANKS) - 1;
 pub(crate) const INPUT_DEVICES: u32 = (ALL_INPUT_DEVICE_BANKS as u32) << FIRST_INPUT_DEVICE_BANK;
 pub(crate) const CLUSTER_SETTINGS: u32 = 1 << (FIRST_INPUT_DEVICE_BANK + SliceKey::INPUT_DEVICE_BANKS as u32);
+pub(crate) const CLUSTER_CHANNEL_PARTS: u32 = CLUSTER_SETTINGS << 1;
+pub(crate) const CLUSTER_SCENE_PARTS: u32 = CLUSTER_SETTINGS << 2;
 
-const GLOBALS: [(u32, SliceKey); 9] = [
+const GLOBALS: [(u32, SliceKey); 11] = [
     (ADAPTERS, SliceKey::Adapters),
     (HCL_SCHEDULES, SliceKey::HclSchedules),
     (POLLER_SETTINGS, SliceKey::PollerSettings),
@@ -27,6 +29,8 @@ const GLOBALS: [(u32, SliceKey); 9] = [
     (HOME_ASSISTANT_SETTINGS, SliceKey::HomeAssistantSettings),
     (DISPLAY_SETTINGS, SliceKey::DisplaySettings),
     (CLUSTER_SETTINGS, SliceKey::ClusterSettings),
+    (CLUSTER_CHANNEL_PARTS, SliceKey::ClusterChannelParts),
+    (CLUSTER_SCENE_PARTS, SliceKey::ClusterSceneParts),
 ];
 
 fn bit(index: u8) -> u32 {
@@ -59,6 +63,8 @@ fn place(key: SliceKey) -> Option<(Word, u32)> {
         SliceKey::HomeAssistantSettings => global(HOME_ASSISTANT_SETTINGS),
         SliceKey::DisplaySettings => global(DISPLAY_SETTINGS),
         SliceKey::ClusterSettings => global(CLUSTER_SETTINGS),
+        SliceKey::ClusterChannelParts => global(CLUSTER_CHANNEL_PARTS),
+        SliceKey::ClusterSceneParts => global(CLUSTER_SCENE_PARTS),
         SliceKey::PhysicalDevices { .. }
         | SliceKey::PhysicalDeviceBank { .. }
         | SliceKey::ControllerSettings

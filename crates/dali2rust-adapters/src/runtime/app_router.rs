@@ -52,6 +52,7 @@ use dali2rust_api::http::handlers::settings_dali::{
 use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterSettingsPatchHandler};
 use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
 use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_api::http::handlers::cluster_parts::{ClusterPartDeps, ClusterPartHandler, ClusterPartRoute};
 use dali2rust_api::http::handlers::cluster_records::{
     ClusterRecordDeps, ClusterRecordHandler, ClusterRecordRoute,
 };
@@ -902,7 +903,7 @@ fn wire_cluster(builder: AppBuilder, bus: &HttpBusDispatch, registry: &RegistryH
             RouteKey::ClusterSettingsPatch,
             mutation(bus, &ports.state, &ports.apply_watch, ClusterSettingsPatchHandler::new),
         );
-    wire_cluster_records(builder, bus, ports)
+    wire_cluster_parts(wire_cluster_records(builder, bus, ports), bus, ports)
 }
 
 const CLUSTER_RECORD_ROUTES: [(RouteKey, ClusterRecordKind, ClusterRecordRoute); 10] = [
@@ -930,6 +931,32 @@ fn wire_cluster_records(builder: AppBuilder, bus: &HttpBusDispatch, ports: &Clus
     });
     CLUSTER_RECORD_ROUTES.into_iter().fold(builder, |builder, (key, kind, route)| {
         builder.with_handler(key, Box::new(ClusterRecordHandler::new(Arc::clone(&deps), kind, route)))
+    })
+}
+
+const CLUSTER_PART_ROUTES: [(RouteKey, ClusterRecordKind, ClusterPartRoute); 8] = [
+    (RouteKey::ClusterChannelPartsList, ClusterRecordKind::Channel, ClusterPartRoute::List),
+    (RouteKey::ClusterChannelPartGet, ClusterRecordKind::Channel, ClusterPartRoute::Get),
+    (RouteKey::ClusterChannelPartPut, ClusterRecordKind::Channel, ClusterPartRoute::Put),
+    (RouteKey::ClusterChannelPartDelete, ClusterRecordKind::Channel, ClusterPartRoute::Delete),
+    (RouteKey::ClusterScenePartsList, ClusterRecordKind::Scene, ClusterPartRoute::List),
+    (RouteKey::ClusterScenePartGet, ClusterRecordKind::Scene, ClusterPartRoute::Get),
+    (RouteKey::ClusterScenePartPut, ClusterRecordKind::Scene, ClusterPartRoute::Put),
+    (RouteKey::ClusterScenePartDelete, ClusterRecordKind::Scene, ClusterPartRoute::Delete),
+];
+
+fn wire_cluster_parts(builder: AppBuilder, bus: &HttpBusDispatch, ports: &ClusterHttpPorts) -> AppBuilder {
+    let deps = Arc::new(ClusterPartDeps {
+        publisher: bus.publisher.clone(),
+        slots: Arc::clone(&bus.slots),
+        correlation: Arc::clone(&bus.correlation),
+        state: Arc::clone(&ports.parts),
+        apply_watch: Arc::clone(&ports.apply_watch),
+        bus_id: bus.bus_id,
+        timeout_ms: bus.confirmation_timeout_ms,
+    });
+    CLUSTER_PART_ROUTES.into_iter().fold(builder, |builder, (key, kind, route)| {
+        builder.with_handler(key, Box::new(ClusterPartHandler::new(Arc::clone(&deps), kind, route)))
     })
 }
 

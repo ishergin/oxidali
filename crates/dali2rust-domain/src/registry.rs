@@ -1,6 +1,7 @@
 mod apply_diff;
 mod attributes;
 mod cluster;
+mod cluster_parts;
 mod cluster_records;
 mod home_assistant;
 mod limits;
@@ -13,6 +14,7 @@ mod settings;
 pub use apply_diff::*;
 pub use attributes::*;
 pub use cluster::*;
+pub use cluster_parts::*;
 pub use cluster_records::*;
 pub use home_assistant::*;
 pub use limits::*;

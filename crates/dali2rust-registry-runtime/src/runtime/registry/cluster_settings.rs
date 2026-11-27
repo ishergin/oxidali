@@ -1,5 +1,6 @@
 use dali2rust_contracts::msg::{
-    ClusterForwarding, ClusterRecordUpdateCommand, ClusterSettingsField as Field,
+    ClusterForwarding, ClusterPartUpdateCommand, ClusterRecordKind, ClusterRecordUpdateCommand,
+    ClusterSettingsField as Field,
     ClusterSettingsUpdateCommand, ClusterTextField, ClusterTextUpdateCommand, ErrorCode, FixedText64,
 };
 use dali2rust_domain::registry::{
@@ -8,6 +9,7 @@ use dali2rust_domain::registry::{
 };
 use dali2rust_platform::slice_store::StoreError;
 
+use super::cluster_parts::plan_part_edit;
 use super::cluster_records::{
     persistable_records, plan_record_edit, stored_block, ClusterRecords, RecordEdit, RecordRequest,
 };
@@ -27,6 +29,7 @@ pub(crate) enum ClusterPatch {
     Settings(ClusterSettingsUpdateCommand),
     Text(ClusterTextUpdateCommand),
     Record(ClusterRecordUpdateCommand),
+    Part(ClusterPartUpdateCommand),
 }
 
 pub(crate) struct ClusterStage {
@@ -45,13 +48,14 @@ pub(crate) enum ClusterRefusal {
     Conflict(ClusterSettingsConflict),
     Record(ClusterRecordConflict),
     RecordNotFound,
+    PartNotFound,
 }
 
 impl ClusterRefusal {
     pub(crate) const fn code(self) -> ErrorCode {
         match self {
             Self::Standby | Self::Conflict(_) | Self::Record(_) => ErrorCode::Conflict,
-            Self::RecordNotFound => ErrorCode::NotFound,
+            Self::RecordNotFound | Self::PartNotFound => ErrorCode::NotFound,
             Self::TooManyFrames | Self::NoStage | Self::FrameCountMismatch | Self::OutOfRange => {
                 ErrorCode::InvalidValue
             }
@@ -68,6 +72,7 @@ impl ClusterRefusal {
             Self::Conflict(conflict) => conflict.message(),
             Self::Record(conflict) => conflict.message(),
             Self::RecordNotFound => "cluster_record_not_found",
+            Self::PartNotFound => "cluster_part_not_found",
         }
     }
 }
@@ -108,7 +113,7 @@ impl ClusterPatch {
             Self::Text(body) if body.field == ClusterTextField::ClusterName => {
                 view.cluster_name = body.text.as_str().to_string();
             }
-            Self::Text(_) | Self::Record(_) => {}
+            Self::Text(_) | Self::Record(_) | Self::Part(_) => {}
         }
     }
 }
@@ -162,7 +167,47 @@ fn planned_record_edit(
         .transpose()
 }
 
+fn part_request(patches: &[ClusterPatch]) -> Result<Option<&ClusterPartUpdateCommand>, ClusterRefusal> {
+    let mut parts = patches.iter().filter_map(|patch| match patch {
+        ClusterPatch::Part(command) => Some(command),
+        _ => None,
+    });
+    let part = parts.next();
+    if part.is_some() && patches.len() != 1 {
+        return Err(ClusterRefusal::OutOfRange);
+    }
+    Ok(part)
+}
+
+enum Written {
+    Settings,
+    Parts(Option<ClusterRecordKind>),
+}
+
+fn apply_stage(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
+    if let Some(command) = part_request(patches)? {
+        let edit = plan_part_edit(g, command)?;
+        return Ok(Written::Parts(g.cluster_parts.apply(edit)));
+    }
+    let settings = merged(&g.cluster_settings.0, patches)?;
+    let edit = planned_record_edit(&g.cluster_settings.0, &g.cluster_records, &settings, patches)?;
+    g.cluster_settings = ClusterSettingsRecord(settings);
+    if let Some(edit) = edit {
+        g.cluster_records.apply(edit);
+    }
+    Ok(Written::Settings)
+}
+
 impl RegistryStore {
+    fn mark_cluster_written(&self, written: Written) {
+        match written {
+            Written::Settings => self.dirty.mark_cluster_settings_dirty(),
+            Written::Parts(Some(ClusterRecordKind::Channel)) => self.dirty.mark_cluster_channel_parts_dirty(),
+            Written::Parts(Some(ClusterRecordKind::Scene)) => self.dirty.mark_cluster_scene_parts_dirty(),
+            Written::Parts(None) => {}
+        }
+    }
+
     pub(crate) fn stage_cluster_patch(&self, series: u64, patch: ClusterPatch) -> Result<(), ClusterRefusal> {
         let mut g = self.write_inner();
         let slot = &mut g.cluster_stage;
@@ -193,15 +238,10 @@ impl RegistryStore {
         if stage.patches.len() != usize::from(frames) {
             return Err(ClusterRefusal::FrameCountMismatch);
         }
-        let settings = merged(&g.cluster_settings.0, &stage.patches)?;
-        let edit = planned_record_edit(&g.cluster_settings.0, &g.cluster_records, &settings, &stage.patches)?;
-        g.cluster_settings = ClusterSettingsRecord(settings);
-        if let Some(edit) = edit {
-            g.cluster_records.apply(edit);
-        }
+        let written = apply_stage(&mut g, &stage.patches)?;
         let applied = g.cluster_settings.clone();
         drop(g);
-        self.dirty.mark_cluster_settings_dirty();
+        self.mark_cluster_written(written);
         Ok(applied)
     }
 

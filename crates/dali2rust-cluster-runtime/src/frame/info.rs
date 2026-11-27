@@ -3,7 +3,7 @@ use core::iter::Peekable;
 use serde::{Deserialize, Serialize};
 
 use super::codec::{put, write_head, DatagramBuffer, EncodeError, FrameKind, Rejection};
-use super::command::RecordRef;
+use super::command::{is_record_ref, RecordRef};
 use super::header::Header;
 use super::limits::{is_adapter, is_group, is_node_scene, MAX_NAME_BYTES};
 
@@ -82,13 +82,13 @@ impl InfoElement<'_> {
     pub(crate) const fn in_range(&self) -> bool {
         match self {
             Self::ChannelRecord(record) | Self::SceneRecord(record) => {
-                record.id.in_range() && record.name.len() <= MAX_NAME_BYTES
+                is_record_ref(&record.id) && record.name.len() <= MAX_NAME_BYTES
             }
             Self::ChannelPart(part) => {
-                is_adapter(part.adapter) && part.channel.in_range() && is_group(part.group)
+                is_adapter(part.adapter) && is_record_ref(&part.channel) && is_group(part.group)
             }
             Self::ScenePart(part) => {
-                is_adapter(part.adapter) && part.scene.in_range() && is_node_scene(part.node_scene)
+                is_adapter(part.adapter) && is_record_ref(&part.scene) && is_node_scene(part.node_scene)
             }
             Self::GroupMap(map) => is_adapter(map.adapter),
             Self::GroupName(name) => name.in_range(is_group(name.number)),

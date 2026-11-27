@@ -13,8 +13,9 @@ use dali2rust_cluster_runtime::presence::PresenceTiming;
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 use dali2rust_platform::net::node_name;
 use dali2rust_test_support::{ClusterHub, ClusterHubBinder, HubDatagram};
-use serde_json::Value;
+use serde_json::{json, Value};
 
+use crate::steps::last_json;
 use crate::DaliWorld;
 
 const PULSE_PERIOD_MS: u32 = 200;
@@ -253,4 +254,14 @@ async fn ws_cluster_status(world: &mut DaliWorld, node: u64, board: String) {
             && row["heard"] == Value::Bool(true)
     });
     assert!(frame.is_some(), "no ClusterStatus frame showed node {node} heard from {board}");
+}
+
+// CLU-046 CLU-052
+#[when(regex = r#"^I link "([^"]+)" to the cluster record "([^"]+)" with send (true|false) and accept (true|false)$"#)]
+async fn link_part_to_record(world: &mut DaliWorld, part: String, record: String, send: String, accept: String) {
+    world.send_http_request("GET", &record, None, "");
+    let held = last_json(world);
+    let reference = json!({ "number": held["number"], "birth_mark": held["birth_mark"] });
+    let body = json!({ "record": reference, "send": send == "true", "accept": accept == "true" }).to_string();
+    world.send_http_request("PUT", &part, Some(body.as_bytes()), "application/json");
 }

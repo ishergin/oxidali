@@ -21,6 +21,7 @@ pub mod scenes;
 pub mod settings_home_assistant;
 pub mod cluster;
 pub mod cluster_status;
+pub mod cluster_parts;
 pub mod cluster_records;
 pub mod config_transfer;
 pub mod policies;

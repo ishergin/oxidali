@@ -93,6 +93,7 @@ pub(crate) struct RegistryHttpReadPorts {
     pub display: Arc<dyn dali2rust_domain::registry::DisplaySettingsReadPort>,
     pub cluster: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
     pub cluster_records: Arc<dyn dali2rust_domain::registry::ClusterRecordReadPort>,
+    pub cluster_parts: Arc<dyn dali2rust_domain::registry::ClusterPartReadPort>,
 }
 
 pub(crate) fn new_registry_store(adapter_count: u8) -> Arc<RegistryStore> {
@@ -121,7 +122,8 @@ pub(crate) fn registry_read_handles(store: Arc<RegistryStore>) -> RegistryReadHa
             home_assistant: store.clone(),
             display: store.clone(),
             cluster: store.clone(),
-            cluster_records: store,
+            cluster_records: store.clone(),
+            cluster_parts: store,
         },
     }
 }

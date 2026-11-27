@@ -30,7 +30,7 @@ const SMALL_BANK_BYTES: u32 = SMALL_BANK_SECTORS * SECTOR_BYTES;
 
 const LARGE_REGION_BYTES: u32 = LARGE_SLOT_COUNT * 2 * LARGE_BANK_BYTES;
 
-const TAIL_SLOT_COUNT: u32 = 2;
+const TAIL_SLOT_COUNT: u32 = 4;
 const TAIL_REGION_OFFSET: u32 =
     LARGE_REGION_BYTES + SMALL_SLOT_COUNT * 2 * SMALL_BANK_BYTES + PD_BANK_REGION_BYTES;
 
@@ -74,7 +74,10 @@ pub fn slot_geometry(key: SliceKey) -> Option<SlotGeometry> {
                 }
             })
         }
-        SliceKey::DisplaySettings | SliceKey::ClusterSettings => tail_slot_index(key).map(|index| SlotGeometry {
+        SliceKey::DisplaySettings
+        | SliceKey::ClusterSettings
+        | SliceKey::ClusterChannelParts
+        | SliceKey::ClusterSceneParts => tail_slot_index(key).map(|index| SlotGeometry {
             offset: TAIL_REGION_OFFSET + index * 2 * SMALL_BANK_BYTES,
             bank_bytes: SMALL_BANK_BYTES,
         }),
@@ -89,6 +92,8 @@ fn tail_slot_index(key: SliceKey) -> Option<u32> {
     match key {
         SliceKey::DisplaySettings => Some(0),
         SliceKey::ClusterSettings => Some(1),
+        SliceKey::ClusterChannelParts => Some(2),
+        SliceKey::ClusterSceneParts => Some(3),
         _ => None,
     }
 }
@@ -124,7 +129,10 @@ pub fn slot_index(key: SliceKey) -> Option<u32> {
                 LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + adapter * PD_BANKS_PER_ADAPTER + bank
             })
         }
-        SliceKey::DisplaySettings | SliceKey::ClusterSettings => tail_slot_index(key)
+        SliceKey::DisplaySettings
+        | SliceKey::ClusterSettings
+        | SliceKey::ClusterChannelParts
+        | SliceKey::ClusterSceneParts => tail_slot_index(key)
             .map(|index| LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + index),
         _ => small_slot_index(key).map(|index| LARGE_SLOT_COUNT + index),
     }
@@ -215,6 +223,8 @@ mod tests {
             | SliceKey::Policies
             | SliceKey::DisplaySettings
             | SliceKey::ClusterSettings
+            | SliceKey::ClusterChannelParts
+            | SliceKey::ClusterSceneParts
             | SliceKey::InputDevices { .. }
             | SliceKey::Rules { .. }
             | SliceKey::VirtualLamps { .. }
@@ -238,6 +248,8 @@ mod tests {
             SliceKey::Policies,
             SliceKey::DisplaySettings,
             SliceKey::ClusterSettings,
+            SliceKey::ClusterChannelParts,
+            SliceKey::ClusterSceneParts,
             SliceKey::InputDevices { bank: 0 },
             SliceKey::InputDevices { bank: 1 },
             SliceKey::InputDevices { bank: 2 },
@@ -264,7 +276,7 @@ mod tests {
         keys
     }
 
-    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 11] = [
+    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 13] = [
         (SliceKey::PhysicalDevices { adapter_id: 0 }, 0, 8),
         (SliceKey::PhysicalDevices { adapter_id: 7 }, 112, 8),
         (SliceKey::Adapters, 128, 1),
@@ -276,10 +288,12 @@ mod tests {
         (SliceKey::PhysicalDeviceBank { adapter_id: 7, bank: 15 }, 702, 1),
         (SliceKey::DisplaySettings, 704, 1),
         (SliceKey::ClusterSettings, 706, 1),
+        (SliceKey::ClusterChannelParts, 708, 1),
+        (SliceKey::ClusterSceneParts, 710, 1),
     ];
 
-    const INSTALLED_LAYOUT_SECTORS: u32 = 708;
-    const INSTALLED_LAYOUT_DIGEST: u64 = 0xfdbf_9e79_8786_3fdf;
+    const INSTALLED_LAYOUT_SECTORS: u32 = 712;
+    const INSTALLED_LAYOUT_DIGEST: u64 = 0x2edf_db07_a749_11d9;
     const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     const MOVED: &str = "An installed slot keeps its offset for good, and a new slice gets a \

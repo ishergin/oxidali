@@ -36,6 +36,10 @@ impl ClusterRecordBlock {
         self.entries.iter().find(|entry| entry.index == index)
     }
 
+    pub(crate) fn entry_mark(&self, index: u8) -> Option<ClusterBirthMark> {
+        self.entry(index).map(|entry| entry.mark)
+    }
+
     fn live(&self) -> u16 {
         self.entries.iter().fold(0, |mask, entry| mask | 1 << entry.index)
     }

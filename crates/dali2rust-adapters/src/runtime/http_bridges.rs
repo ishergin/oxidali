@@ -6,6 +6,7 @@ use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState, ClusterWireOwnerDto,
     MAX_CLUSTER_STATUS_IGNORED,
 };
+use dali2rust_api::http::cluster_parts_state::{ClusterPartsHttpState, ClusterPartsHttpStateBridge};
 use dali2rust_api::http::cluster_records_state::{ClusterRecordsHttpState, ClusterRecordsHttpStateBridge};
 use dali2rust_api::http::cluster_settings_state::{
     ClusterSettingsApplyWatch, ClusterSettingsApplyWatchBridge, ClusterSettingsHttpState,
@@ -179,6 +180,7 @@ pub(crate) struct ClusterHttpPorts {
     pub apply_watch: Arc<dyn ClusterSettingsApplyWatch>,
     pub read: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
     pub records: Arc<dyn ClusterRecordsHttpState>,
+    pub parts: Arc<dyn ClusterPartsHttpState>,
 }
 
 fn role_and_cluster(
@@ -193,6 +195,7 @@ fn role_and_cluster(
         apply_watch: Arc::new(ClusterSettingsApplyWatchBridge::new(apply_watch(counters))),
         read: settings,
         records: Arc::new(ClusterRecordsHttpStateBridge::new(Arc::clone(&read.cluster_records))),
+        parts: Arc::new(ClusterPartsHttpStateBridge::new(Arc::clone(&read.cluster_parts))),
     };
     (role, cluster)
 }

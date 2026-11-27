@@ -4,17 +4,10 @@ use serde::{Deserialize, Serialize};
 use super::limits::{is_adapter, is_lamp, is_node, is_record_number};
 
 pub use dali2rust_contracts::msg::ClusterBirthMark as BirthMark;
+pub use dali2rust_contracts::msg::ClusterRecordRef as RecordRef;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecordRef {
-    pub number: u8,
-    pub mark: BirthMark,
-}
-
-impl RecordRef {
-    pub(crate) const fn in_range(&self) -> bool {
-        is_record_number(self.number)
-    }
+pub(crate) const fn is_record_ref(record: &RecordRef) -> bool {
+    is_record_number(record.number)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +27,7 @@ pub enum Target {
 impl Target {
     const fn in_range(&self) -> bool {
         match self {
-            Self::Channel(channel) => channel.in_range(),
+            Self::Channel(channel) => is_record_ref(channel),
             Self::All => true,
             Self::Lamp(lamp) => is_node(lamp.node) && is_adapter(lamp.adapter) && is_lamp(lamp.lamp),
         }
@@ -51,7 +44,7 @@ impl RecallScope {
     const fn in_range(&self) -> bool {
         match self {
             Self::Node => true,
-            Self::Channel(channel) => channel.in_range(),
+            Self::Channel(channel) => is_record_ref(channel),
         }
     }
 }
@@ -73,7 +66,7 @@ impl Action {
     const fn in_range(&self) -> bool {
         match self {
             Self::Light { target, .. } => target.in_range(),
-            Self::RecallScene { scene, scope } => scene.in_range() && scope.in_range(),
+            Self::RecallScene { scene, scope } => is_record_ref(scene) && scope.in_range(),
         }
     }
 }
