@@ -1,5 +1,6 @@
 use dali2rust_contracts::msg::{
-    CompactErrorPayload, DaliLevelTransitionAppliedEvent, DaliSceneRecalledEvent, DaliTargetStateAppliedEvent,
+    CompactErrorPayload, DaliLevelTransitionAppliedEvent, DaliSceneRecalledEvent, DaliStopFadeAppliedEvent,
+    DaliTargetStateAppliedEvent,
     ErrorCode, LightSetpoint, PowerState,
 };
 use dali2rust_domain::registry::{ClusterPartKeys, ClusterPartView};
@@ -61,6 +62,10 @@ fn applied(scope: DaliTargetScope, source: RuntimeSource) -> BusEventPayload {
 }
 
 fn transition(scope: DaliTargetScope, transition: LevelTransition) -> BusEventPayload {
+    transition_by(scope, transition, RuntimeSource::Api)
+}
+
+fn transition_by(scope: DaliTargetScope, transition: LevelTransition, source: RuntimeSource) -> BusEventPayload {
     DaliLevelTransitionAppliedEvent {
         registry_adapter_id: 0,
         scope,
@@ -68,7 +73,7 @@ fn transition(scope: DaliTargetScope, transition: LevelTransition) -> BusEventPa
         short_address: None,
         group_id: Some(GROUP),
         transition,
-        source: RuntimeSource::Api,
+        source,
         applied_at_mono_ms: 0,
         hold_hcl: true,
     }
@@ -175,15 +180,62 @@ fn a_broadcast_goes_to_all_lamps_only_while_send_all_lamps_is_on() {
 }
 
 #[test]
-fn recall_max_and_min_are_forwarded_and_the_relative_verbs_wait_for_their_slice() {
+fn every_transition_but_go_to_last_active_level_is_forwarded_as_its_own_verb() {
     let forwarded = |verb| decide(&transition(DaliTargetScope::Group, verb), &settings(), &linked(true));
-    for verb in [LevelTransition::RecallMaxLevel, LevelTransition::RecallMinLevel] {
+    let verbs = [
+        LevelTransition::RecallMaxLevel,
+        LevelTransition::RecallMinLevel,
+        LevelTransition::Up,
+        LevelTransition::Down,
+        LevelTransition::StepUp,
+        LevelTransition::StepDown,
+        LevelTransition::OnAndStepUp,
+        LevelTransition::StepDownAndOff,
+    ];
+    for verb in verbs {
         let action = forwarded(verb).and_then(Result::ok).map(|request| request.action);
-        assert_eq!(action, Some(Action::Light { target: Target::Channel(CHANNEL), verb: LightVerb::Transition(verb) }));
+        let wanted = Action::Light { target: Target::Channel(CHANNEL), verb: LightVerb::Transition(verb) };
+        assert_eq!(action, Some(wanted), "{verb:?}");
     }
-    for verb in [LevelTransition::Up, LevelTransition::Down, LevelTransition::StepUp, LevelTransition::StepDown] {
-        assert_eq!(forwarded(verb), None, "{verb:?}");
+    assert_eq!(forwarded(LevelTransition::GoToLastActiveLevel), None);
+}
+
+fn stopped(scope: DaliTargetScope, source: RuntimeSource) -> BusEventPayload {
+    DaliStopFadeAppliedEvent {
+        registry_adapter_id: 0,
+        scope,
+        virtual_lamp_id: None,
+        short_address: None,
+        group_id: (scope == DaliTargetScope::Group).then_some(GROUP),
+        source,
+        applied_at_mono_ms: 0,
     }
+    .into()
+}
+
+#[test]
+fn a_stopped_fade_on_a_group_or_on_all_lamps_goes_out_as_a_stop_fade() {
+    let on_group = decide(&stopped(DaliTargetScope::Group, RuntimeSource::Api), &settings(), &linked(true));
+    let request = on_group.and_then(Result::ok);
+    let wanted = Action::Light { target: Target::Channel(CHANNEL), verb: LightVerb::StopFade };
+    assert_eq!(request.map(|request| (request.action, request.source)), Some((wanted, SourceClass::Operator)));
+    let sending = ClusterSettingsView { send_all_lamps: true, ..settings() };
+    let on_all = decide(&stopped(DaliTargetScope::Broadcast, RuntimeSource::Mqtt), &sending, &linked(true));
+    let action = on_all.and_then(Result::ok).map(|request| request.action);
+    assert_eq!(action, Some(Action::Light { target: Target::All, verb: LightVerb::StopFade }));
+}
+
+#[test]
+fn a_relative_verb_the_cluster_executed_here_never_goes_back() {
+    let all_on = ClusterSettingsView { send_all_lamps: true, ..settings() };
+    for source in [RuntimeSource::Cluster, RuntimeSource::ClusterHcl] {
+        let step = transition_by(DaliTargetScope::Group, LevelTransition::StepUp, source);
+        assert_eq!(decide(&step, &all_on, &linked(true)), Some(Err(Skip::ClusterOrigin)), "{source:?}");
+        let stop = stopped(DaliTargetScope::Broadcast, source);
+        assert_eq!(decide(&stop, &all_on, &linked(true)), Some(Err(Skip::ClusterOrigin)), "{source:?}");
+    }
+    let rules = stopped(DaliTargetScope::Group, RuntimeSource::Rules);
+    assert_eq!(decide(&rules, &all_on, &linked(true)), Some(Err(Skip::SourceOff)));
 }
 
 #[test]

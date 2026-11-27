@@ -40,3 +40,39 @@ Feature: Group target state
     Then the response status should be 202
     And the DALI mock transport should have sent forward frame 0x8F05
     And the DALI mock transport should have received 1 forward frame
+
+  @id:GRP-079 @stage-I6
+  Scenario Outline: A relative verb on a group is its one group-addressed command
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 desired membership includes virtual lamp 1 in group 7
+    And a DALI mock transport with no response
+    When I PUT JSON {"dim":"<dim>"} to "/api/v1/adapters/0/groups/7/target-state"
+    Then the response status should be 202
+    And the DALI mock transport forward trace should eventually be exactly "<trace>"
+
+    Examples:
+      | dim               | trace |
+      | up                | 8F01  |
+      | down              | 8F02  |
+      | step_up           | 8F03  |
+      | step_down         | 8F04  |
+      | on_and_step_up    | 8F08  |
+      | step_down_and_off | 8F07  |
+      | stop_fade         | 8EFF  |
+
+  @id:GRP-080 @stage-I6
+  Scenario Outline: A group refuses a relative verb it cannot read, or one mixed with a setpoint, before DALI
+    Given adapter 0 has a discovered and bound virtual lamp 1 on physical device 0
+    And adapter 0 desired membership includes virtual lamp 1 in group 7
+    And a DALI mock transport with no response
+    When I PUT JSON <body> to "/api/v1/adapters/0/groups/7/target-state"
+    Then the response status should be 422
+    And the JSON error should be "<error>"
+    And the DALI mock transport should have received 0 forward frame
+
+    Examples:
+      | body                              | error         |
+      | {"dim":"sideways"}                | invalid_enum  |
+      | {"dim":7}                         | invalid_value |
+      | {"dim":"up","power":"on"}         | invalid_value |
+      | {"dim":"up","recall":"max_level"} | invalid_value |

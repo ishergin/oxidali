@@ -59,6 +59,7 @@ pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] = &[
     "DaliTargetStateAppliedEvent",
     "DaliLevelTransitionAppliedEvent",
     "DaliSceneRecalledEvent",
+    "DaliStopFadeAppliedEvent",
 ];
 
 

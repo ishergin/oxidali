@@ -5,14 +5,14 @@
 «какой payload этот источник вправе опубликовать».
 
 Границы: смысл команд — [`semantic-dali-commands.md`](semantic-dali-commands.md);
-владельцы и дисциплины ответа — [`commands.md`](commands.md). Планируемые источники
-(кластер, adapter proxy) — в [`../roadmap.md`](../roadmap.md).
+владельцы и дисциплины ответа — [`commands.md`](commands.md). Планируемый источник
+(adapter proxy) — в [`../roadmap.md`](../roadmap.md).
 
 | Источник | Сценарий | Payload |
 |---|---|---|
 | REST | target-state лампы | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = VirtualLamp`; непривязанная лампа — ничего |
 | REST | target-state устройства | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = Short` |
-| REST | target-state группы | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = Group` |
+| REST | target-state группы | `DaliSetTargetStateCommand` или `DaliRecallLevelPresetCommand`, `scope = Group`; поле `dim` — `DaliDimCommand`, `DaliStepCommand` или `DaliStopFadeCommand` |
 | REST | apply матрицы групп / сцены | `GroupApplyExecuteCommand` / `SceneApplyExecuteCommand` (ячейки публикует оркестратор) |
 | REST | recall сцены | `DaliRecallSceneCommand`, `scope = Broadcast` (пустое тело) или `Group` |
 | REST | запись атрибутов | `DaliWriteAttributesCommand` (`signals_operation = true`) |
@@ -30,6 +30,7 @@
 | Home Assistant | выбор сцены | `DaliRecallSceneCommand`, `scope = Broadcast` |
 | HCL | точка `level_mode = absolute` или `none` | `DaliSetTargetStateCommand`, `scope ∈ {Group, Broadcast}` (при `none` — только цвет) |
 | HCL | точка `level_mode = last_active` | `DaliRecallLastActiveLevelCommand` на ту же цель + отдельная команда цвета |
+| Кластер | команда соседа каналу или всем лампам | на группу части или broadcast: `DaliSetTargetStateCommand`, `DaliRecallLevelPresetCommand`, `DaliDimCommand`, `DaliStepCommand`, `DaliStopFadeCommand`; вызов сцены — `DaliRecallSceneCommand`; `Origin::Cluster`, тик HCL — `Origin::ClusterHcl` |
 | Правила | световые действия | `DaliSetTargetStateCommand` (лампа, группа, broadcast), `DaliStopFadeCommand`, `DaliRecallLevelPresetCommand`, `DaliDimCommand` |
 | Правила | сцены | `DaliRecallSceneCommand` (`Group` / `Broadcast` / `VirtualLamp`), `SceneApplyExecuteCommand` |
 | Правила | индикация панелей | `Dali103FeedbackDriveCommand` |

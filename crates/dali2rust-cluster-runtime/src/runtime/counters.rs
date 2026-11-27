@@ -30,6 +30,7 @@ pub struct ClusterCounters {
     pub commands_sent_total: AtomicU32,
     pub commands_delayed_total: AtomicU32,
     pub commands_superseded_total: AtomicU32,
+    pub relative_verbs_dropped_total: AtomicU32,
     pub commands_received_total: AtomicU32,
     pub commands_executed_total: AtomicU32,
     pub commands_rejected_total: AtomicU32,

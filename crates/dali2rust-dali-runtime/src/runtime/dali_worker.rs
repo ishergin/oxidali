@@ -283,14 +283,9 @@ dali2rust_contracts::dispatch_bus_commands! {
         handle_level_transition(controller, env, correlation_id, origin, &LevelTransitionRequest::from(command)),
     DaliDimCommand(command) =>
         handle_level_transition(controller, env, correlation_id, origin, &LevelTransitionRequest::from(command)),
-    DaliStopFadeCommand(command) => handle_stop_fade(
-        controller,
-        read_port,
-        publisher,
-        correlation_id,
-        command,
-        counters,
-    ),
+    DaliStepCommand(command) =>
+        handle_level_transition(controller, env, correlation_id, origin, &LevelTransitionRequest::from(command)),
+    DaliStopFadeCommand(command) => handle_stop_fade(controller, env, correlation_id, origin, command),
     DaliSetTargetStateCommand(ts) => handle_set_target_state(
         controller,
         env,

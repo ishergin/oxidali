@@ -128,6 +128,21 @@ from the home node, an edit carried by a datagram, and no remote edit at all.
 - A duplicate is dropped, and a node does not execute its own frame.
 - Outgoing commands have a ceiling per target. A setpoint above it is delayed to the last
   one, not dropped.
+- A relative verb — `UP`, `DOWN`, a step, a stopped fade — is never folded into another
+  command, because two steps are two steps. It waits behind the command before it, and
+  commands of one target leave in their order, so a setpoint given after steps lands last.
+  A command to all lamps or to a node's scenes covers every channel, so it never leaves
+  before a waiting command to a channel given before it, nor that channel's after it.
+  Its own ceiling, 50 ms, is above the fastest key-hold repeat a Part 301 button may have
+  (`Trepeat` 100 ms), so a held key never waits for its ceiling, only for a copy in
+  flight; at most four relative verbs wait per target, and one beyond them is dropped,
+  counted (`relative_verbs_dropped_total`) and refused to a caller with `cluster_busy`,
+  never sent late. A relative verb the sender drops for a full table, a mode change or a
+  send that fails is counted there too. Only a setpoint, preset or scene recall waiting
+  last is replaced by a later one, and only while no command to an overlapping target was
+  given after it; otherwise the later one waits behind. At most two such waits are in a
+  target's line at once, so the line always keeps room for the relative verbs it admits
+  and the command after them; beyond them the later one replaces again.
 - Wire protection, a setting. Every node that hears the same DALI frame is on one wire, and
   the wire is named after one of its nodes. One live node owns it. Only the owner executes
   incoming commands to channels, to all lamps and scene recalls, and only it forwards a
@@ -154,9 +169,10 @@ operator. Commands of rules become forwardable only with the rules stage: an exe
 carries no chain depth, so a rule answering a forwarded command would loop between nodes
 unseen. A forwarded HCL tick keeps on the receiving node the wire priority an HCL tick has
 at home, not that of a cluster command, for which the contract gets a second cluster
-origin. Three things are missing today: a semantic command for a step, an applied fact for
-a stopped fade, and the sniffer's publication of a foreign `UP`, `DOWN` and stopped fade,
-which it only counts.
+origin. `UP` and `DOWN` travel as the dim command, a step as the step command and a stopped
+fade by its applied fact, and the operator gives them through the `dim` verb of a group's
+or a channel's target state. Missing still is the sniffer's publication of a foreign `UP`,
+`DOWN` and stopped fade, which it only counts.
 
 ### The bus rules hold
 
@@ -180,7 +196,7 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   `sdkconfig.p4.defaults`, which only a flash proves.
 - The cluster's counters are a block in `/api/v1/stats`, and its worker one more command,
   event and confirmation subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 7936 against a measured worst case of 7893,
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 7936 against a measured worst case of 7935,
   `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8832 against 8805. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15857: eight nodes and 24 ignored boards, every text at its widest. The per-node
@@ -195,5 +211,6 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   the neighbour in frames of the production codec. The hub is one more surface of
   [ADR-004](ADR-004-bdd-black-box-boundary.md), as the broker side of the MQTT double is.
   What needs two composed stacks is a crate integration test.
-- Not promised: delivery, exactly one wire owner, and equal levels after a lost `UP` or
-  `DOWN` between segments — the next absolute command brings the segments together.
+- Not promised: delivery, exactly one wire owner, and equal levels after a lost or dropped
+  `UP`, `DOWN` or step between segments — the next absolute command brings the segments
+  together.

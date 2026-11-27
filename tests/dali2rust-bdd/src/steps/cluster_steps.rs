@@ -107,6 +107,11 @@ impl Speaker {
         self.hub.inject(self.source, bytes);
     }
 
+    pub(crate) fn lose(&self) {
+        let mut seq = self.seq.lock().unwrap_or_else(PoisonError::into_inner);
+        *seq = seq.wrapping_add(1);
+    }
+
     pub(crate) fn say(&self, buffer: &mut DatagramBuffer, frame: &Frame<'_>) {
         self.speak(|header| {
             let len = encode(header, frame, buffer).expect("the frame fits one datagram");
@@ -191,7 +196,7 @@ fn holds_node(datagram: &HubDatagram, mac: [u8; 6], node: u8, cluster_name: &str
         && pulse.cluster_name == cluster_name)
 }
 
-// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-084 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121
+// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-084 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-107 CLU-108 CLU-109 CLU-110 CLU-111
 #[given(regex = r#"^the controller runs on a cluster hub as board "([0-9a-f:]{17})" at "([0-9.]+)"$"#)]
 async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     let (mac, address) = (hardware_address(&mac), ipv4(&address));
@@ -199,7 +204,7 @@ async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     world.run_on_network_link(mac, Some(address), node_name(mac));
 }
 
-// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121
+// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-109 CLU-110 CLU-111
 #[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) of cluster "([^"]*)" for installation "([^"]*)"$"#)]
 async fn board_pulses(world: &mut DaliWorld, mac: String, source: String, node: u8, name: String, site: String) {
     let rig = rig(world);
@@ -244,7 +249,7 @@ async fn board_stops(world: &mut DaliWorld, mac: String) {
     assert!(rig.neighbours.len() < before, "no board {mac:02x?} was pulsing");
 }
 
-// CLU-023 CLU-066 CLU-068 CLU-070 CLU-076 CLU-083 CLU-084 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100
+// CLU-023 CLU-066 CLU-068 CLU-070 CLU-076 CLU-083 CLU-084 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-101 CLU-102 CLU-104 CLU-105 CLU-106 CLU-107 CLU-108 CLU-109 CLU-110
 #[when("the cluster hub sets aside what this controller has sent so far")]
 async fn hub_sets_aside(world: &mut DaliWorld) {
     let hub = &rig(world).hub;
@@ -301,7 +306,7 @@ async fn ws_cluster_status(world: &mut DaliWorld, node: u64, board: String) {
     assert!(frame.is_some(), "no ClusterStatus frame showed node {node} heard from {board}");
 }
 
-// CLU-046 CLU-052 CLU-065 CLU-084
+// CLU-046 CLU-052 CLU-065 CLU-084 CLU-107
 #[when(regex = r#"^I link "([^"]+)" to the cluster record "([^"]+)" with send (true|false) and accept (true|false)$"#)]
 async fn link_part_to_record(world: &mut DaliWorld, part: String, record: String, send: String, accept: String) {
     world.send_http_request("GET", &record, None, "");

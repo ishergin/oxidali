@@ -57,7 +57,10 @@ broadcast (продюсер — HCL для `level_mode = last_active`). Applied-
 **`DaliStopFadeCommand`** — один кадр `DAPC(MASK)` на любой класс адреса
 (102 §9.5.9): таймер фейда стоит, `targetLevel` становится `actualLevel`. MASK — не
 уровень, поэтому это отдельный вид, а не форма target-state; проецировать нечего,
-реестр сохраняет прежнее значение до следующего чтения.
+реестр сохраняет прежнее значение до следующего чтения. После кадра воркер публикует
+required-факт `DaliStopFadeAppliedEvent` (scope, идентичности, источник, метка) и
+подтверждает команду, только когда факт встал в очередь; слушает его только воркер
+кластера.
 
 **`DaliRecallLevelPresetCommand`** — один кадр `RECALL MAX LEVEL` или
 `RECALL MIN LEVEL` (102 §11.3.7, §11.3.8) на любой класс адреса; лампу воркер разрешает
@@ -76,7 +79,20 @@ broadcast (продюсер — HCL для `level_mode = last_active`). Applied-
 включённым с уровнем `null`, а прибор на нуле или на своей границе не трогает; уровень
 читает обратно поллер ([`../runtime-modules/poller/README.md`](../runtime-modules/poller/README.md)
 §Чтение после UP и DOWN). `hold_hcl`, ответ и отказ непривязанной лампы — как у
-`DaliRecallLevelPresetCommand`. Публикует только исполнитель правил.
+`DaliRecallLevelPresetCommand`. Публикуют исполнитель правил, HTTP группы и воркер
+кластера.
+
+**`DaliStepCommand`** — один кадр `STEP UP`, `STEP DOWN`, `ON AND STEP UP` или
+`STEP DOWN AND OFF` (102 §11.3.5, §11.3.6, §11.3.9, §11.3.10) на любой класс адреса.
+Шаг меняет уровень на одну ступень без фейда; applied-факт — тот же
+`DaliLevelTransitionAppliedEvent` с глаголом шага, уровень членов считает реестр.
+`hold_hcl`, ответ и отказ непривязанной лампы — как у `DaliDimCommand`. Публикуют HTTP
+группы и воркер кластера.
+
+`UP`, `DOWN`, шаг и остановка фейда не коалесцируются: два шага — два кадра, а уставка
+до такого кадра не вытесняется уставкой после него
+([`../runtime-modules/dali-worker/README.md`](../runtime-modules/dali-worker/README.md)
+§Коалесинг).
 
 **`DaliRecallSceneCommand`** — единственная продуктовая активация сцены: нативный
 `GO TO SCENE`, яркость и цвет одним кадром. Scope — `Broadcast`, `Group`, `Short` или
@@ -191,9 +207,10 @@ min/max — только когда ответы так и не устоялис
 |---|---|---|
 | `DaliSetTargetStateCommand` | `DaliTargetStateAppliedEvent` / `DaliTargetStateFailedEvent` | проектор → RRUC → `RuntimeStateChangedEvent` |
 | `DaliRecallLastActiveLevelCommand` | applied-факт без уровня | проектор → RRUC; уровень из тени реестра |
-| `DaliStopFadeCommand` | подтверждение | ничего не проецируется |
+| `DaliStopFadeCommand` | `DaliStopFadeAppliedEvent` | ничего не проецируется; кластер пересылает |
 | `DaliRecallLevelPresetCommand` | `DaliLevelTransitionAppliedEvent` | проектор → `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
 | `DaliDimCommand` | `DaliLevelTransitionAppliedEvent` | проектор → `RegistryLevelTransitionCommand` на каждого участника; поллер читает `runtime_status` каждого |
+| `DaliStepCommand` | `DaliLevelTransitionAppliedEvent` | проектор → `RegistryLevelTransitionCommand` на каждого участника; уровень считает реестр |
 | `DaliRecallSceneCommand` | `DaliSceneRecalledEvent` | проектор раскрывает по applied-строкам сцены |
 | `DaliProgramGroupMembershipCommand` | `DaliGroupMembershipProgrammedEvent` | реестр: applied-членство, `GroupMatrixChangedEvent` |
 | `DaliProgramSceneCommand` | `DaliSceneProgrammedEvent` (+ чанки цвета сцены) | реестр: applied-строка, `SceneMatrixChangedEvent` |

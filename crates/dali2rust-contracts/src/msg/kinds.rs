@@ -740,6 +740,27 @@ impl DimDirection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
+pub enum StepKind {
+    Up = 0,
+    Down = 1,
+    OnAndUp = 2,
+    DownAndOff = 3,
+}
+
+impl StepKind {
+    #[must_use]
+    pub const fn transition(self) -> LevelTransition {
+        match self {
+            Self::Up => LevelTransition::StepUp,
+            Self::Down => LevelTransition::StepDown,
+            Self::OnAndUp => LevelTransition::OnAndStepUp,
+            Self::DownAndOff => LevelTransition::StepDownAndOff,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum DecodeStatus {
     Decoded = 0,
     Unsupported = 1,

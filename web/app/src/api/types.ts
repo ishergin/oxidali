@@ -607,6 +607,7 @@ export interface TargetStateRequest {
   rgbwaf?: { r: number; g: number; b: number; w: number; a: number; f: number }
   transition?: { duration_ms: number }
   recall?: 'max_level' | 'min_level'
+  dim?: 'up' | 'down' | 'step_up' | 'step_down' | 'on_and_step_up' | 'step_down_and_off' | 'stop_fade'
 }
 
 export interface WriteAttributesRequest {
@@ -1352,6 +1353,7 @@ export type StatsCluster = {
   commands_sent_total: number
   commands_delayed_total: number
   commands_superseded_total: number
+  relative_verbs_dropped_total: number
   commands_received_total: number
   commands_executed_total: number
   commands_rejected_total: number

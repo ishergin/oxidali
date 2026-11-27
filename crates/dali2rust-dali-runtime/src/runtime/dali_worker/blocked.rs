@@ -216,6 +216,7 @@ fn is_confirmed_request(payload: &BusCommandPayload) -> bool {
             | BusCommandPayload::DaliStopFadeCommand(_)
             | BusCommandPayload::DaliRecallLevelPresetCommand(_)
             | BusCommandPayload::DaliDimCommand(_)
+            | BusCommandPayload::DaliStepCommand(_)
             | BusCommandPayload::Dali103FeedbackDriveCommand(_)
             | BusCommandPayload::Dali103InstanceActionCommand(_)
             | BusCommandPayload::Dali103HandoverCommand(_)
@@ -279,6 +280,7 @@ fn control_gear_adapter_id(payload: &BusCommandPayload) -> Option<u8> {
         BusCommandPayload::DaliStopFadeCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliRecallLevelPresetCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliDimCommand(cmd) => Some(cmd.registry_adapter_id),
+        BusCommandPayload::DaliStepCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliWriteAttributesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliDiscoverDevicesCommand(cmd) => Some(cmd.registry_adapter_id),
         BusCommandPayload::DaliReadAttributesCommand(cmd) => Some(cmd.registry_adapter_id),

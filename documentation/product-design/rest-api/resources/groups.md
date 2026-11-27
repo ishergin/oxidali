@@ -74,6 +74,11 @@ unsupported_field`; пустое тело — `400 empty_patch`. Мост Home A
 `202 {correlation_id, status: "accepted"}`: провод команду исполнил, а состояние
 участников приходит позже, через проекцию state-fanout по **applied**-членству.
 
+Вместо уставки тело может нести одно поле `dim` — относительный глагол одним
+групповым кадром: `up`, `down`, `step_up`, `step_down`, `on_and_step_up`,
+`step_down_and_off` или `stop_fade`. Ответ тот же. `dim` вместе с уставкой или
+`recall` и не строка — `422 invalid_value`, неизвестное имя — `422 invalid_enum`.
+
 Ошибки — как у target-state виртуальной лампы, кроме `vl_unbound`. Какие кадры
 DALI выражают цвет и питание группы — правило протокола, а не контракт ресурса:
 [`../../../architecture/09-dali-protocol-rules.md`](../../../architecture/09-dali-protocol-rules.md).

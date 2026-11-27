@@ -80,6 +80,8 @@ unknown_field`) — первая привязка или перепривязк�
 - Тело валидируется против effective capabilities лампы; публикуется команда со
   scope `VirtualLamp`, и worker разрешает адрес **в момент исполнения** — перепривязка
   на лету безопасна; лампа, отвязанная к этому моменту, — `422 vl_unbound`.
+- Относительного глагола у лампы нет: поле `dim` (оно есть только у группы и канала
+  кластера) — `422 unsupported_field`.
 - Остальная цепочка — [`../workflows.md`](../workflows.md) §Target-state; ошибки тела —
   [`../contracts/state-contracts.md`](../contracts/state-contracts.md), коды исполнения
   (`409 superseded`, `503 execution_failed`) —

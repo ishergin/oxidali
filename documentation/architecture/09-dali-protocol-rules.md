@@ -32,7 +32,7 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
   bits name
   ([ADR-013](decisions/ADR-013-wire-priority-and-yield-granularity.md),
   [ADR-017](decisions/ADR-017-dali-transactions-and-frame-priority.md)).
-- The class follows purpose: switching, dimming, identification, feedback drive, the
+- The class follows purpose: switching, dimming, steps, identification, feedback drive, the
   Part 303 occupancy-sensor instructions and every commissioning kind (discovery, addressing, replacement, handover, the Part 103 scan and
   commissioning) open at priority 2, which §9.13.1 also allows for commissioning;
   configuration writes and group and scene programming at 3; an HCL tick, a neighbour's too, at 4;

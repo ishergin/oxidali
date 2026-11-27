@@ -9,7 +9,7 @@ use super::kinds::{
     CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DimDirection, DiscoveryMode,
     HclAlgorithm,
     HclLevelMode,
-    HclTargetScope, HclTimeRef, InitialiseScope, LevelPreset, MemoryBankReadPreset, OperationType, PowerState,
+    HclTargetScope, HclTimeRef, InitialiseScope, LevelPreset, MemoryBankReadPreset, OperationType, PowerState, StepKind,
     RuntimeSource,
 };
 use super::payload_macros::declare_bus_payloads;
@@ -1334,6 +1334,25 @@ declare_bus_payloads! {
         source: ClusterSourceClass::ForeignMaster,
         hold_hcl: true,
     };
+
+    pub struct DaliStepCommand {
+        pub registry_adapter_id: u8,
+        pub scope: DaliTargetScope,
+        pub virtual_lamp_id: u8,
+        pub short_address: u8,
+        pub group_id: u8,
+        pub step: StepKind,
+        pub hold_hcl: bool,
+    }
+    budget = DaliStepCommand {
+        registry_adapter_id: u8::MAX,
+        scope: DaliTargetScope::AddressRange,
+        virtual_lamp_id: 63,
+        short_address: 63,
+        group_id: 15,
+        step: StepKind::DownAndOff,
+        hold_hcl: true,
+    };
 }
 
 impl FirmwareUpdateBeginCommand {
@@ -1653,6 +1672,41 @@ impl DaliRecallSceneCommand {
             scope: DaliTargetScope::VirtualLamp,
             ..Self::broadcast(registry_adapter_id, scene_id)
         }
+    }
+}
+
+impl DaliDimCommand {
+    pub fn broadcast(registry_adapter_id: u8, direction: DimDirection) -> Self {
+        let (virtual_lamp_id, short_address, group_id) = (0, 0, 0);
+        let scope = DaliTargetScope::Broadcast;
+        Self { registry_adapter_id, scope, virtual_lamp_id, short_address, group_id, direction, hold_hcl: true }
+    }
+
+    pub fn for_group(registry_adapter_id: u8, group_id: u8, direction: DimDirection) -> Self {
+        Self { scope: DaliTargetScope::Group, group_id, ..Self::broadcast(registry_adapter_id, direction) }
+    }
+}
+
+impl DaliStepCommand {
+    pub fn broadcast(registry_adapter_id: u8, step: StepKind) -> Self {
+        let (virtual_lamp_id, short_address, group_id) = (0, 0, 0);
+        let scope = DaliTargetScope::Broadcast;
+        Self { registry_adapter_id, scope, virtual_lamp_id, short_address, group_id, step, hold_hcl: true }
+    }
+
+    pub fn for_group(registry_adapter_id: u8, group_id: u8, step: StepKind) -> Self {
+        Self { scope: DaliTargetScope::Group, group_id, ..Self::broadcast(registry_adapter_id, step) }
+    }
+}
+
+impl DaliStopFadeCommand {
+    pub fn broadcast(registry_adapter_id: u8) -> Self {
+        let (virtual_lamp_id, short_address, group_id) = (0, 0, 0);
+        Self { registry_adapter_id, scope: DaliTargetScope::Broadcast, virtual_lamp_id, short_address, group_id }
+    }
+
+    pub fn for_group(registry_adapter_id: u8, group_id: u8) -> Self {
+        Self { scope: DaliTargetScope::Group, group_id, ..Self::broadcast(registry_adapter_id) }
     }
 }
 
