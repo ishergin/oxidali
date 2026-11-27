@@ -253,7 +253,7 @@ fn stop_fade(number: u8) -> ClusterCommandCommand {
 fn drive(arrivals: &[(u32, Queued)], until_ms: u32) -> (Vec<(u32, u64)>, Vec<Admission>) {
     let mut outgoing = Outgoing::new();
     let (mut sent, mut refused) = (Vec::new(), Vec::new());
-    let mut send_now = |outgoing: &mut Outgoing, queued: Queued, at_ms: u32, sent: &mut Vec<(u32, u64)>| {
+    let send_now = |outgoing: &mut Outgoing, queued: Queued, at_ms: u32, sent: &mut Vec<(u32, u64)>| {
         sent.push((at_ms, queued.correlation_id));
         let key = TargetKey::of(&queued.request.action);
         outgoing.sent(key, repeat_of(&queued.request, u32::try_from(queued.correlation_id).unwrap_or(0)), at_ms);
@@ -352,4 +352,53 @@ fn copies_of_two_targets_never_cross_while_relative_verbs_wait() {
     ];
     let (sent, _) = drive(&arrivals, START_MS + 200);
     assert_eq!(sent, vec![(START_MS, 1), (START_MS + COPY_GAP_MS, 2), (START_MS + RELATIVE_SPACING_MS, 3)]);
+}
+
+fn on_all(verb: LightVerb) -> ClusterCommandCommand {
+    ClusterCommandCommand { action: Action::Light { target: Target::All, verb }, source: SourceClass::Operator, hold_hcl: true }
+}
+
+fn level(level: u8) -> LightVerb {
+    LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: Some(level), color: None })
+}
+
+#[test]
+fn a_setpoint_to_all_lamps_never_leaves_before_a_step_on_a_channel_given_before_it() {
+    let arrivals = [
+        (START_MS, queued(1, relative(3, LevelTransition::StepUp))),
+        (START_MS + 10, queued(2, relative(3, LevelTransition::StepUp))),
+        (START_MS + 15, queued(3, on_all(level(200)))),
+    ];
+    let (sent, refused) = drive(&arrivals, START_MS + 300);
+    let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
+    assert_eq!(order, vec![1, 2, 3], "the setpoint to all lamps is the last word: {sent:?}");
+    assert!(refused.is_empty(), "{refused:?}");
+}
+
+#[test]
+fn a_step_to_all_lamps_never_overtakes_a_setpoint_on_a_channel_given_before_it() {
+    let arrivals = [
+        (START_MS, queued(1, setpoint(3, 100))),
+        (START_MS + 10, queued(2, setpoint(3, 150))),
+        (START_MS + 30, queued(3, on_all(LightVerb::Transition(LevelTransition::StepUp)))),
+    ];
+    let (sent, _) = drive(&arrivals, START_MS + 300);
+    let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
+    assert_eq!(order, vec![1, 2, 3], "the step lands on the setpoint before it: {sent:?}");
+}
+
+#[test]
+fn a_channel_waits_for_nothing_on_another_channel_and_a_later_setpoint_takes_its_place_in_order() {
+    let arrivals = [
+        (START_MS, queued(1, setpoint(3, 100))),
+        (START_MS + 10, queued(2, setpoint(3, 150))),
+        (START_MS + 30, queued(3, setpoint(4, 90))),
+        (START_MS + 35, queued(4, on_all(level(10)))),
+        (START_MS + 40, queued(5, setpoint(3, 200))),
+    ];
+    let (sent, refused) = drive(&arrivals, START_MS + 400);
+    assert_eq!(sent.get(1), Some(&(START_MS + 30, 3)), "another channel left at once: {sent:?}");
+    let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
+    assert_eq!(order, vec![1, 3, 4, 5], "the replacement keeps the order it was given in: {sent:?}");
+    assert_eq!(refused, vec![Admission::Later { superseded: Some(queued(2, setpoint(3, 150))) }]);
 }

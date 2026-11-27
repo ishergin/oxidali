@@ -131,11 +131,15 @@ from the home node, an edit carried by a datagram, and no remote edit at all.
 - A relative verb — `UP`, `DOWN`, a step, a stopped fade — is never folded into another
   command, because two steps are two steps. It waits behind the command before it, and
   commands of one target leave in their order, so a setpoint given after steps lands last.
+  A command to all lamps or to a node's scenes covers every channel, so it never leaves
+  before a waiting command to a channel given before it, nor that channel's after it.
   Its own ceiling, 50 ms, is above the fastest key-hold repeat a Part 301 button may have
-  (`Trepeat` 100 ms), so a held key never waits; at most four relative verbs wait per
-  target, and one beyond them is dropped, counted (`relative_verbs_dropped_total`) and
-  refused to a caller with `cluster_busy`, never sent late. Only a setpoint or preset
-  waiting last is replaced by a later one.
+  (`Trepeat` 100 ms), so a held key never waits for its ceiling, only for a copy in
+  flight; at most four relative verbs wait per target, and one beyond them is dropped,
+  counted (`relative_verbs_dropped_total`) and refused to a caller with `cluster_busy`,
+  never sent late. A relative verb the sender drops for a full table or a mode change is
+  counted there too. Only a setpoint, preset or scene recall waiting last is replaced by a
+  later one.
 - Wire protection, a setting. Every node that hears the same DALI frame is on one wire, and
   the wire is named after one of its nodes. One live node owns it. Only the owner executes
   incoming commands to channels, to all lamps and scene recalls, and only it forwards a

@@ -25,6 +25,8 @@ const GROUP_5_DAPC_80: u16 = 0x8A50;
 const GROUP_5_DAPC_100: u16 = 0x8A64;
 const GROUP_5_STEP_UP: u16 = 0x8B03;
 const STEPS: usize = 3;
+const HELD_STEPS: usize = 5;
+const HELD_STEPS_COUNT: u64 = 5;
 const QUIET: Duration = Duration::from_secs(1);
 const SLIDER_LEVELS: [u8; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const SCENARIO_MIDNIGHT_UNIX_MS: u64 = 1_782_259_200_000;
@@ -270,4 +272,25 @@ fn a_lost_step_leaves_the_segments_apart_until_the_next_setpoint_brings_them_tog
     let together = || second.sent_frames() == [GROUP_5_DAPC_200];
     assert!(try_wait_until(together, SETTLE), "the second node's wire: {:04X?}", second.sent_frames());
     assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP, GROUP_5_DAPC_200], "both segments end on the setpoint");
+}
+
+#[test]
+fn a_step_still_waiting_when_the_cluster_goes_off_is_counted_and_never_sent_late() {
+    let (hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    for _ in 0..HELD_STEPS {
+        step_up_group_5(&first);
+    }
+    first.send("PATCH", "/api/v1/cluster", r#"{"enabled":false}"#);
+    let settled = || {
+        let (sent, dropped) = (first.stat("commands_sent_total"), first.stat("relative_verbs_dropped_total"));
+        first.stat("commands_forwarded_total") == HELD_STEPS_COUNT && sent.saturating_add(dropped) == HELD_STEPS_COUNT
+    };
+    assert!(try_wait_until(settled, SETTLE), "every step was sent or counted: {}", first.read("/api/v1/stats")["cluster"]);
+    let dropped = first.stat("relative_verbs_dropped_total");
+    assert!(dropped > 0, "the cluster went off while steps waited: {}", first.read("/api/v1/stats")["cluster"]);
+    let sent = usize::try_from(first.stat("commands_sent_total")).unwrap_or(usize::MAX);
+    let carried = commands_from(&hub, &FIRST, QUIET).len();
+    assert!((sent..=sent * 2).contains(&carried), "{carried} datagrams for {sent} sent: nothing went out after the cluster went off");
+    assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP; HELD_STEPS], "every step ran here once");
 }

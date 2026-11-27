@@ -1,6 +1,6 @@
 use super::*;
 use dali2rust_contracts::msg::{
-    DaliDimCommand, DaliLevelTransitionAppliedEvent, DaliRecallLevelPresetCommand, DaliStepCommand, DimDirection,
+    BusEventPayload, DaliDimCommand, DaliLevelTransitionAppliedEvent, DaliRecallLevelPresetCommand, DaliStepCommand, DimDirection,
     LevelPreset, LevelTransition, StepKind,
 };
 
@@ -121,6 +121,29 @@ fn execute_level_transition(
     Ok(address)
 }
 
+pub(super) struct AppliedTarget {
+    pub(super) virtual_lamp_id: Option<u8>,
+    pub(super) short_address: Option<u8>,
+    pub(super) group_id: Option<u8>,
+}
+
+impl AppliedTarget {
+    pub(super) fn of(scope: DaliTargetScope, (virtual_lamp_id, group_id): (u8, u8), address: DaliAddress) -> Self {
+        Self {
+            virtual_lamp_id: (scope == DaliTargetScope::VirtualLamp).then_some(virtual_lamp_id),
+            short_address: match address {
+                DaliAddress::Short(short) => Some(short),
+                _ => None,
+            },
+            group_id: (scope == DaliTargetScope::Group).then_some(group_id),
+        }
+    }
+}
+
+pub(super) fn applied_envelope(adapter_id: BusId, correlation_id: u64, applied: impl Into<BusEventPayload>) -> EventEnvelope {
+    dali2rust_contracts::bus::event_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, adapter_id.0, Some(Origin::Internal), applied)
+}
+
 fn level_transition_applied_event(
     adapter_id: BusId,
     correlation_id: u64,
@@ -128,26 +151,17 @@ fn level_transition_applied_event(
     command: &LevelTransitionRequest,
     address: DaliAddress,
 ) -> EventEnvelope {
-    let scope = command.scope;
+    let target = AppliedTarget::of(command.scope, (command.virtual_lamp_id, command.group_id), address);
     let applied = DaliLevelTransitionAppliedEvent {
         registry_adapter_id: command.registry_adapter_id,
-        scope,
-        virtual_lamp_id: (scope == DaliTargetScope::VirtualLamp).then_some(command.virtual_lamp_id),
-        short_address: match address {
-            DaliAddress::Short(short) => Some(short),
-            _ => None,
-        },
-        group_id: (scope == DaliTargetScope::Group).then_some(command.group_id),
+        scope: command.scope,
+        virtual_lamp_id: target.virtual_lamp_id,
+        short_address: target.short_address,
+        group_id: target.group_id,
         transition: command.transition,
         source: RuntimeSource::from_origin(origin).unwrap_or(RuntimeSource::Api),
         applied_at_mono_ms: dali2rust_bsp::monotonic_clock::observation_stamp_ms(),
         hold_hcl: command.hold_hcl,
     };
-    dali2rust_contracts::bus::event_envelope(
-        SOURCE_ID_UNSPECIFIED,
-        correlation_id,
-        adapter_id.0,
-        Some(Origin::Internal),
-        applied,
-    )
+    applied_envelope(adapter_id, correlation_id, applied)
 }

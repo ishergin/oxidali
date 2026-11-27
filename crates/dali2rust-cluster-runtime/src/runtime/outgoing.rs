@@ -23,6 +23,8 @@ const LINE: usize = 2 * RELATIVE_LINE + 1;
 
 pub(crate) const OUTGOING_TARGETS: usize = 16;
 
+const ORDER_HALF: u32 = 1 << 31;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TargetKey {
     Channel(u8),
@@ -41,6 +43,19 @@ impl TargetKey {
             Action::Light { target: Target::Lamp(lamp), .. } => Self::Lamp([lamp.node, lamp.adapter, lamp.lamp]),
         }
     }
+
+    const fn covers_all(self) -> bool {
+        matches!(self, Self::All | Self::Node)
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        self == other || self.covers_all() || other.covers_all()
+    }
+}
+
+const fn earlier(order: u32, than: u32) -> bool {
+    let gap = than.wrapping_sub(order);
+    gap != 0 && gap < ORDER_HALF
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +126,7 @@ const fn relative_transition(transition: LevelTransition) -> bool {
 struct Line {
     len: usize,
     entries: [Option<Queued>; LINE],
+    orders: [u32; LINE],
 }
 
 impl Line {
@@ -122,13 +138,18 @@ impl Line {
         self.entries.first().and_then(Option::as_ref)
     }
 
+    fn head_order(&self) -> Option<u32> {
+        self.head().and(self.orders.first().copied())
+    }
+
     fn relatives(&self) -> usize {
         self.entries.iter().flatten().filter(|queued| queued.relative()).count()
     }
 
-    fn push(&mut self, queued: Queued) {
-        if let Some(place) = self.entries.get_mut(self.len) {
+    fn push(&mut self, queued: Queued, order: u32) {
+        if let (Some(place), Some(stamp)) = (self.entries.get_mut(self.len), self.orders.get_mut(self.len)) {
             *place = Some(queued);
+            *stamp = order;
             self.len += 1;
         }
     }
@@ -136,28 +157,30 @@ impl Line {
     fn pop(&mut self) -> Option<Queued> {
         let head = self.entries.first_mut()?.take()?;
         self.entries.rotate_left(1);
+        self.orders.rotate_left(1);
         self.len -= 1;
         Some(head)
     }
 
-    fn tail_mut(&mut self) -> Option<&mut Queued> {
+    fn tail_mut(&mut self) -> Option<(&mut Queued, &mut u32)> {
         let last = self.len.checked_sub(1)?;
-        self.entries.get_mut(last)?.as_mut()
+        Some((self.entries.get_mut(last)?.as_mut()?, self.orders.get_mut(last)?))
     }
 
-    fn join(&mut self, queued: Queued) -> Admission {
+    fn join(&mut self, queued: Queued, order: u32) -> Admission {
         if queued.relative() {
             if self.relatives() >= RELATIVE_LINE {
                 return Admission::Dropped(queued);
             }
-            self.push(queued);
+            self.push(queued, order);
             return Admission::Later { superseded: None };
         }
-        if let Some(tail) = self.tail_mut().filter(|tail| !tail.relative()) {
+        if let Some((tail, stamp)) = self.tail_mut().filter(|(tail, _)| !tail.relative()) {
             let folded = queued.folded_over(Some(&*tail));
+            *stamp = order;
             return Admission::Later { superseded: Some(mem::replace(tail, folded)) };
         }
-        self.push(queued);
+        self.push(queued, order);
         Admission::Later { superseded: None }
     }
 
@@ -245,6 +268,7 @@ fn earliest(deadlines: impl Iterator<Item = u32>) -> Option<u32> {
 #[derive(Debug)]
 pub(crate) struct Outgoing {
     slots: [Slot; OUTGOING_TARGETS],
+    next_order: u32,
 }
 
 impl Outgoing {
@@ -255,31 +279,53 @@ impl Outgoing {
 
     pub(crate) fn admit(&mut self, queued: Queued, now_ms: u32) -> Admission {
         self.prune(now_ms);
-        let copying = self.copying();
         let key = TargetKey::of(&queued.request.action);
+        let (copying, behind, order) = (self.copying(), self.behind_another(key), self.stamp());
         if let Some(slot) = self.slot_mut(key) {
-            if !slot.line.is_empty() || !slot.spaced(queued.spacing_ms(), now_ms) {
-                return slot.line.join(queued);
+            if behind || !slot.line.is_empty() || !slot.spaced(queued.spacing_ms(), now_ms) {
+                return slot.line.join(queued, order);
             }
             if !copying {
                 return Admission::Now(queued);
             }
-            slot.line.push(queued);
+            slot.line.push(queued, order);
             return Admission::AfterCopy;
         }
-        self.admit_new(key, queued, copying, now_ms)
+        self.admit_new(key, queued, (copying, behind), (order, now_ms))
     }
 
-    fn admit_new(&mut self, key: TargetKey, queued: Queued, copying: bool, now_ms: u32) -> Admission {
+    fn admit_new(&mut self, key: TargetKey, queued: Queued, held: (bool, bool), at: (u32, u32)) -> Admission {
+        let ((copying, behind), (order, now_ms)) = (held, at);
         let Some(free) = self.vacant() else {
             return Admission::Full(queued);
         };
-        if !copying {
+        if !copying && !behind {
             return Admission::Now(queued);
         }
         free.claim(key, now_ms.wrapping_sub(TARGET_SPACING_MS));
-        free.line.push(queued);
+        free.line.push(queued, order);
+        if behind {
+            return Admission::Later { superseded: None };
+        }
         Admission::AfterCopy
+    }
+
+    fn stamp(&mut self) -> u32 {
+        let order = self.next_order;
+        self.next_order = order.wrapping_add(1);
+        order
+    }
+
+    fn behind_another(&self, key: TargetKey) -> bool {
+        self.held().any(|slot| slot.key.is_some_and(|other| other != key && other.overlaps(key)) && !slot.line.is_empty())
+    }
+
+    fn first_in_order(&self, slot: &Slot) -> bool {
+        let (Some(key), Some(order)) = (slot.key, slot.line.head_order()) else {
+            return false;
+        };
+        let overlapping = self.held().filter(|other| other.key.is_some_and(|other| other != key && other.overlaps(key)));
+        !overlapping.filter_map(|other| other.line.head_order()).any(|other| earlier(other, order))
     }
 
     pub(crate) fn sent(&mut self, key: TargetKey, repeat: Repeat, now_ms: u32) {
@@ -299,13 +345,22 @@ impl Outgoing {
             let slot = self.most_late(now_ms, Slot::repeat_due)?;
             return slot.repeat.take().map(|(_, repeat)| Due::Repeat(repeat));
         }
-        self.most_late(now_ms, Slot::waiting_due)?.line.pop().map(Due::Waiting)
+        let next = self.next_waiting(now_ms)?;
+        self.slots.get_mut(next)?.line.pop().map(Due::Waiting)
     }
 
     pub(crate) fn deadline(&self) -> Option<u32> {
-        let slots = self.held();
-        let due: fn(&Slot) -> Option<u32> = if self.copying() { Slot::repeat_due } else { Slot::waiting_due };
-        earliest(slots.filter_map(due))
+        if self.copying() {
+            return earliest(self.held().filter_map(Slot::repeat_due));
+        }
+        earliest(self.held().filter(|slot| self.first_in_order(slot)).filter_map(Slot::waiting_due))
+    }
+
+    fn next_waiting(&self, now_ms: u32) -> Option<usize> {
+        let lateness = |slot: &Slot| slot.waiting_due().map(|at_ms| now_ms.wrapping_sub(at_ms)).filter(|late| *late < HALF_CLOCK_MS);
+        let free = self.slots.iter().enumerate().filter(|(_, slot)| self.first_in_order(slot));
+        let late = free.filter_map(|(index, slot)| lateness(slot).map(|late| (index, late)));
+        late.max_by_key(|(_, late)| *late).map(|(index, _)| index)
     }
 
     fn copying(&self) -> bool {
@@ -348,9 +403,10 @@ impl Outgoing {
 }
 
 pub(crate) fn placed_outgoing() -> PsramBox<Outgoing> {
-    // SAFETY: `slots` is the only field of `Outgoing`; every field of each slot and of its line is written once, in place.
+    // SAFETY: `slots` and `next_order` are the fields of `Outgoing`; each, and every field of each slot and of its line, is written once, in place.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<Outgoing>| {
+            ptr::addr_of_mut!((*place.as_mut_ptr()).next_order).write(0);
             let slots = ptr::addr_of_mut!((*place.as_mut_ptr()).slots).cast::<Slot>();
             for index in 0..OUTGOING_TARGETS {
                 write_vacant(slots.add(index));
@@ -370,5 +426,6 @@ unsafe fn write_vacant(slot: *mut Slot) {
         for index in 0..LINE {
             entries.add(index).write(None);
         }
+        ptr::addr_of_mut!((*slot).line.orders).write([0; LINE]);
     }
 }

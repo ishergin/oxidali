@@ -7,7 +7,7 @@ use crate::presence::OwnMode;
 use super::super::counters::bump;
 use super::super::execute::{is_supported, Gate, Stamp};
 use super::super::outgoing::{Admission, Due, Queued, Repeat, TargetKey};
-use super::{confirm, NodeSender, Reading};
+use super::{confirm, ClusterWorkerPorts, NodeSender, Reading};
 
 pub const CONTROLLER_PASSIVE: &str = "controller_passive";
 pub const CLUSTER_OFF: &str = "cluster_off";
@@ -33,8 +33,7 @@ impl NodeSender<'_> {
             Admission::Now(queued) => self.send_command(reading, queued, now_ms),
             Admission::AfterCopy => {}
             Admission::Later { superseded } => self.delayed(superseded),
-            Admission::Dropped(queued) => self.dropped(&queued),
-            Admission::Full(queued) => self.refuse(queued.correlation_id, ErrorCode::Conflict, CLUSTER_BUSY),
+            Admission::Dropped(queued) | Admission::Full(queued) => self.dropped(&queued),
         }
     }
 
@@ -64,7 +63,7 @@ impl NodeSender<'_> {
     }
 
     fn dropped(&self, queued: &Queued) {
-        bump(&self.ports.counters.relative_verbs_dropped_total);
+        count_unsent(self.ports, queued);
         self.refuse(queued.correlation_id, ErrorCode::Conflict, CLUSTER_BUSY);
     }
 
@@ -76,6 +75,7 @@ impl NodeSender<'_> {
         if let Some(cause) = self.mode_refusal(reading) {
             let ports = self.ports;
             for abandoned in self.outgoing.abandon() {
+                count_unsent(ports, &abandoned);
                 confirm(&ports.publisher, abandoned.correlation_id, Some((ErrorCode::Conflict, cause)));
             }
             return;
@@ -118,5 +118,11 @@ impl NodeSender<'_> {
     fn transmit_command(&mut self, header: &Header, command: &Command) -> bool {
         let written = encode(header, &Frame::Command(command.clone()), &mut self.buffer).ok();
         self.transmit(written)
+    }
+}
+
+fn count_unsent(ports: &ClusterWorkerPorts, queued: &Queued) {
+    if queued.relative() {
+        bump(&ports.counters.relative_verbs_dropped_total);
     }
 }
