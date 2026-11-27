@@ -140,9 +140,9 @@ from the home node, an edit carried by a datagram, and no remote edit at all.
   never sent late. A relative verb the sender drops for a full table, a mode change or a
   send that fails is counted there too. Only a setpoint, preset or scene recall waiting
   last is replaced by a later one, and only while no command to an overlapping target was
-  given after it; otherwise the later one waits behind, at most twice in a row per target,
-  so the line always keeps room for the relative verbs it admits and the command after
-  them.
+  given after it; otherwise the later one waits behind. At most two such waits are in a
+  target's line at once, so the line always keeps room for the relative verbs it admits
+  and the command after them; beyond them the later one replaces again.
 - Wire protection, a setting. Every node that hears the same DALI frame is on one wire, and
   the wire is named after one of its nodes. One live node owns it. Only the owner executes
   incoming commands to channels, to all lamps and scene recalls, and only it forwards a
