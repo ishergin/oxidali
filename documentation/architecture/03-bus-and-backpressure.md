@@ -131,9 +131,9 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   command it published (`commands_rejected_total` in `/api/v1/stats`). Its correlation ids
   carry a tag of their own, so it recognises its commands without a table of pending
   ones.
-- The cluster worker declares the applied facts of the DALI worker — target state, level
-  transition, scene recall — and forwards the ones the cluster sends. One fact follows one
-  executed command, so they arrive at the pace of the wire and its funnel is not sized for
+- The cluster worker declares the applied facts — target state, level transition, scene
+  recall, the last also from the sniffer translator — and forwards the ones the cluster
+  sends. One fact follows one executed command or one observed frame, so they arrive at the pace of the wire and its funnel is not sized for
   a burst.
 
 ## Required events
