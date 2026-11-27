@@ -131,9 +131,11 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   command it published (`commands_rejected_total` in `/api/v1/stats`). Its correlation ids
   carry a tag of their own, so it recognises its commands without a table of pending
   ones.
-- The cluster worker declares the applied facts — target state, level transition, scene
-  recall, the last also from the sniffer translator — and forwards the ones the cluster
-  sends. One fact follows one executed command or one observed frame, so they arrive at the pace of the wire and its funnel is not sized for
+- The cluster worker declares the applied facts — target state, level transition, stopped
+  fade, scene recall, the last also from the sniffer translator — and forwards the ones the
+  cluster sends. The stopped fade's fact has no other consumer: the DALI worker publishes it
+  required, as the only carrier of an executed `DAPC(MASK)`, and confirms the command only
+  once it is queued. One fact follows one executed command or one observed frame, so they arrive at the pace of the wire and its funnel is not sized for
   a burst.
 
 ## Required events
@@ -196,6 +198,11 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   origin is folded — the survivor's envelope carries the origin, which sets its priority
   and the runtime source of its commit — and nothing is folded across a lamp-driving
   frame that reaches the wire in between.
+- A relative verb — `UP`, `DOWN`, a step, a stopped fade — has no key and is never
+  displaced, so two steps are two frames. Nor is a setpoint displaced across one: every
+  lamp-driving frame without a key starts the keys afresh, and the setpoint before it
+  still reaches the wire. Their bound is the worker's command inbox: a command beyond it
+  is refused at ingress and its producer hears that by its own discipline.
 - `hold_hcl` is part of the target: two commands that differ in it never displace or
   fold into each other, because one commit could not carry both claims on the HCL
   schedule.
