@@ -57,7 +57,7 @@ Rust DTO в `crates/dali2rust-api` (они канон); шинная сторо�
 | [Settings — Home Assistant](resources/settings-home-assistant.md) | `/settings/home-assistant[/discovery-publish]` |
 | [Settings — Redundancy](resources/settings-redundancy.md) | `/settings/redundancy` |
 | [Redundancy](resources/redundancy.md) | `/redundancy[/switchover\|/config-changed]` |
-| [Cluster](resources/cluster.md) | `/cluster[/channels\|/scenes][/{number}]`, `/cluster/channel-parts\|scene-parts[/{adapter_id}/{local}]` |
+| [Cluster](resources/cluster.md) | `/cluster[/channels\|/scenes][/{number}]`, `/cluster/channel-parts\|scene-parts[/{adapter_id}/{local}]`, `/cluster/status`, `/cluster/nodes/{node}` |
 | [Policies](resources/policies.md) | `/policies[/apply]` |
 | [Config transfer](resources/config-transfer.md) | `/config/slices[/{slice}]` |
 | [Firmware](resources/firmware.md) | `/firmware`, `/firmware/updates` |
