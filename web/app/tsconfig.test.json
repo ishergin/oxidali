@@ -14,6 +14,7 @@
     "src/components/cct-view.ts",
     "src/components/confirm-tap.ts",
     "src/screens/cluster-view.ts",
+    "src/screens/field-edits.ts",
     "src/counter-delta.ts",
     "src/screens/firmware-url.ts",
     "src/screens/follow-scroll.ts",

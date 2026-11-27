@@ -4,18 +4,27 @@ import test from 'node:test'
 import type { ClusterNode, ClusterOwn, ClusterSettings, ClusterStatus } from '../src/api/types.js'
 import { nextTap } from '../src/components/confirm-tap.js'
 import {
+  NO_DRAFT,
+  ageText,
+  draftOnRead,
+  editDraft,
   executorVerdict,
   forgetLabel,
   forgetRefusal,
   forgettable,
+  heardVerdict,
   ignoredReason,
+  nodeHref,
   nodeLine,
   nodeNumberOptions,
+  nodesEmptyText,
   nodeSummary,
+  ownVerdict,
   parsePort,
   pinReason,
   refusalOf,
   clipName,
+  settingsShown,
   unsavedLine,
   wireOptions,
 } from '../src/screens/cluster-view.js'
@@ -180,10 +189,17 @@ test('a node row says what it reports about itself, with colour only for a fault
 test('an ignored board says why in words', () => {
   const s = status(own(), [node(2)])
   const row = { board: 'dali-0a11f3', address: '10.0.0.9', node: 2, cluster_name: null, age_ms: 0 }
-  assert.equal(ignoredReason({ ...row, reason: 'number_held' }, s), 'Says it is node 2, which dali-000002 holds. Give it a free number.')
-  assert.equal(ignoredReason({ ...row, node: 1, reason: 'number_held' }, s), 'Says it is node 1, which dali-9b07e4 holds. Give it a free number.')
-  assert.equal(ignoredReason({ ...row, reason: 'waiting' }, s), 'Waits for node 2, which another board holds.')
-  assert.equal(ignoredReason({ ...row, reason: 'other_cluster', cluster_name: 'x' }, s), 'Another cluster name: ')
+  assert.deepEqual(ignoredReason({ ...row, reason: 'number_held' }, s), {
+    text: 'Says it is node 2, which dali-000002 holds. Give it a free number.',
+    name: null,
+  })
+  assert.equal(ignoredReason({ ...row, node: 1, reason: 'number_held' }, s).text, 'Says it is node 1, which dali-9b07e4 holds. Give it a free number.')
+  assert.equal(ignoredReason({ ...row, node: 3, reason: 'number_held' }, s).text, 'Says it is node 3, which another board holds. Give it a free number.')
+  assert.deepEqual(ignoredReason({ ...row, reason: 'waiting' }, s), { text: 'Waits for node 2, which another board holds.', name: null })
+  assert.deepEqual(ignoredReason({ ...row, reason: 'other_cluster', cluster_name: 'hall-b' }, s), {
+    text: 'Another cluster name: ',
+    name: 'hall-b',
+  })
 })
 
 test('who executes on the bus follows the wire owner', () => {
@@ -222,4 +238,64 @@ test('the standby and a listening node read as listening, without colour', () =>
     assert.equal(line?.tone, 'plain')
   }
   assert.equal(nodeLine(status(own({ state: 'no_address' })))?.tone, 'warn')
+})
+
+test('an edit clears any refusal, and nothing is drafted while busy or on the standby', () => {
+  const refused = { edits: { enabled: true }, refusal: { field: 'cluster_name' as const, text: 'x' } }
+  assert.deepEqual(editDraft(refused, { enabled: false }, stored, false), { edits: null, refusal: null })
+  assert.equal(editDraft(refused, { port: 1 }, stored, true), refused)
+  assert.equal(editDraft(NO_DRAFT, { port: 1 }, { ...stored, read_only: true }, false), NO_DRAFT)
+  assert.deepEqual(editDraft(NO_DRAFT, { port: 1 }, stored, false), { edits: { port: 1 }, refusal: null })
+})
+
+test('a read drops the edits the controller caught up with and keeps the rest', () => {
+  const draft = { edits: { port: 47900, enabled: true }, refusal: null }
+  assert.deepEqual(draftOnRead(draft, { ...stored, port: 47900 }), { edits: { enabled: true }, refusal: null })
+  assert.equal(draftOnRead(draft, stored), draft)
+})
+
+test('on the standby the stored values are shown, and a pending draft is dropped', () => {
+  const standby = { ...stored, read_only: true }
+  const draft = { edits: { port: 47900 }, refusal: { field: null, text: 'x' } }
+  assert.equal(settingsShown(draft, standby).port, stored.port)
+  assert.equal(settingsShown(draft, stored).port, 47900)
+  assert.equal(draftOnRead(draft, standby), NO_DRAFT)
+  assert.equal(draftOnRead(NO_DRAFT, standby), NO_DRAFT)
+})
+
+test('the age of a node grows with the time since the status was read', () => {
+  assert.equal(ageText(9_000), '9 s ago')
+  assert.equal(ageText(240_000), '4 min ago')
+  assert.equal(ageText(7_200_000), '2 h ago')
+  assert.equal(ageText(2 * 86_400_000), '2 d ago')
+  assert.equal(ageText(2 ** 30), 'over 12 days ago')
+  assert.deepEqual(heardVerdict(node(2, { age_ms: 9_000 }), 41_000), { tone: 'ok', text: '50 s ago' })
+  assert.deepEqual(heardVerdict(node(2, { heard: false, age_ms: 9_000 }), 0), { tone: 'warn', text: '9 s ago' })
+  assert.equal(heardVerdict(node(2, { age_ms: 2 ** 30 }), 5_000).text, 'over 12 days ago')
+})
+
+test('the own status names a port that is not bound, and a waiting node names the holder, in err', () => {
+  assert.deepEqual(ownVerdict(own({ state: 'bind_failed' }), 47810), { tone: 'err', text: 'port 47810 not bound — retrying' })
+  assert.deepEqual(ownVerdict(own({ state: 'waiting', number_held_by: 'dali-000001' }), 47810), {
+    tone: 'err',
+    text: 'waiting — node 1 is held by dali-000001',
+  })
+  assert.equal(ownVerdict(own({ state: 'no_address' }), 47810).tone, 'warn')
+  assert.equal(ownVerdict(own(), 47810).tone, 'ok')
+})
+
+test('an unread status is not drawn as a cluster that is off', () => {
+  assert.equal(nodesEmptyText(null), 'Reading the cluster status…')
+  assert.equal(nodesEmptyText(status(own({ state: 'off' }))), 'Nothing is heard while the cluster is off.')
+  assert.equal(nodesEmptyText(status(own())), 'No other node heard yet.')
+})
+
+test('Open goes to the node by its address', () => {
+  assert.equal(nodeHref(node(3)), 'http://192.168.13.43/')
+})
+
+test('a name is clipped by whole characters, never inside one', () => {
+  const name = `${'a'.repeat(61)}😀`
+  assert.equal(clipName(name), 'a'.repeat(61))
+  assert.equal(clipName(`${'a'.repeat(60)}😀`), name.slice(1))
 })

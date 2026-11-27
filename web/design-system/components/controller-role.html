@@ -112,9 +112,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
    "which box am I looking at" answered for a cluster. The board name is
    what the label on the box says; the node is what the cluster calls it.
    Colour only for a fault, never the lamp amber. */
-.nodeline { display: flex; flex-direction: column; gap: 1px; margin: -6px 14px 12px; padding: 5px 8px;
+.nodeline { display: flex; flex-direction: column; gap: 1px; margin: -6px 14px 12px; padding: 5px 10px;
   border-radius: var(--radius-sm); text-decoration: none; color: var(--text-muted); }
-.nodeline:hover { background: var(--hover); }
+.nodeline:hover { background: var(--raised); }
 .nodeline .board { font-family: var(--mono); font-size: 11px; color: var(--text); }
 .nodeline .node { font-size: 11.5px; }
 .nodeline.warn .node { color: var(--warn); }

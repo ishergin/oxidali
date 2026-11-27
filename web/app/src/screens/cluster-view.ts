@@ -6,6 +6,7 @@ import type {
   ClusterSettings,
   ClusterStatus,
 } from '../api/types.js'
+import { fieldsOnScreen, withFieldEdit } from './field-edits.js'
 
 export const CLUSTER_NODE_COUNT = 8
 export const MAX_CLUSTER_NAME_BYTES = 64
@@ -100,9 +101,9 @@ export function utf8Bytes(text: string): number {
 }
 
 export function clipName(raw: string): string {
-  let name = raw.trim()
-  while (utf8Bytes(name) > MAX_CLUSTER_NAME_BYTES) name = name.slice(0, -1)
-  return name
+  const points = Array.from(raw.trim())
+  while (utf8Bytes(points.join('')) > MAX_CLUSTER_NAME_BYTES) points.pop()
+  return points.join('')
 }
 
 export function parsePort(raw: string): number | null {
@@ -170,8 +171,9 @@ export interface Verdict {
   text: string
 }
 
-export function heardVerdict(node: ClusterNode): Verdict {
-  return { tone: node.heard ? 'ok' : 'warn', text: ageText(node.age_ms) }
+export function heardVerdict(node: ClusterNode, sinceReadMs: number): Verdict {
+  const age = node.age_ms >= LONGEST_AGE_MS ? node.age_ms : node.age_ms + Math.max(0, sinceReadMs)
+  return { tone: node.heard ? 'ok' : 'warn', text: ageText(age) }
 }
 
 export function nodeSummary(node: ClusterNode, own: ClusterOwn): Verdict[] {
@@ -195,16 +197,21 @@ export function nodeHref(node: ClusterNode): string {
   return `http://${node.address}/`
 }
 
-export function ignoredReason(row: ClusterIgnored, status: ClusterStatus): string {
+export interface Reason {
+  text: string
+  name: string | null
+}
+
+export function ignoredReason(row: ClusterIgnored, status: ClusterStatus): Reason {
   switch (row.reason) {
     case 'other_cluster':
-      return 'Another cluster name: '
+      return { text: 'Another cluster name: ', name: row.cluster_name ?? '' }
     case 'waiting':
-      return `Waits for node ${row.node}, which another board holds.`
+      return { text: `Waits for node ${row.node}, which another board holds.`, name: null }
     case 'number_held': {
       const holder = row.node === status.own.node_number ? status.own.board : holderOf(status, row.node)
       const by = holder ? `, which ${holder} holds` : ', which another board holds'
-      return `Says it is node ${row.node}${by}. Give it a free number.`
+      return { text: `Says it is node ${row.node}${by}. Give it a free number.`, name: null }
     }
   }
 }
@@ -278,4 +285,32 @@ function runningLine(status: ClusterStatus, line: (text: string, tone: Tone) => 
 
 export function toneClass(base: string, tone: Tone): string {
   return tone === 'plain' ? base : `${base} ${tone}`
+}
+
+export interface Draft {
+  edits: Partial<ClusterSettings> | null
+  refusal: Refusal | null
+}
+
+export const NO_DRAFT: Draft = { edits: null, refusal: null }
+
+export function editDraft(draft: Draft, change: Partial<ClusterSettings>, data: ClusterSettings, busy: boolean): Draft {
+  if (busy || data.read_only) return draft
+  return { edits: withFieldEdit(draft.edits ?? {}, change, data), refusal: null }
+}
+
+export function draftOnRead(draft: Draft, data: ClusterSettings): Draft {
+  if (data.read_only) return draft.edits || draft.refusal ? NO_DRAFT : draft
+  if (!draft.edits) return draft
+  const kept = withFieldEdit(draft.edits, {}, data)
+  return Object.keys(kept ?? {}).length < Object.keys(draft.edits).length ? { ...draft, edits: kept } : draft
+}
+
+export function settingsShown(draft: Draft, data: ClusterSettings): ClusterSettings {
+  return data.read_only ? data : fieldsOnScreen(draft.edits ?? {}, data)
+}
+
+export function nodesEmptyText(status: ClusterStatus | null): string {
+  if (!status) return 'Reading the cluster status…'
+  return status.own.state === 'off' ? 'Nothing is heard while the cluster is off.' : 'No other node heard yet.'
 }

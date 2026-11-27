@@ -1,18 +1,22 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { ApiError, api } from '../api/client'
-import type { ClusterInfo, ClusterSettings, ClusterStatus } from '../api/types'
-import { useClusterInfo, useClusterStatus } from '../cluster-feed'
+import type { ClusterInfo, ClusterNode, ClusterSettings, ClusterStatus } from '../api/types'
+import { type StatusRead, useClusterInfo, useClusterStatus } from '../cluster-feed'
 import { Card, Chip, EditableText, FieldRow, SelChip, Switch, useConfirmTap } from '../components/ui'
-import { useSettingsDraft } from '../hooks'
+import { useSettingsDraft, useTick } from '../hooks'
 import { errorMessage, notify } from '../toast'
 import {
   type ClusterField,
+  type Draft,
+  NO_DRAFT,
   type Option,
   type Refusal,
   type Tone,
   type Verdict,
   clipName,
+  draftOnRead,
+  editDraft,
   executorVerdict,
   forgetLabel,
   forgetRefusal,
@@ -21,22 +25,18 @@ import {
   ignoredReason,
   nodeHref,
   nodeNumberOptions,
+  nodesEmptyText,
   nodeSummary,
   ownVerdict,
   parsePort,
   pinReason,
   refusalOf,
+  settingsShown,
   showsHomeAssistant,
   unsavedLine,
   wireOptions,
 } from './cluster-view'
-import {
-  fieldPatch,
-  fieldsOnScreen,
-  sendFieldsOnFreshRead,
-  withFieldEdit,
-  withoutSent,
-} from './field-edits'
+import { fieldPatch, sendFieldsOnFreshRead, withoutSent } from './field-edits'
 
 type Edit = (change: Partial<ClusterSettings>) => void
 
@@ -53,7 +53,11 @@ function refusalFrom(e: unknown): Refusal {
 
 function FieldError({ refusal, field }: { refusal: Refusal | null; field: ClusterField }) {
   if (refusal?.field !== field) return null
-  return <span class="fielderr">{refusal.text}</span>
+  return (
+    <span class="fielderr" role="alert">
+      {refusal.text}
+    </span>
+  )
 }
 
 function Select({
@@ -92,7 +96,13 @@ function Select({
 }
 
 function Dim({ on, children }: { on: boolean; children: ComponentChildren }) {
-  return on ? <div class="ro">{children}</div> : <>{children}</>
+  return on ? (
+    <div class="ro" inert>
+      {children}
+    </div>
+  ) : (
+    <>{children}</>
+  )
 }
 
 interface PanelProps {
@@ -109,8 +119,8 @@ function ThisNode({
   readOnly,
   status,
   info,
-}: PanelProps & { status: ClusterStatus | null; info: ClusterInfo | null }) {
-  const pinned = pinReason(info)
+  storedPort,
+}: PanelProps & { status: ClusterStatus | null; info: ClusterInfo | null; storedPort: number }) {
   const own = status?.own
   return (
     <Card title="This node">
@@ -127,41 +137,60 @@ function ThisNode({
         <EditableText
           cls={refusal?.field === 'cluster_name' ? 'txt err' : 'txt'}
           value={s.cluster_name}
+          label="Cluster name"
           disabled={readOnly}
           onCommit={(raw) => edit({ cluster_name: clipName(raw) })}
         />
         <FieldError refusal={refusal} field="cluster_name" />
       </FieldRow>
-      <FieldRow
-        label="Node number"
-        hint={pinned ?? '0–7, one per installation. Both boards of a pair share it.'}
-      >
-        <Select
-          label="Node number"
-          value={s.node_number}
-          options={nodeNumberOptions(status, s.node_number)}
-          disabled={readOnly || pinned !== null}
-          bad={refusal?.field === 'node_number'}
-          onPick={(n) => n !== null && edit({ node_number: n })}
-        />
-        <FieldError refusal={refusal} field="node_number" />
-      </FieldRow>
-      <FieldRow label="Port" hint="UDP, 1–65535, the same on every node.">
-        <EditableText
-          cls="num"
-          inputMode="numeric"
-          value={String(s.port)}
-          disabled={readOnly}
-          onCommit={(raw) => {
-            const port = parsePort(raw)
-            if (port !== null) edit({ port })
-          }}
-        />
-      </FieldRow>
+      <NodeNumberRow s={s} edit={edit} refusal={refusal} readOnly={readOnly} status={status} info={info} />
+      <PortRow s={s} edit={edit} refusal={refusal} readOnly={readOnly} />
       <FieldRow label="Status" hint={own?.board ? <span class="mono">{own.board}</span> : undefined}>
-        {own ? <VerdictChip v={ownVerdict(own, s.port)} /> : <span class="unit">reading…</span>}
+        {own ? <VerdictChip v={ownVerdict(own, storedPort)} /> : <span class="unit">reading…</span>}
       </FieldRow>
     </Card>
+  )
+}
+
+function NodeNumberRow({
+  s,
+  edit,
+  refusal,
+  readOnly,
+  status,
+  info,
+}: PanelProps & { status: ClusterStatus | null; info: ClusterInfo | null }) {
+  const pinned = pinReason(info)
+  return (
+    <FieldRow label="Node number" hint={pinned ?? '0–7, one per installation. Both boards of a pair share it.'}>
+      <Select
+        label="Node number"
+        value={s.node_number}
+        options={nodeNumberOptions(status, s.node_number)}
+        disabled={readOnly || pinned !== null}
+        bad={refusal?.field === 'node_number'}
+        onPick={(n) => n !== null && edit({ node_number: n })}
+      />
+      <FieldError refusal={refusal} field="node_number" />
+    </FieldRow>
+  )
+}
+
+function PortRow({ s, edit, readOnly }: PanelProps) {
+  return (
+    <FieldRow label="Port" hint="UDP, 1–65535, the same on every node.">
+      <EditableText
+        cls="num"
+        inputMode="numeric"
+        value={String(s.port)}
+        label="Port"
+        disabled={readOnly}
+        onCommit={(raw) => {
+          const port = parsePort(raw)
+          if (port !== null) edit({ port })
+        }}
+      />
+    </FieldRow>
   )
 }
 
@@ -170,11 +199,13 @@ function NodeRow({
   status,
   readOnly,
   armed,
+  sinceReadMs,
   onForget,
 }: {
-  node: ClusterStatus['nodes'][number]
+  node: ClusterNode
   status: ClusterStatus
   readOnly: boolean
+  sinceReadMs: number
   armed: boolean
   onForget: () => void
 }) {
@@ -184,7 +215,7 @@ function NodeRow({
       <td class="mono">{node.board}</td>
       <td class="mono">{node.address}</td>
       <td>
-        <VerdictChip v={heardVerdict(node)} />
+        <VerdictChip v={heardVerdict(node, sinceReadMs)} />
       </td>
       <td>
         {nodeSummary(node, status.own).map((v) => (
@@ -193,62 +224,96 @@ function NodeRow({
         {showsHomeAssistant(node) && <span class="unit"> shows the cluster in Home Assistant</span>}
       </td>
       <td class="acts-col">
-        <span class="acts">
-          <a class="btn sm" href={nodeHref(node)} target="_blank" rel="noopener noreferrer">
-            Open
-          </a>
-          {forgettable(node, readOnly) && (
-            <button class={armed ? 'btn sm sure' : 'btn sm danger'} onClick={onForget}>
-              {forgetLabel(armed)}
-            </button>
-          )}
-        </span>
+        <RowActions node={node} readOnly={readOnly} armed={armed} onForget={onForget} />
       </td>
     </tr>
   )
 }
 
+function RowActions({
+  node,
+  readOnly,
+  armed,
+  onForget,
+}: {
+  node: ClusterNode
+  readOnly: boolean
+  armed: boolean
+  onForget: () => void
+}) {
+  return (
+    <span class="acts">
+      <a
+        class="btn sm"
+        href={nodeHref(node)}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open node ${node.node}`}
+      >
+        Open
+      </a>
+      {forgettable(node, readOnly) && (
+        <button
+          class={armed ? 'btn sm sure' : 'btn sm danger'}
+          aria-label={`${forgetLabel(armed)} node ${node.node}`}
+          onClick={onForget}
+        >
+          {forgetLabel(armed)}
+        </button>
+      )}
+    </span>
+  )
+}
+
+const AGE_TICK_MS = 1000
+
+function NodesHead() {
+  return (
+    <thead>
+      <tr>
+        <th>Node</th>
+        <th>Board</th>
+        <th>Address</th>
+        <th>Heard</th>
+        <th>Settings</th>
+        <th class="acts-col" />
+      </tr>
+    </thead>
+  )
+}
+
+async function forgetNode(node: number): Promise<void> {
+  const title = `Forget node ${node}`
+  try {
+    await api.forgetClusterNode(node)
+    notify(title, 'succeeded', 'Forgotten')
+  } catch (e) {
+    const status = e instanceof ApiError ? e.status : undefined
+    notify(title, 'failed', forgetRefusal(node, status, e instanceof ApiError ? e.message : errorMessage(e)))
+  }
+}
+
 function NodesHeard({
-  status,
+  read,
   readOnly,
   reload,
 }: {
-  status: ClusterStatus | null
+  read: StatusRead | null
   readOnly: boolean
   reload: () => Promise<void>
 }) {
   const [armed, tap] = useConfirmTap<string>()
-  const forget = async (node: number) => {
-    const title = `Forget node ${node}`
-    try {
-      await api.forgetClusterNode(node)
-      notify(title, 'succeeded', 'Forgotten')
-    } catch (e) {
-      const status = e instanceof ApiError ? e.status : undefined
-      notify(title, 'failed', forgetRefusal(node, status, e instanceof ApiError ? e.message : errorMessage(e)))
-    }
-    await reload()
-  }
-  const empty = !status || status.own.state === 'off'
-    ? 'Nothing is heard while the cluster is off.'
-    : 'No other node heard yet.'
+  const now = useTick(AGE_TICK_MS)
+  const status = read?.status ?? null
+  const forget = (node: number) => void forgetNode(node).then(reload)
   return (
     <Card title="Nodes heard">
       {!status || status.nodes.length === 0 ? (
-        <p class="empty">{empty}</p>
+        <p class="empty">{nodesEmptyText(status)}</p>
       ) : (
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th>Node</th>
-                <th>Board</th>
-                <th>Address</th>
-                <th>Heard</th>
-                <th>Settings</th>
-                <th class="acts-col" />
-              </tr>
-            </thead>
+            <NodesHead />
             <tbody>
               {status.nodes.map((node) => (
                 <NodeRow
@@ -257,7 +322,8 @@ function NodesHeard({
                   status={status}
                   readOnly={readOnly}
                   armed={armed === String(node.node)}
-                  onForget={() => tap(String(node.node), () => void forget(node.node))}
+                  sinceReadMs={read ? now - read.at : 0}
+                  onForget={() => tap(String(node.node), () => forget(node.node))}
                 />
               ))}
             </tbody>
@@ -282,16 +348,19 @@ function Ignored({ status }: { status: ClusterStatus | null }) {
             </tr>
           </thead>
           <tbody>
-            {status.ignored.map((row) => (
-              <tr key={row.board}>
-                <td class="mono">{row.board}</td>
-                <td class="mono">{row.address}</td>
-                <td>
-                  {ignoredReason(row, status)}
-                  {row.reason === 'other_cluster' && <span class="mono">{row.cluster_name ?? ''}</span>}
-                </td>
-              </tr>
-            ))}
+            {status.ignored.map((row) => {
+              const why = ignoredReason(row, status)
+              return (
+                <tr key={row.board}>
+                  <td class="mono">{row.board}</td>
+                  <td class="mono">{row.address}</td>
+                  <td>
+                    {why.text}
+                    {why.name !== null && <span class="mono">{why.name}</span>}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -437,61 +506,77 @@ function usePeerUrl(readOnly: boolean): string | null {
   return peer
 }
 
-export function SettingsCluster() {
-  const { data, busy, save } = useSettingsDraft(() => api.clusterSettings())
-  const { status, reload } = useClusterStatus()
-  const info = useClusterInfo()
-  const [edits, setEdits] = useState<Partial<ClusterSettings> | null>(null)
-  const [refusal, setRefusal] = useState<Refusal | null>(null)
-  const peerUrl = usePeerUrl(data?.read_only ?? false)
-  useEffect(() => {
-    if (!edits || !data) return
-    const kept = withFieldEdit(edits, {}, data)
-    if (Object.keys(kept ?? {}).length < Object.keys(edits).length) setEdits(kept)
-  }, [edits, data])
+interface ClusterDraft {
+  draft: Draft
+  edit: Edit
+  discard: () => void
+  apply: () => void
+}
 
-  if (!data) return <div class="empty">Loading cluster settings…</div>
-  const readOnly = data.read_only
-  const s = fieldsOnScreen(edits ?? {}, data)
-  const patch = edits ? fieldPatch(edits, data) : {}
+function useClusterDraft(
+  data: ClusterSettings | null,
+  busy: boolean,
+  save: (title: string, send: () => Promise<unknown>) => Promise<void>,
+): ClusterDraft {
+  const [draft, setDraft] = useState<Draft>(NO_DRAFT)
+  useEffect(() => {
+    if (data) setDraft((now) => draftOnRead(now, data))
+  }, [data])
   const edit: Edit = (change) => {
-    if (busy || readOnly) return
-    setEdits(withFieldEdit(edits ?? {}, change, data))
-    if (refusal && (refusal.field === null || refusal.field in change)) setRefusal(null)
-  }
-  const discard = () => {
-    setEdits(null)
-    setRefusal(null)
+    if (data) setDraft((now) => editDraft(now, change, data, busy))
   }
   const apply = () =>
     void save('Cluster settings', async () => {
-      setRefusal(null)
+      setDraft((now) => ({ ...now, refusal: null }))
       try {
-        const sent = await sendFieldsOnFreshRead(edits ?? {}, api.clusterSettings, api.patchClusterSettings)
-        setEdits((now) => now && withoutSent(now, sent))
+        const sent = await sendFieldsOnFreshRead(draft.edits ?? {}, api.clusterSettings, api.patchClusterSettings)
+        setDraft((now) => ({ ...now, edits: now.edits && withoutSent(now.edits, sent) }))
       } catch (e) {
-        setRefusal(refusalFrom(e))
+        setDraft((now) => ({ ...now, refusal: refusalFrom(e) }))
         throw e
       }
     })
-  const props: PanelProps = { s, edit, refusal, readOnly }
+  return { draft, edit, discard: () => setDraft(NO_DRAFT), apply }
+}
+
+function ClusterHead() {
+  return (
+    <div class="head">
+      <h1>Cluster</h1>
+      <span class="sub">
+        Up to eight controllers in one Ethernet segment act as one lighting system. Channels and
+        scenes of the cluster live under Control; this page holds this node's own parameters.
+      </span>
+    </div>
+  )
+}
+
+export function SettingsCluster() {
+  const { data, busy, save } = useSettingsDraft(() => api.clusterSettings())
+  const { read, reload } = useClusterStatus()
+  const { info } = useClusterInfo()
+  const { draft, edit, discard, apply } = useClusterDraft(data, busy, save)
+  const peerUrl = usePeerUrl(data?.read_only ?? false)
+  if (!data) return <div class="empty">Loading cluster settings…</div>
+  const readOnly = data.read_only
+  const status = read?.status ?? null
+  const refusal = draft.refusal
+  const patch = draft.edits && !readOnly ? fieldPatch(draft.edits, data) : {}
+  const props: PanelProps = { s: settingsShown(draft, data), edit, refusal, readOnly }
 
   return (
     <div>
-      <div class="head">
-        <h1>Cluster</h1>
-        <span class="sub">
-          Up to eight controllers in one Ethernet segment act as one lighting system. Channels
-          and scenes of the cluster live under Control; this page holds this node's own
-          parameters.
-        </span>
-      </div>
+      <ClusterHead />
       {readOnly && <StandbyBanner peerUrl={peerUrl} />}
-      {refusal && <p class="errbar">Not applied: {refusal.text}</p>}
+      {refusal && (
+        <p class="errbar" role="alert">
+          Not applied: {refusal.text}
+        </p>
+      )}
       <Dim on={readOnly}>
-        <ThisNode {...props} status={status} info={info} />
+        <ThisNode {...props} status={status} info={info} storedPort={data.port} />
       </Dim>
-      <NodesHeard status={status} readOnly={readOnly} reload={reload} />
+      <NodesHeard read={read} readOnly={readOnly} reload={reload} />
       <Ignored status={status} />
       <Dim on={readOnly}>
         <Forwarding {...props} />

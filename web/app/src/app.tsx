@@ -131,8 +131,8 @@ function RoleChip() {
 const SIDEBAR_CLUSTER_POLL_MS = 15_000
 
 function NodeLine() {
-  const { status } = useClusterStatus(SIDEBAR_CLUSTER_POLL_MS)
-  const line = nodeLine(status)
+  const { read } = useClusterStatus(SIDEBAR_CLUSTER_POLL_MS)
+  const line = nodeLine(read?.status ?? null)
   if (!line) return null
   return (
     <a class={toneClass('nodeline', line.tone)} href={line.href}>

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'preact/hooks'
+import { useState } from 'preact/hooks'
 import { api, ApiError } from '../api/client'
 import type { ControllerTime, ControllerTimePut } from '../api/types'
 import { Card, Chip, EditableText, FieldRow } from '../components/ui'
-import { usePoll } from '../hooks'
+import { usePoll, useTick } from '../hooks'
 import {
   browserUtcOffsetMinutes,
   civilTime,
@@ -25,15 +25,6 @@ const SOURCE_CHIP: Record<ControllerTime['source'], readonly [cls: string, label
 interface TimeRead {
   time: ControllerTime
   readAtMs: number
-}
-
-function useTick(intervalMs: number): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(id)
-  }, [intervalMs])
-  return now
 }
 
 export function SettingsTime() {

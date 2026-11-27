@@ -94,6 +94,7 @@ export function EditableText({
   autoFocus,
   disabled,
   inputMode,
+  label,
   onCommit,
   onCancel,
 }: {
@@ -103,6 +104,7 @@ export function EditableText({
   autoFocus?: boolean
   disabled?: boolean
   inputMode?: 'numeric' | 'decimal' | 'text'
+  label?: string
   onCommit: (v: string) => void
   onCancel?: () => void
 }) {
@@ -118,6 +120,7 @@ export function EditableText({
       placeholder={placeholder}
       disabled={disabled}
       inputMode={inputMode}
+      aria-label={label}
       ref={(el) => {
         if (autoFocus && el && !didAutoFocus.current) {
           didAutoFocus.current = true
