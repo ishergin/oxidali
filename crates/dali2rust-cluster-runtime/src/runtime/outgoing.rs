@@ -19,7 +19,8 @@ pub(crate) const RELATIVE_SPACING_MS: u32 = 50;
 
 pub(crate) const RELATIVE_LINE: usize = 4;
 
-const LINE: usize = 2 * RELATIVE_LINE + 1;
+const CROSSED_LINE: usize = 2;
+const LINE: usize = 2 * RELATIVE_LINE + 1 + CROSSED_LINE;
 
 pub(crate) const OUTGOING_TARGETS: usize = 16;
 
@@ -146,20 +147,23 @@ impl Line {
         self.entries.iter().flatten().filter(|queued| queued.relative()).count()
     }
 
-    const fn has_room(&self) -> bool {
-        self.len < LINE
+    fn crossings(&self) -> usize {
+        let waiting = || self.entries.iter().flatten();
+        waiting().zip(waiting().skip(1)).filter(|(first, next)| !first.relative() && !next.relative()).count()
     }
 
     fn tail_order(&self) -> Option<u32> {
         self.orders.get(self.len.checked_sub(1)?).copied()
     }
 
-    fn push(&mut self, queued: Queued, order: u32) {
-        if let (Some(place), Some(stamp)) = (self.entries.get_mut(self.len), self.orders.get_mut(self.len)) {
-            *place = Some(queued);
-            *stamp = order;
-            self.len += 1;
-        }
+    fn push(&mut self, queued: Queued, order: u32) -> Admission {
+        let (Some(place), Some(stamp)) = (self.entries.get_mut(self.len), self.orders.get_mut(self.len)) else {
+            return Admission::Dropped(queued);
+        };
+        *place = Some(queued);
+        *stamp = order;
+        self.len += 1;
+        Admission::Later { superseded: None }
     }
 
     fn pop(&mut self) -> Option<Queued> {
@@ -180,17 +184,15 @@ impl Line {
             if self.relatives() >= RELATIVE_LINE {
                 return Admission::Dropped(queued);
             }
-            self.push(queued, order);
-            return Admission::Later { superseded: None };
+            return self.push(queued, order);
         }
-        let replaceable = !crossed || !self.has_room();
+        let replaceable = !crossed || self.crossings() >= CROSSED_LINE;
         if let Some((tail, stamp)) = self.tail_mut().filter(|(tail, _)| replaceable && !tail.relative()) {
             let folded = queued.folded_over(Some(&*tail));
             *stamp = order;
             return Admission::Later { superseded: Some(mem::replace(tail, folded)) };
         }
-        self.push(queued, order);
-        Admission::Later { superseded: None }
+        self.push(queued, order)
     }
 
     fn drain(&mut self) -> impl Iterator<Item = Queued> + '_ {
@@ -280,6 +282,13 @@ pub(crate) struct Outgoing {
     next_order: u32,
 }
 
+fn waiting_as(pushed: Admission, waiting: Admission) -> Admission {
+    match pushed {
+        Admission::Later { superseded: None } => waiting,
+        refused => refused,
+    }
+}
+
 impl Outgoing {
     #[cfg(test)]
     pub(crate) fn new() -> PsramBox<Self> {
@@ -298,8 +307,7 @@ impl Outgoing {
             if !copying {
                 return Admission::Now(queued);
             }
-            slot.line.push(queued, order);
-            return Admission::AfterCopy;
+            return waiting_as(slot.line.push(queued, order), Admission::AfterCopy);
         }
         self.admit_new(key, queued, (copying, behind), (order, now_ms))
     }
@@ -313,11 +321,8 @@ impl Outgoing {
             return Admission::Now(queued);
         }
         free.claim(key, now_ms.wrapping_sub(TARGET_SPACING_MS));
-        free.line.push(queued, order);
-        if behind {
-            return Admission::Later { superseded: None };
-        }
-        Admission::AfterCopy
+        let waiting = if behind { Admission::Later { superseded: None } } else { Admission::AfterCopy };
+        waiting_as(free.line.push(queued, order), waiting)
     }
 
     fn stamp(&mut self) -> u32 {

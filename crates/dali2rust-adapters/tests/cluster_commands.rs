@@ -171,6 +171,7 @@ fn a_node_whose_command_cannot_leave_does_not_execute_its_own_part() {
     hub.refuse_sends(true);
     let refused = node.router.dispatch("PUT", "/api/v1/cluster/channels/2/target-state", br#"{"power":"on","level":200}"#);
     assert_eq!(refused.status, UNAVAILABLE);
+    assert_eq!(node.stat("relative_verbs_dropped_total"), 0, "a setpoint that cannot leave is no relative verb");
     hub.refuse_sends(false);
     node.send("PUT", "/api/v1/cluster/channels/2/target-state", r#"{"power":"on","level":100}"#);
     assert!(try_wait_until(|| !node.sent_frames().is_empty(), SETTLE), "the own part executes once the frame leaves");

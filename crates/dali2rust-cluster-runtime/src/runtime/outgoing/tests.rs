@@ -274,7 +274,22 @@ fn drive(arrivals: &[(u32, Queued)], until_ms: u32) -> (Vec<(u32, u64)>, Vec<Adm
             }
         }
     }
+    assert_every_arrival_answered(arrivals, &sent, &refused);
     (sent, refused)
+}
+
+fn assert_every_arrival_answered(arrivals: &[(u32, Queued)], sent: &[(u32, u64)], refused: &[Admission]) {
+    let refused_ids = refused.iter().filter_map(|admitted| match admitted {
+        Admission::Dropped(queued) | Admission::Full(queued) | Admission::Later { superseded: Some(queued) } => {
+            Some(queued.correlation_id)
+        }
+        _ => None,
+    });
+    let mut answered: Vec<u64> = sent.iter().map(|(_, id)| *id).chain(refused_ids).collect();
+    answered.sort_unstable();
+    let mut given: Vec<u64> = arrivals.iter().map(|(_, queued)| queued.correlation_id).collect();
+    given.sort_unstable();
+    assert_eq!(answered, given, "every command is sent or refused exactly once: {sent:?} {refused:?}");
 }
 
 #[test]
@@ -437,4 +452,21 @@ fn a_full_line_crossed_by_all_lamps_still_takes_the_last_setpoint_as_its_last_wo
     assert_eq!(order.last(), Some(&24), "the last command given is the last word: {order:?}");
     assert!(order.contains(&23), "the last setpoint of the channel still lands: {order:?}");
     assert!(refused.iter().all(|admitted| matches!(admitted, Admission::Later { superseded: Some(_) })), "{refused:?}");
+}
+
+#[test]
+fn a_line_crossed_by_all_lamps_keeps_room_for_a_step_and_the_setpoint_after_it() {
+    let mut arrivals: Vec<(u32, Queued)> = (0..24_u8)
+        .map(|n| {
+            let request = if n % 2 == 0 { setpoint(3, n) } else { on_all(level(n)) };
+            (START_MS + u32::from(n), queued(u64::from(n) + 1, request))
+        })
+        .collect();
+    arrivals.push((START_MS + 24, queued(25, relative(3, LevelTransition::StepUp))));
+    arrivals.push((START_MS + 25, queued(26, setpoint(3, 99))));
+    let (sent, refused) = drive(&arrivals, START_MS + 4000);
+    let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "never out of order: {order:?}");
+    assert!(order.contains(&25), "the step is not lost to a full line: {order:?} {refused:?}");
+    assert_eq!(order.last(), Some(&26), "the setpoint after the step is the last word: {order:?}");
 }
