@@ -217,6 +217,20 @@ pub struct StatsClusterDto {
     pub info_pages_ignored_total: u32,
     pub info_pages_stale_total: u32,
     pub info_elements_skipped_total: u32,
+    pub commands_sent_total: u32,
+    pub commands_delayed_total: u32,
+    pub commands_superseded_total: u32,
+    pub commands_received_total: u32,
+    pub commands_executed_total: u32,
+    pub commands_rejected_total: u32,
+    pub commands_dropped_not_member_total: u32,
+    pub commands_dropped_duplicate_total: u32,
+    pub commands_dropped_not_running_total: u32,
+    pub commands_dropped_unsupported_total: u32,
+    pub commands_dropped_no_part_total: u32,
+    pub commands_dropped_accept_off_total: u32,
+    pub commands_dropped_not_wire_owner_total: u32,
+    pub commands_dropped_executed_on_wire_total: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -321,7 +335,11 @@ declare_widest_dtos! {
         unknown_version_frames_total, rejected_frames_total, duplicates_total, stale_link_frames_total,
         sequence_gaps_total, withheld_standby_total, boards_evicted_total, info_sets_sent_total,
         info_sets_taken_total, info_sets_abandoned_total, info_pages_ignored_total, info_pages_stale_total,
-        info_elements_skipped_total,
+        info_elements_skipped_total, commands_sent_total, commands_delayed_total, commands_superseded_total,
+        commands_received_total, commands_executed_total, commands_rejected_total,
+        commands_dropped_not_member_total, commands_dropped_duplicate_total, commands_dropped_not_running_total,
+        commands_dropped_unsupported_total, commands_dropped_no_part_total, commands_dropped_accept_off_total,
+        commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total,
     }
     StatsReportDto {
         controller = StatsControllerDto::widest(),

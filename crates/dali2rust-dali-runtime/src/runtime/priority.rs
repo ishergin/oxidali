@@ -290,9 +290,10 @@ fn refine_by_origin(variant: &str, default: WirePriority, origin: Origin) -> Wir
     match (variant, origin) {
         (READ_ATTRIBUTES, Origin::Poller) => WirePriority::Unattended,
         (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL, Origin::Hcl) => WirePriority::Attended,
-        (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET, Origin::Mqtt) => {
-            WirePriority::Attended
-        }
+        (
+            SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET,
+            Origin::Mqtt | Origin::Cluster,
+        ) => WirePriority::Attended,
         (SET_TARGET_STATE | RECALL_LAST_ACTIVE_LEVEL | RECALL_SCENE | RECALL_LEVEL_PRESET, Origin::Rules) => {
             WirePriority::Interactive
         }
@@ -492,6 +493,18 @@ mod tests {
                 Some(WirePriority::Interactive),
                 "{variant} from the web UI holds the httpd task and must outrank it"
             );
+        }
+    }
+
+    #[test]
+    fn a_neighbour_s_command_is_attended_like_home_assistant_s_so_the_operator_here_wins() {
+        for variant in [SET_TARGET_STATE, RECALL_SCENE, RECALL_LEVEL_PRESET] {
+            assert_eq!(
+                wire_priority(variant, Origin::Cluster),
+                wire_priority(variant, Origin::Mqtt),
+                "{variant} from a neighbour must queue as Home Assistant's does"
+            );
+            assert_eq!(wire_priority(variant, Origin::Cluster), Some(WirePriority::Attended));
         }
     }
 

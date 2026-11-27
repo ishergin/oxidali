@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
 
-use crate::frame::{decode, Decoded, Frame, Header, NODE_COUNT};
+use crate::frame::{decode, Command, Decoded, Frame, Header, NODE_COUNT};
 use crate::info::{Arrival, ClusterInfo};
 use crate::presence::{
     claim_mode, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
@@ -94,13 +94,46 @@ pub(crate) enum Forgotten {
     StillHeard,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CommandStanding {
+    pub(crate) running: bool,
+    pub(crate) owns_wire: bool,
+    pub(crate) wire: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandAdmission {
+    NotMember,
+    Duplicate,
+    Taken(CommandStanding),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeardCommand {
+    pub(crate) command: Command,
+    pub(crate) admission: CommandAdmission,
+}
+
 struct Admitted {
     taken: Option<Taken>,
     member: bool,
+    standing: Option<CommandStanding>,
 }
 
 impl Admitted {
-    const NOTHING: Self = Self { taken: None, member: false };
+    const NOTHING: Self = Self { taken: None, member: false, standing: None };
+
+    fn command(&self, command: Command) -> Option<HeardCommand> {
+        let taken = self.taken?;
+        let admission = if !self.member {
+            CommandAdmission::NotMember
+        } else if !taken.admits_command() {
+            CommandAdmission::Duplicate
+        } else {
+            self.standing.map_or(CommandAdmission::NotMember, CommandAdmission::Taken)
+        };
+        Some(HeardCommand { command, admission })
+    }
 
     fn feeds_info(&self) -> bool {
         self.member && self.taken.is_some_and(Taken::applies)
@@ -152,27 +185,44 @@ impl ClusterPresence {
         delivery: Delivery,
         counters: &ClusterCounters,
         info: &ClusterInfo,
-    ) {
+    ) -> Option<HeardCommand> {
         let decoded = match decode(bytes) {
             Ok(decoded) => decoded,
-            Err(rejection) => return counters.count_rejection(rejection),
+            Err(rejection) => {
+                counters.count_rejection(rejection);
+                return None;
+            }
         };
-        let mut state = self.lock();
-        if state.link != delivery.link {
-            drop(state);
-            return bump(&counters.stale_link_frames_total);
-        }
-        let admitted = state.take(&decoded, delivery, self.timing, counters);
-        let era = info.era();
-        drop(state);
+        let (admitted, era) = self.admit(&decoded, delivery, counters, info)?;
         if let Some(taken) = admitted.taken {
             counters.count_taken(taken);
+        }
+        if let Frame::Command(command) = decoded.frame {
+            return admitted.command(command);
         }
         if admitted.feeds_info() {
             self.hear_member(&decoded, (delivery.now_ms, era), counters, info);
         } else if matches!(decoded.frame, Frame::ChannelSceneInfo(_)) {
             counters.count_unfed_page(admitted.member, admitted.taken);
         }
+        None
+    }
+
+    fn admit(
+        &self,
+        decoded: &Decoded<'_>,
+        delivery: Delivery,
+        counters: &ClusterCounters,
+        info: &ClusterInfo,
+    ) -> Option<(Admitted, u32)> {
+        let mut state = self.lock();
+        if state.link != delivery.link {
+            drop(state);
+            bump(&counters.stale_link_frames_total);
+            return None;
+        }
+        let admitted = state.take(decoded, delivery, self.timing, counters);
+        Some((admitted, info.era()))
     }
 
     fn hear_member(&self, decoded: &Decoded<'_>, at: (u32, u32), counters: &ClusterCounters, info: &ClusterInfo) {
@@ -278,9 +328,14 @@ impl PresenceState {
             Frame::Hello(hello) => self.table.take_hello(header, hello),
             Frame::Command(_) | Frame::ChannelSceneInfo(_) => self.table.take_other(header),
         };
-        let speaks = matches!(decoded.frame, Frame::Hello(_) | Frame::ChannelSceneInfo(_))
-            && self.speaks_for_its_node(header, delivery.now_ms, timing);
-        Admitted { taken: Some(taken), member: speaks }
+        let speaks = !matches!(decoded.frame, Frame::Pulse(_)) && self.speaks_for_its_node(header, delivery.now_ms, timing);
+        let standing = matches!(decoded.frame, Frame::Command(_)).then(|| self.command_standing(delivery.now_ms, timing));
+        Admitted { taken: Some(taken), member: speaks, standing }
+    }
+
+    fn command_standing(&self, now_ms: u32, timing: PresenceTiming) -> CommandStanding {
+        let owner = self.roster(now_ms, timing).wire_owner();
+        CommandStanding { running: self.mode == OwnMode::Running, owns_wire: owner == WireOwner::ThisNode, wire: self.own.wire }
     }
 
     fn speaks_for_its_node(&self, header: &Header, now_ms: u32, timing: PresenceTiming) -> bool {

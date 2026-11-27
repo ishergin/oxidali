@@ -77,6 +77,7 @@ const SUPERVISOR: EventInbox =
     event_inbox("arb-supervisor", dali2rust_redundancy_runtime::SUPERVISOR_HANDLED_EVENTS, 4);
 const REPLICATION: EventInbox =
     event_inbox("replication", dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS, 8);
+const CLUSTER_CONFIRMATION_INBOX: usize = 32;
 const CLUSTER: EventInbox =
     event_inbox("cluster", dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_EVENTS, 16);
 
@@ -112,11 +113,14 @@ pub(crate) fn spawn_bus_subscribers(
                 WS_FANOUT.handled,
                 WS_FANOUT.name,
             )),
-            cluster: named_commands_and_events(
-                reg,
-                dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_COMMANDS,
-                CLUSTER,
-            ),
+            cluster: dali2rust_cluster_runtime::ClusterInboxes {
+                commands_and_events: named_commands_and_events(
+                    reg,
+                    dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_COMMANDS,
+                    CLUSTER,
+                ),
+                confirmations: reg.subscribe_confirmations(CLUSTER_CONFIRMATION_INBOX),
+            },
         });
 
     BusSubscribers {

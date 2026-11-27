@@ -26,6 +26,20 @@ pub struct ClusterCounters {
     pub info_pages_ignored_total: AtomicU32,
     pub info_pages_stale_total: AtomicU32,
     pub info_elements_skipped_total: AtomicU32,
+    pub commands_sent_total: AtomicU32,
+    pub commands_delayed_total: AtomicU32,
+    pub commands_superseded_total: AtomicU32,
+    pub commands_received_total: AtomicU32,
+    pub commands_executed_total: AtomicU32,
+    pub commands_rejected_total: AtomicU32,
+    pub commands_dropped_not_member_total: AtomicU32,
+    pub commands_dropped_duplicate_total: AtomicU32,
+    pub commands_dropped_not_running_total: AtomicU32,
+    pub commands_dropped_unsupported_total: AtomicU32,
+    pub commands_dropped_no_part_total: AtomicU32,
+    pub commands_dropped_accept_off_total: AtomicU32,
+    pub commands_dropped_not_wire_owner_total: AtomicU32,
+    pub commands_dropped_executed_on_wire_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {

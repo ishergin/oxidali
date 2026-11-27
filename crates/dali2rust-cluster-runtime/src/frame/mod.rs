@@ -13,7 +13,7 @@ pub use codec::{
     PREAMBLE_BYTES, PROTOCOL_TAG, PROTOCOL_VERSION,
 };
 pub use command::{
-    Action, BirthMark, Command, LampAddress, LightVerb, RecallScope, RecordRef, SourceClass,
+    action_in_range, Action, BirthMark, Command, LampAddress, LightVerb, RecallScope, RecordRef, SourceClass,
     Target,
 };
 pub use header::{cluster_tag, Header};

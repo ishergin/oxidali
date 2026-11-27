@@ -379,7 +379,11 @@ declare_counter_mapping! {
         unknown_version_frames_total, rejected_frames_total, duplicates_total, stale_link_frames_total,
         sequence_gaps_total, withheld_standby_total, boards_evicted_total, info_sets_sent_total,
         info_sets_taken_total, info_sets_abandoned_total, info_pages_ignored_total, info_pages_stale_total,
-        info_elements_skipped_total,
+        info_elements_skipped_total, commands_sent_total, commands_delayed_total, commands_superseded_total,
+        commands_received_total, commands_executed_total, commands_rejected_total,
+        commands_dropped_not_member_total, commands_dropped_duplicate_total, commands_dropped_not_running_total,
+        commands_dropped_unsupported_total, commands_dropped_no_part_total, commands_dropped_accept_off_total,
+        commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,

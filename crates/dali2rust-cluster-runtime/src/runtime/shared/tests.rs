@@ -166,3 +166,63 @@ fn this_node_s_own_page_heard_back_is_dropped_and_not_counted_as_ignored() {
     deliver(&presence, &counters, &info_page_from(NEIGHBOUR_MAC, NAME, 1, 1), 0, START_MS);
     assert_eq!(counters.info_pages_ignored_total.load(Ordering::Relaxed), 1);
 }
+
+fn command_from(sender_mac: [u8; 6], cluster_name: &str, node: u8, seq: u32) -> Vec<u8> {
+    let header = Header { cluster_tag: cluster_tag(cluster_name), sender_mac, boot_epoch: 7, node_no: node, seq };
+    let mark = crate::frame::BirthMark { generation: 1, nonce: 2 };
+    let scene = crate::frame::RecordRef { number: 3, mark };
+    let action = crate::frame::Action::RecallScene { scene, scope: crate::frame::RecallScope::Node };
+    let source = crate::frame::SourceClass::Operator;
+    let frame = Frame::Command(Command { action, source, hold_hcl: true, executed_on_wire: None });
+    let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let len = encode(&header, &frame, &mut buffer).expect("a command fits");
+    buffer[..len].to_vec()
+}
+
+fn heard(presence: &ClusterPresence, counters: &ClusterCounters, bytes: &[u8]) -> Option<CommandAdmission> {
+    let delivery = Delivery { source: SOURCE, link: presence.link(), now_ms: START_MS };
+    presence.take_datagram(bytes, delivery, counters, &ClusterInfo::new()).map(|heard| heard.admission)
+}
+
+#[test]
+fn a_member_s_command_is_taken_once_and_its_copy_is_a_duplicate() {
+    let (presence, counters) = present();
+    deliver(&presence, &counters, &pulse(NAME, BARN, 1, 10), presence.link(), START_MS);
+    let command = command_from(NEIGHBOUR_MAC, NAME, 1, 11);
+    let standby = CommandStanding { running: false, owns_wire: false, wire: 0 };
+    assert_eq!(heard(&presence, &counters, &command), Some(CommandAdmission::Taken(standby)));
+    assert_eq!(heard(&presence, &counters, &command), Some(CommandAdmission::Duplicate));
+}
+
+#[test]
+fn a_member_s_command_that_arrives_late_is_still_taken() {
+    let (presence, counters) = present();
+    deliver(&presence, &counters, &pulse(NAME, BARN, 1, 10), presence.link(), START_MS);
+    deliver(&presence, &counters, &pulse(NAME, BARN, 1, 12), presence.link(), START_MS);
+    let standby = CommandStanding { running: false, owns_wire: false, wire: 0 };
+    let late = command_from(NEIGHBOUR_MAC, NAME, 1, 11);
+    assert_eq!(heard(&presence, &counters, &late), Some(CommandAdmission::Taken(standby)));
+    assert_eq!(heard(&presence, &counters, &late), Some(CommandAdmission::Duplicate));
+}
+
+#[test]
+fn a_command_from_another_cluster_or_an_unheard_board_is_not_a_member_s_and_this_node_s_own_is_never_heard() {
+    let (presence, counters) = present();
+    deliver(&presence, &counters, &pulse("garage", BARN, 1, 10), presence.link(), START_MS);
+    let foreign = command_from(NEIGHBOUR_MAC, "garage", 1, 11);
+    assert_eq!(heard(&presence, &counters, &foreign), Some(CommandAdmission::NotMember));
+    let unheard = command_from([2, 0, 0, 0, 0, 7], NAME, 2, 1);
+    assert_eq!(heard(&presence, &counters, &unheard), Some(CommandAdmission::NotMember));
+    assert_eq!(heard(&presence, &counters, &command_from(OWN_MAC, NAME, 0, 1)), None);
+}
+
+#[test]
+fn a_running_node_that_owns_its_wire_stands_to_execute_a_member_s_command() {
+    let presence = ClusterPresence::new(TIMING, fixed_boot_epoch(1));
+    let counters = ClusterCounters::default();
+    assert!(presence.settle(identity(0), None, TIMING.listen_ms(), START_MS).entered_running);
+    deliver(&presence, &counters, &pulse(NAME, BARN, 1, 10), presence.link(), START_MS);
+    let running = CommandStanding { running: true, owns_wire: true, wire: 0 };
+    let admission = heard(&presence, &counters, &command_from(NEIGHBOUR_MAC, NAME, 1, 11));
+    assert_eq!(admission, Some(CommandAdmission::Taken(running)));
+}

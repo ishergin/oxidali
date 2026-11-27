@@ -16,7 +16,7 @@ use dali2rust_bus::{BusConfig, BusId, BusPublisher};
 pub use dali2rust_cluster_runtime::{
     fixed_boot_epoch, mixed_boot_epoch, wall_clock_now, ClusterComposition, EpochSource,
 };
-use dali2rust_cluster_runtime::{spawn_cluster_worker, ClusterSeams, ClusterWorkerPorts, ClusterWorkerThreads};
+use dali2rust_cluster_runtime::{spawn_cluster_worker, ClusterInboxes, ClusterSeams, ClusterWorkerPorts, ClusterWorkerThreads};
 use dali2rust_dali_runtime::DaliRuntimeConfig;
 pub use dali2rust_display_runtime::{DisplayView, HardwareDisplay};
 use dali2rust_platform::dali::DaliTransport;
@@ -201,7 +201,7 @@ fn spawn_fleet<T: DaliTransport + Send + 'static>(
 fn spawn_cluster_slice(
     booted: &BootedStack,
     rest: &PostBootOptions,
-    inbox: dali2rust_bus::BusSubscriberRx,
+    inboxes: ClusterInboxes,
 ) -> (ClusterSeams, ClusterWorkerThreads) {
     let seams = ClusterSeams::new(&rest.cluster);
     let store = &booted.diagnostics_store;
@@ -219,7 +219,7 @@ fn spawn_cluster_slice(
         parts: Arc::clone(store) as _,
         info: Arc::clone(&seams.info),
     };
-    (seams, spawn_cluster_worker(inbox, ports))
+    (seams, spawn_cluster_worker(inboxes, ports))
 }
 
 fn boot_read_models(
