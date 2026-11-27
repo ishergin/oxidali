@@ -22,10 +22,6 @@ impl OwnFacts {
     const fn holds(&self, node: u8) -> bool {
         self.running_since_ms.is_some() && self.node_no == node
     }
-
-    const fn shares_wire(&self) -> bool {
-        self.wire != self.node_no
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -172,21 +168,24 @@ impl<'a> Roster<'a> {
         wire != node && self.wire_of(wire).is_some_and(|named| named != wire)
     }
 
-    fn named_by_others(&self) -> bool {
+    fn named_by_others(&self, node: u8) -> bool {
         self.table.iter().any(|board| {
-            board.node_no != self.own.node_no
-                && board.pulse.wire == self.own.node_no
+            board.node_no != node
+                && board.pulse.wire == node
                 && self.live(board)
                 && self.standing(board) == Standing::Holder
         })
     }
 
+    fn chained(&self, node: u8, wire: u8) -> bool {
+        self.names_a_chain(node, wire) || (wire != node && self.named_by_others(node))
+    }
+
     pub fn faults(&self) -> OwnFaults {
         let own = self.own;
-        let chained = self.names_a_chain(own.node_no, own.wire);
         OwnFaults {
             split_pair: own.holds(own.node_no) && self.split_with_this_node(),
-            wire_chain: chained || (own.shares_wire() && self.named_by_others()),
+            wire_chain: self.chained(own.node_no, own.wire),
         }
     }
 
@@ -207,7 +206,7 @@ impl<'a> Roster<'a> {
         board.pulse.wire == self.own.wire
             && self.live(board)
             && self.standing(board) == Standing::Holder
-            && !self.names_a_chain(board.node_no, board.pulse.wire)
+            && !self.chained(board.node_no, board.pulse.wire)
     }
 
     pub fn keeps(&self, board: &HeardBoard) -> bool {

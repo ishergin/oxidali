@@ -36,12 +36,15 @@ const FIRST: Board = Board { mac: [0x02, 0, 0, 0x0a, 0x0b, 0x01], address: [10, 
 const SECOND: Board = Board { mac: [0x02, 0, 0, 0x0a, 0x0b, 0x02], address: [10, 0, 0, 2], epoch: 22 };
 
 fn node_on(hub: &Arc<ClusterHub>, board: &Board) -> Node {
-    let link = MockNetworkLink::new(board.mac, Some(board.address), "cluster-node");
     let cluster = ClusterComposition {
         binder: Arc::new(ClusterHubBinder::new(Arc::clone(hub), board.address)),
         timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
         boot_epoch: board.epoch,
     };
+    composed(MockNetworkLink::new(board.mac, Some(board.address), "cluster-node"), Some(cluster))
+}
+
+fn composed(link: MockNetworkLink, cluster: Option<ClusterComposition>) -> Node {
     let (router, _hub, runtime) = build_http_test_stack(
         "0.1.0-test",
         Arc::new(Mutex::new(MockDaliTransport::new())),
@@ -49,7 +52,7 @@ fn node_on(hub: &Arc<ClusterHub>, board: &Board) -> Node {
         DaliRuntimeConfig::default(),
         None,
         &[],
-        HttpTestPorts { network_link: Some(Arc::new(link)), cluster: Some(cluster), ..HttpTestPorts::default() },
+        HttpTestPorts { network_link: Some(Arc::new(link)), cluster, ..HttpTestPorts::default() },
     );
     Node { router, _runtime: runtime }
 }
@@ -129,4 +132,25 @@ fn forget_waits_until_the_node_is_silent_and_then_drops_it() {
     assert!(try_wait_until(|| first.heard(1) == Some(false), SETTLE), "{:?}", first.status());
     assert_eq!(first.forget(1), NO_CONTENT);
     assert_eq!(first.heard(1), None, "{:?}", first.status());
+}
+
+#[test]
+fn a_switched_on_node_without_an_address_sends_nothing_and_says_why() {
+    let hub = Arc::new(ClusterHub::new());
+    let cluster = ClusterComposition {
+        binder: Arc::new(ClusterHubBinder::new(Arc::clone(&hub), FIRST.address)),
+        timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
+        boot_epoch: FIRST.epoch,
+    };
+    let node = composed(MockNetworkLink::new(FIRST.mac, None, "cluster-node"), Some(cluster));
+    node.join(0);
+    assert!(try_wait_until(|| node.state() == "no_address", SETTLE), "state {}", node.state());
+    assert!(hub.next_sent(Duration::from_millis(u64::from(PULSE_PERIOD_MS) * 2)).is_none());
+}
+
+#[test]
+fn a_composition_that_wires_no_cluster_port_shows_bind_failed() {
+    let node = composed(MockNetworkLink::new(FIRST.mac, Some(FIRST.address), "cluster-node"), None);
+    node.join(0);
+    assert!(try_wait_until(|| node.state() == "bind_failed", SETTLE), "state {}", node.state());
 }

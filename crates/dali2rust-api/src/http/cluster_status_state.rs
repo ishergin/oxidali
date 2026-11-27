@@ -1,8 +1,9 @@
 use std::io::{self, Write};
 
+use dali2rust_domain::registry::CLUSTER_NODE_COUNT;
 use serde::Serialize;
 
-pub const MAX_CLUSTER_STATUS_NODES: u8 = 8;
+pub const MAX_CLUSTER_STATUS_NODES: u8 = CLUSTER_NODE_COUNT;
 
 pub const MAX_CLUSTER_STATUS_IGNORED: usize = 24;
 

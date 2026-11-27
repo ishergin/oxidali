@@ -31,8 +31,41 @@ impl PresenceTiming {
     }
 }
 
+pub(crate) const HALF_CLOCK_MS: u32 = 1 << 31;
+
+const AGE_CAP_MS: u32 = 1 << 30;
+
 pub(crate) const fn elapsed_ms(now_ms: u32, since_ms: u32) -> u32 {
-    now_ms.wrapping_sub(since_ms)
+    let elapsed = now_ms.wrapping_sub(since_ms);
+    if elapsed < HALF_CLOCK_MS {
+        elapsed
+    } else {
+        0
+    }
+}
+
+pub(crate) const fn in_reach(now_ms: u32, since_ms: u32) -> u32 {
+    if elapsed_ms(now_ms, since_ms) > AGE_CAP_MS {
+        now_ms.wrapping_sub(AGE_CAP_MS)
+    } else {
+        since_ms
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListenWindow {
+    since_ms: u32,
+}
+
+impl ListenWindow {
+    pub const fn opened_at(now_ms: u32) -> Self {
+        Self { since_ms: now_ms }
+    }
+
+    pub fn listened_ms(&mut self, now_ms: u32) -> u32 {
+        self.since_ms = in_reach(now_ms, self.since_ms);
+        elapsed_ms(now_ms, self.since_ms)
+    }
 }
 
 pub(crate) const fn later(now_ms: u32, at_ms: u32, than_ms: u32) -> bool {

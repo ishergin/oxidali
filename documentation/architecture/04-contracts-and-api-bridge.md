@@ -89,9 +89,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   which is the one `NetworkLink::hardware_address` reports. Tests connect link ends
   through `ClusterHub` in `dali2rust-test-support`.
 - The worker opens and closes the port through `ClusterLinkBinder`: `UdpClusterBinder` on
-  the board, `NoClusterLink` where the composition wires no network, which the status
-  shows as `bind_failed`, and `ClusterHubBinder` on the hub in tests. A switched-off
-  cluster holds no socket.
+  the board, `ClusterHubBinder` on the hub in tests, and `NoClusterLink` where the
+  composition wires no cluster port, which a node with an address shows as `bind_failed`.
+  Without an address or a lease the state is `no_address`, and a switched-off cluster
+  holds no socket.
 
 ## JSON boundaries
 

@@ -331,3 +331,43 @@ fn a_silent_ignored_board_is_not_kept() {
     assert!(roster(&table, &facts, START_MS).keeps(only(&table)));
     assert!(!roster(&table, &facts, START_MS + TIMING.liveness_ms() + 1).keeps(only(&table)));
 }
+
+const QUARTER_OF_THE_CLOCK_STEP_MS: u32 = 1 << 28;
+const STEPS_PAST_A_WRAP: u32 = 20;
+
+#[test]
+fn the_listen_window_stays_open_across_the_wrap_of_the_clock() {
+    let mut window = ListenWindow::opened_at(START_MS);
+    assert_eq!(window.listened_ms(START_MS), 0);
+    for step in 1..=STEPS_PAST_A_WRAP {
+        let now = START_MS.wrapping_add(step.wrapping_mul(QUARTER_OF_THE_CLOCK_STEP_MS));
+        assert!(window.listened_ms(now) >= TIMING.listen_ms(), "step {step}");
+    }
+}
+
+#[test]
+fn two_boards_of_a_chain_name_the_same_wire_owner() {
+    let (mut middle, mut owner, mut follower) =
+        (Board::holding(LOW_MAC, 1, BARN), Board::holding(HIGH_MAC, 2, BARN), Board::holding(OTHER_MAC, 3, BARN));
+    (middle.wire, follower.wire) = (2, 1);
+    let mut seen_by_middle = BoardTable::default();
+    owner.pulse_into(&mut seen_by_middle, START_MS);
+    follower.pulse_into(&mut seen_by_middle, START_MS);
+    let mut facts = own(1, Some(START_MS));
+    facts.wire = 2;
+    assert_eq!(roster(&seen_by_middle, &facts, START_MS).wire_owner(), WireOwner::Board { node: 2, mac: HIGH_MAC });
+    let mut seen_by_owner = BoardTable::default();
+    middle.pulse_into(&mut seen_by_owner, START_MS);
+    follower.pulse_into(&mut seen_by_owner, START_MS);
+    assert_eq!(roster(&seen_by_owner, &own(2, Some(START_MS)), START_MS).wire_owner(), WireOwner::ThisNode);
+}
+
+#[test]
+fn of_two_boards_holding_the_owning_number_the_lower_mac_owns_the_wire() {
+    let mut table = BoardTable::default();
+    Board::holding(HIGH_MAC, 1, BARN).pulse_into(&mut table, START_MS);
+    Board::holding(LOW_MAC, 1, BARN).pulse_into(&mut table, START_MS);
+    let mut facts = own(3, Some(START_MS));
+    facts.wire = 1;
+    assert_eq!(roster(&table, &facts, START_MS).wire_owner(), WireOwner::Board { node: 1, mac: LOW_MAC });
+}

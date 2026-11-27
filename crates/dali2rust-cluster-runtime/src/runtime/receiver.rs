@@ -12,7 +12,7 @@ use dali2rust_platform::cluster_link::{
 use dali2rust_platform::liveness::monotonic_ms;
 
 use super::counters::{bump, ClusterCounters};
-use super::shared::ClusterPresence;
+use super::shared::{ClusterPresence, Delivery};
 
 pub(crate) const RECEIVE_SLICE: Duration = Duration::from_millis(250);
 
@@ -20,14 +20,19 @@ pub(crate) static RECEIVER_STACK: StackLowWater =
     StackLowWater::new("cluster_rx", std_thread_stack::EVENT_WORKER_STACK);
 
 pub(crate) enum LinkHandoff {
-    Bound(Arc<dyn ClusterLink>),
+    Bound { link: Arc<dyn ClusterLink>, generation: u32 },
     Unbound,
 }
 
+struct HeldLink {
+    link: Arc<dyn ClusterLink>,
+    generation: u32,
+}
+
 impl LinkHandoff {
-    fn into_link(self) -> Option<Arc<dyn ClusterLink>> {
+    fn into_link(self) -> Option<HeldLink> {
         match self {
-            Self::Bound(link) => Some(link),
+            Self::Bound { link, generation } => Some(HeldLink { link, generation }),
             Self::Unbound => None,
         }
     }
@@ -51,12 +56,12 @@ pub(crate) fn run_receiver(
     counters: Arc<ClusterCounters>,
 ) {
     let mut intake = Intake { presence, counters, buffer: receive_buffer() };
-    let mut link: Option<Arc<dyn ClusterLink>> = None;
+    let mut link: Option<HeldLink> = None;
     RECEIVER_STACK.note("start");
     loop {
         let next = match &link {
             None => handoff.recv().map_or(Next::Stop, Next::Switch),
-            Some(bound) => intake.serve(bound.as_ref(), &handoff),
+            Some(held) => intake.serve(held, &handoff),
         };
         match next {
             Next::Keep => {}
@@ -67,8 +72,8 @@ pub(crate) fn run_receiver(
 }
 
 impl Intake {
-    fn serve(&mut self, link: &dyn ClusterLink, handoff: &Receiver<LinkHandoff>) -> Next {
-        if self.receive_one(link) {
+    fn serve(&mut self, held: &HeldLink, handoff: &Receiver<LinkHandoff>) -> Next {
+        if self.receive_one(held) {
             return match handoff.try_recv() {
                 Ok(handed) => Next::Switch(handed),
                 Err(TryRecvError::Empty) => Next::Keep,
@@ -82,13 +87,13 @@ impl Intake {
         }
     }
 
-    fn receive_one(&mut self, link: &dyn ClusterLink) -> bool {
+    fn receive_one(&mut self, held: &HeldLink) -> bool {
         let counters = &*self.counters;
-        match link.receive(&mut self.buffer, RECEIVE_SLICE) {
+        match held.link.receive(&mut self.buffer, RECEIVE_SLICE) {
             Ok(Received::Datagram { len, source }) => {
                 bump(&counters.datagrams_received_total);
-                let bytes = self.buffer.get(..len).unwrap_or_default();
-                self.presence.take_datagram(bytes, source, counters, monotonic_ms());
+                let delivery = Delivery { source, link: held.generation, now_ms: monotonic_ms() };
+                self.presence.take_datagram(self.buffer.get(..len).unwrap_or_default(), delivery, counters);
                 RECEIVER_STACK.note("datagram");
             }
             Ok(Received::Oversize { .. }) => {

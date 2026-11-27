@@ -4,6 +4,7 @@ use std::sync::Arc;
 use dali2rust_api::confirmation_bridge::PendingConfirmationSlots;
 use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState, ClusterWireOwnerDto,
+    MAX_CLUSTER_STATUS_IGNORED,
 };
 use dali2rust_api::http::cluster_settings_state::{
     ClusterSettingsApplyWatch, ClusterSettingsApplyWatchBridge, ClusterSettingsHttpState,
@@ -57,7 +58,7 @@ use dali2rust_api::http::{
 };
 use dali2rust_api::http::handlers::config_transfer::{ImportRefusal, SliceManifestEntry};
 use dali2rust_bus::BusPublisher;
-use dali2rust_cluster_runtime::presence::{IgnoredReason, OwnMode, WireOwner};
+use dali2rust_cluster_runtime::presence::{IgnoredReason, OwnMode, WireOwner, MAX_HEARD_BOARDS};
 use dali2rust_cluster_runtime::{
     ClusterCounters, ClusterPresenceReadPort, IgnoredView, NodeView, OwnStatus,
 };
@@ -1471,6 +1472,8 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
         }
     }
 }
+
+const _: () = assert!(MAX_CLUSTER_STATUS_IGNORED == MAX_HEARD_BOARDS);
 
 pub(crate) struct ClusterStatusBridge {
     port: Arc<dyn ClusterPresenceReadPort>,

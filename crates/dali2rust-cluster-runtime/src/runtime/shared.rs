@@ -7,13 +7,16 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
 
-use crate::frame::{decode, Frame, NODE_COUNT};
+use crate::frame::{decode, Decoded, Frame, NODE_COUNT};
 use crate::presence::{
-    claim_mode, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
-    PresenceTiming, Roster, WireOwner, MAX_HEARD_BOARDS,
+    claim_mode, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
+    PresenceTiming, Roster, Taken, WireOwner, MAX_HEARD_BOARDS,
 };
 
 use super::counters::{bump, ClusterCounters};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OwnStatus {
@@ -66,6 +69,14 @@ pub struct PresenceState {
     pub(crate) own: OwnFacts,
     pub(crate) mode: OwnMode,
     pub(crate) mac_known: bool,
+    pub(crate) link: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Delivery {
+    pub(crate) source: [u8; 4],
+    pub(crate) link: u32,
+    pub(crate) now_ms: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,27 +114,24 @@ impl ClusterPresence {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn take_datagram(&self, bytes: &[u8], source: [u8; 4], counters: &ClusterCounters, now_ms: u32) {
+    pub(crate) fn link(&self) -> u32 {
+        self.lock().link
+    }
+
+    pub(crate) fn take_datagram(&self, bytes: &[u8], delivery: Delivery, counters: &ClusterCounters) {
         let decoded = match decode(bytes) {
             Ok(decoded) => decoded,
             Err(rejection) => return counters.count_rejection(rejection),
         };
-        let header = &decoded.header;
         let mut state = self.lock();
-        if state.mac_known && header.sender_mac == state.own.mac {
-            return bump(&counters.own_frames_dropped_total);
+        if state.link != delivery.link {
+            return;
         }
-        if header.cluster_tag != state.own.cluster_tag {
-            bump(&counters.other_cluster_frames_total);
-        }
-        let at = Arriving { header, source, now_ms, timing: self.timing };
-        let taken = match &decoded.frame {
-            Frame::Pulse(pulse) => state.table.take_pulse(at, pulse),
-            Frame::Hello(hello) => state.table.take_hello(header, hello),
-            Frame::Command(_) | Frame::ChannelSceneInfo(_) => state.table.take_other(header),
-        };
+        let taken = state.take(&decoded, delivery, self.timing, counters);
         drop(state);
-        counters.count_taken(taken);
+        if let Some(taken) = taken {
+            counters.count_taken(taken);
+        }
     }
 
     pub(crate) fn settle(&self, identity: OwnFacts, base: Option<OwnMode>, listened_ms: u32, now_ms: u32) -> Settled {
@@ -143,11 +151,15 @@ impl ClusterPresence {
     }
 
     pub(crate) fn clear(&self) {
-        self.lock().table.clear();
+        let mut state = self.lock();
+        state.table.clear();
+        state.link = state.link.wrapping_add(1);
     }
 
     pub(crate) fn prune(&self, now_ms: u32) {
         let mut state = self.lock();
+        state.table.hold_in_reach(now_ms);
+        state.own.running_since_ms = state.own.running_since_ms.map(|since_ms| in_reach(now_ms, since_ms));
         let marks = {
             let roster = state.roster(now_ms, self.timing);
             state.table.marks(|board| !roster.keeps(board))
@@ -184,6 +196,29 @@ impl ClusterPresence {
 impl PresenceState {
     fn roster(&self, now_ms: u32, timing: PresenceTiming) -> Roster<'_> {
         Roster::new(&self.table, &self.own, now_ms, timing)
+    }
+
+    fn take(
+        &mut self,
+        decoded: &Decoded<'_>,
+        delivery: Delivery,
+        timing: PresenceTiming,
+        counters: &ClusterCounters,
+    ) -> Option<Taken> {
+        let header = &decoded.header;
+        if self.mac_known && header.sender_mac == self.own.mac {
+            bump(&counters.own_frames_dropped_total);
+            return None;
+        }
+        if header.cluster_tag != self.own.cluster_tag {
+            bump(&counters.other_cluster_frames_total);
+        }
+        let at = Arriving { header, source: delivery.source, now_ms: delivery.now_ms, timing };
+        Some(match &decoded.frame {
+            Frame::Pulse(pulse) => self.table.take_pulse(at, pulse),
+            Frame::Hello(hello) => self.table.take_hello(header, hello),
+            Frame::Command(_) | Frame::ChannelSceneInfo(_) => self.table.take_other(header),
+        })
     }
 
     fn status(&self, roster: &Roster<'_>, boot_epoch: u32) -> OwnStatus {
@@ -251,7 +286,7 @@ fn ignored_view(roster: &Roster<'_>, board: &HeardBoard, reason: IgnoredReason) 
 }
 
 fn placed_state() -> PsramBox<PresenceState> {
-    // SAFETY: each field is written once below: the `MAX_HEARD_BOARDS` slots, `own`, `mode`, `mac_known`.
+    // SAFETY: each field is written once below: the `MAX_HEARD_BOARDS` slots, `own`, `mode`, `mac_known`, `link`.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<PresenceState>| {
             let state = place.as_mut_ptr();
@@ -262,6 +297,7 @@ fn placed_state() -> PsramBox<PresenceState> {
             ptr::addr_of_mut!((*state).own).write(OwnFacts::default());
             ptr::addr_of_mut!((*state).mode).write(OwnMode::Off);
             ptr::addr_of_mut!((*state).mac_known).write(false);
+            ptr::addr_of_mut!((*state).link).write(0);
         })
     }
 }

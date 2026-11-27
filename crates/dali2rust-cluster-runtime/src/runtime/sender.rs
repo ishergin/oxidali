@@ -17,7 +17,7 @@ use dali2rust_contracts::bus::{
 };
 use dali2rust_contracts::msg::{
     fixed_text_32, fixed_text_64, BusCommandPayload, ClusterForgetNodeCommand, ClusterStateChangedEvent,
-    ClusterSubject, DeliveryStatus, ErrorCode, FixedText32,
+    ClusterSubject, DeliveryStatus, ErrorCode, FixedText32, FixedText64,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
@@ -29,7 +29,7 @@ use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_platform::net::NetworkLink;
 
 use crate::frame::{cluster_tag, encode, DatagramBuffer, Frame, Header, Hello, Pulse};
-use crate::presence::{OwnFacts, OwnMode};
+use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 
 use super::counters::{bump, ClusterCounters};
 use super::receiver::{run_receiver, LinkHandoff};
@@ -40,7 +40,6 @@ pub const NODE_HEARD: &str = "node_heard";
 pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] =
     &["ClusterSettingsChangedEvent", "IpAddressAssignedEvent", "DaliSettingsChangedEvent"];
 
-const HALF_CLOCK_MS: u32 = 1 << 31;
 
 static SENDER_STACK: StackLowWater = StackLowWater::new("cluster_tx", std_thread_stack::EVENT_WORKER_STACK);
 
@@ -111,8 +110,11 @@ fn run_sender(inbox: BusSubscriberRx, ports: &ClusterWorkerPorts, handoff: Sende
 struct Bound {
     link: Arc<dyn ClusterLink>,
     port: u16,
-    since_ms: u32,
+    listen: ListenWindow,
+    claim: Claim,
 }
+
+type Claim = (u8, FixedText64);
 
 struct Reading {
     settings: ClusterSettingsView,
@@ -137,6 +139,10 @@ impl Reading {
     fn wanted_port(&self) -> Option<u16> {
         let reachable = self.settings.enabled && self.leased && self.mac.is_some();
         reachable.then_some(self.settings.port)
+    }
+
+    fn claim(&self) -> Claim {
+        (self.settings.node_number, fixed_text_64(&self.settings.cluster_name))
     }
 
     const fn wire(&self) -> u8 {
@@ -185,7 +191,7 @@ impl<'a> NodeSender<'a> {
     fn advance(&mut self, now_ms: u32) {
         let reading = Reading::of(self.ports);
         self.reconcile(&reading, now_ms);
-        let listened_ms = self.link.as_ref().map_or(0, |bound| now_ms.wrapping_sub(bound.since_ms));
+        let listened_ms = self.listened_ms(&reading, now_ms);
         let base = self.base_mode(&reading);
         let settled = self.ports.presence.settle(reading.identity(), base, listened_ms, now_ms);
         if settled.entered_running || self.slot_due(now_ms) {
@@ -193,6 +199,18 @@ impl<'a> NodeSender<'a> {
         }
         self.ports.presence.prune(now_ms);
         self.publish_if_changed(now_ms);
+    }
+
+    fn listened_ms(&mut self, reading: &Reading, now_ms: u32) -> u32 {
+        let Some(bound) = self.link.as_mut() else {
+            return 0;
+        };
+        let claim = reading.claim();
+        if bound.claim != claim {
+            bound.claim = claim;
+            bound.listen = ListenWindow::opened_at(now_ms);
+        }
+        bound.listen.listened_ms(now_ms)
     }
 
     fn base_mode(&self, reading: &Reading) -> Option<OwnMode> {
@@ -226,17 +244,18 @@ impl<'a> NodeSender<'a> {
             (Some(port), Some(want)) if port == want => {}
             (None, None) => {}
             (Some(_), None) => self.unbind(),
-            (_, Some(want)) => self.bind(want, now_ms),
+            (_, Some(want)) => self.bind(want, reading.claim(), now_ms),
         }
     }
 
-    fn bind(&mut self, port: u16, now_ms: u32) {
+    fn bind(&mut self, port: u16, claim: Claim, now_ms: u32) {
         self.unbind();
         self.next_slot_ms = now_ms;
         match self.ports.binder.bind(port) {
             Ok(link) => {
-                let _ = self.handoff.send(LinkHandoff::Bound(Arc::clone(&link)));
-                self.link = Some(Bound { link, port, since_ms: now_ms });
+                let generation = self.ports.presence.link();
+                let _ = self.handoff.send(LinkHandoff::Bound { link: Arc::clone(&link), generation });
+                self.link = Some(Bound { link, port, listen: ListenWindow::opened_at(now_ms), claim });
             }
             Err(error) => {
                 bump(&self.ports.counters.bind_failures_total);

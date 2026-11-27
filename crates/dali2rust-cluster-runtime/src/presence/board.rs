@@ -3,7 +3,7 @@ use dali2rust_contracts::msg::{fixed_text_32, fixed_text_64, FixedText32, FixedT
 use crate::frame::{Header, Hello, NodeClaim, Pulse};
 use crate::sequence::{Arrival, SequenceWindow};
 
-use super::timing::{elapsed_ms, PresenceTiming};
+use super::timing::{elapsed_ms, in_reach, PresenceTiming};
 
 pub const MAX_HEARD_BOARDS: usize = 24;
 
@@ -76,6 +76,11 @@ impl HeardBoard {
 
     pub const fn is_live(&self, now_ms: u32, timing: PresenceTiming) -> bool {
         self.age_ms(now_ms) <= timing.liveness_ms()
+    }
+
+    fn hold_in_reach(&mut self, now_ms: u32) {
+        self.last_heard_ms = in_reach(now_ms, self.last_heard_ms);
+        self.holding_since_ms = self.holding_since_ms.map(|since_ms| in_reach(now_ms, since_ms));
     }
 
     fn admit(&mut self, header: &Header) -> Taken {
@@ -184,6 +189,12 @@ impl BoardTable {
 
     pub fn clear(&mut self) {
         self.retain(|_| false);
+    }
+
+    pub fn hold_in_reach(&mut self, now_ms: u32) {
+        for board in self.slots.iter_mut().flatten() {
+            board.hold_in_reach(now_ms);
+        }
     }
 
     pub fn marks(&self, mut mark: impl FnMut(&HeardBoard) -> bool) -> [bool; MAX_HEARD_BOARDS] {
