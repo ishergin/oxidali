@@ -2,6 +2,10 @@ use core::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 
 use dali2rust_api::confirmation_bridge::PendingConfirmationSlots;
+use dali2rust_api::http::cluster_settings_state::{
+    ClusterSettingsApplyWatch, ClusterSettingsApplyWatchBridge, ClusterSettingsHttpState,
+    ClusterSettingsHttpStateBridge,
+};
 use dali2rust_api::http::dali_settings_state::{
     DaliSettingsApplyWatch, DaliSettingsApplyWatchBridge, DaliSettingsHttpState,
     DaliSettingsHttpStateBridge,
@@ -158,6 +162,28 @@ pub(crate) struct RegistryHttpPorts {
     pub home_assistant_settings_port:
         Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
     pub display: DisplayHttpPorts,
+    pub cluster: ClusterHttpPorts,
+}
+
+pub(crate) struct ClusterHttpPorts {
+    pub state: Arc<dyn ClusterSettingsHttpState>,
+    pub apply_watch: Arc<dyn ClusterSettingsApplyWatch>,
+    pub read: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
+}
+
+fn role_and_cluster(
+    role_source: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
+    read: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
+    counters: &Arc<RegistryWorkerCounters>,
+) -> (Arc<dyn dali2rust_api::http::role::ControllerRolePort>, ClusterHttpPorts) {
+    let role: Arc<dyn dali2rust_api::http::role::ControllerRolePort> =
+        Arc::new(RoleBridge::new(role_source));
+    let cluster = ClusterHttpPorts {
+        state: Arc::new(ClusterSettingsHttpStateBridge::new(Arc::clone(&read), Arc::clone(&role))),
+        apply_watch: Arc::new(ClusterSettingsApplyWatchBridge::new(apply_watch(counters))),
+        read,
+    };
+    (role, cluster)
 }
 
 pub(crate) struct DisplayHttpPorts {
@@ -231,10 +257,10 @@ pub(crate) fn wire_registry_http_ports(
     worker_read_port: Arc<dyn RegistryReadPort>,
     store: Arc<RegistryStore>,
     http_read: RegistryHttpReadPorts,
-    registry_counters: Arc<RegistryWorkerCounters>,
+    c: &Arc<RegistryWorkerCounters>,
     transfer: TransferSeams,
 ) -> RegistryHttpPorts {
-    let c = &registry_counters;
+    let (role_port, cluster) = role_and_cluster(http_read.dali_settings_role, http_read.cluster, c);
     RegistryHttpPorts {
         read_port: worker_read_port,
         config_transfer: transfer_port(&store, transfer),
@@ -262,7 +288,8 @@ pub(crate) fn wire_registry_http_ports(
         redundancy_settings_state: Arc::new(RedundancySettingsHttpStateBridge::new(
             http_read.redundancy,
         )),
-        role_port: Arc::new(RoleBridge::new(http_read.dali_settings_role)),
+        cluster,
+        role_port,
         redundancy_settings_apply_watch: Arc::new(RedundancySettingsApplyWatchBridge::new(
             apply_watch(c),
         )),
@@ -427,6 +454,7 @@ fn load_array<const N: usize>(counters: &[core::sync::atomic::AtomicU32; N]) -> 
 
 pub(crate) struct ControllerSummaryBridge {
     settings: Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
+    cluster: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
     counters: Arc<dali2rust_mqtt_runtime::MqttCounters>,
     link: Option<Arc<dyn NetworkLink>>,
 }
@@ -434,10 +462,11 @@ pub(crate) struct ControllerSummaryBridge {
 impl ControllerSummaryBridge {
     pub(crate) fn new(
         settings: Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
+        cluster: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
         counters: Arc<dali2rust_mqtt_runtime::MqttCounters>,
         link: Option<Arc<dyn NetworkLink>>,
     ) -> Self {
-        Self { settings, counters, link }
+        Self { settings, cluster, counters, link }
     }
 }
 
@@ -451,6 +480,7 @@ impl dali2rust_api::http::handlers::controller::ControllerSummarySource for Cont
             installation_id: view.controller_id,
             ha_connected: self.counters.is_connected(),
             ha_own_topics_refused: self.counters.own_topics_refused(),
+            cluster_enabled: self.cluster.cluster_settings_view().enabled,
             mac: link.and_then(|l| l.hardware_address()),
             hostname: link.and_then(|l| l.hostname()),
             ipv4: link.and_then(|l| l.status().ipv4),

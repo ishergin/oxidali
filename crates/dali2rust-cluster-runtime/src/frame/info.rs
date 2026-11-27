@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::codec::{put, write_head, DatagramBuffer, EncodeError, FrameKind, Rejection};
 use super::command::RecordRef;
 use super::header::Header;
-use super::limits::{is_group, is_node_scene, MAX_NAME_BYTES};
+use super::limits::{is_adapter, is_group, is_node_scene, MAX_NAME_BYTES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageMeta {
@@ -61,6 +61,12 @@ pub struct LocalName<'a> {
     pub name: &'a str,
 }
 
+impl LocalName<'_> {
+    const fn in_range(&self, number_in_range: bool) -> bool {
+        number_in_range && is_adapter(self.adapter) && self.name.len() <= MAX_NAME_BYTES
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InfoElement<'a> {
     ChannelRecord(#[serde(borrow)] Record<'a>),
@@ -78,13 +84,15 @@ impl InfoElement<'_> {
             Self::ChannelRecord(record) | Self::SceneRecord(record) => {
                 record.id.in_range() && record.name.len() <= MAX_NAME_BYTES
             }
-            Self::ChannelPart(part) => part.channel.in_range() && is_group(part.group),
-            Self::ScenePart(part) => part.scene.in_range() && is_node_scene(part.node_scene),
-            Self::GroupMap(_) => true,
-            Self::GroupName(name) => is_group(name.number) && name.name.len() <= MAX_NAME_BYTES,
-            Self::SceneName(name) => {
-                is_node_scene(name.number) && name.name.len() <= MAX_NAME_BYTES
+            Self::ChannelPart(part) => {
+                is_adapter(part.adapter) && part.channel.in_range() && is_group(part.group)
             }
+            Self::ScenePart(part) => {
+                is_adapter(part.adapter) && part.scene.in_range() && is_node_scene(part.node_scene)
+            }
+            Self::GroupMap(map) => is_adapter(map.adapter),
+            Self::GroupName(name) => name.in_range(is_group(name.number)),
+            Self::SceneName(name) => name.in_range(is_node_scene(name.number)),
         }
     }
 }

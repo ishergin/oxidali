@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::cluster::{ClusterForwarding, ClusterTextField};
 use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText60, FixedText64, FixedText96};
 use super::kinds::{
     CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DimDirection, DiscoveryMode,
@@ -1228,6 +1229,53 @@ declare_bus_payloads! {
         screensaver_timeout_s: u32::MAX,
         pages_mask: u8::MAX,
     };
+
+    pub struct ClusterSettingsUpdateCommand {
+        pub series: u64,
+        pub patch_mask: u16,
+        pub enabled: bool,
+        pub node_number: u8,
+        pub port: u16,
+        pub wire_same_as: Option<u8>,
+        pub forwarding: ClusterForwarding,
+        pub accept_all_lamps: bool,
+        pub send_all_lamps: bool,
+        pub accept_single_lamps: bool,
+        pub wire_protection: bool,
+    }
+    budget = ClusterSettingsUpdateCommand {
+        series: u64::MAX,
+        patch_mask: u16::MAX,
+        enabled: true,
+        node_number: u8::MAX,
+        port: u16::MAX,
+        wire_same_as: Some(u8::MAX),
+        forwarding: ClusterForwarding { operator: true, home_assistant: true, hcl: true, foreign_master: true },
+        accept_all_lamps: true,
+        send_all_lamps: true,
+        accept_single_lamps: true,
+        wire_protection: true,
+    };
+
+    pub struct ClusterTextUpdateCommand {
+        pub series: u64,
+        pub field: ClusterTextField,
+        pub text: FixedText64,
+    }
+    budget = ClusterTextUpdateCommand {
+        series: u64::MAX,
+        field: ClusterTextField::ClusterName,
+        text: crate::msg::payload_test_samples::worst_text64(),
+    };
+
+    pub struct ClusterSettingsCommitCommand {
+        pub series: u64,
+        pub frames: u8,
+    }
+    budget = ClusterSettingsCommitCommand {
+        series: u64::MAX,
+        frames: u8::MAX,
+    };
 }
 
 impl FirmwareUpdateBeginCommand {
@@ -1489,6 +1537,33 @@ impl Dali103FeedbackConfigureCommand {
             FeedbackPatchField::InactiveColour => &mut self.inactive_colour,
         };
         *slot = value;
+        self.patch_mask |= field.bit();
+    }
+}
+
+patch_fields! {
+    ClusterSettingsField: u16 {
+        Enabled = 0,
+        NodeNumber = 1,
+        Port = 2,
+        Wire = 3,
+        ForwardOperator = 4,
+        ForwardHomeAssistant = 5,
+        ForwardHcl = 6,
+        ForwardForeignMaster = 7,
+        AcceptAllLamps = 8,
+        SendAllLamps = 9,
+        AcceptSingleLamps = 10,
+        WireProtection = 11,
+    }
+}
+
+impl ClusterSettingsUpdateCommand {
+    pub const fn patches(&self, field: ClusterSettingsField) -> bool {
+        self.patch_mask & field.bit() != 0
+    }
+
+    pub fn patch(&mut self, field: ClusterSettingsField) {
         self.patch_mask |= field.bit();
     }
 }

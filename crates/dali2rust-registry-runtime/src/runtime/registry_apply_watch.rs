@@ -66,6 +66,15 @@ impl DisplaySettingsApplyWatchPort for RegistryApplyWatch {
     }
 }
 
+impl dali2rust_domain::registry::ClusterSettingsApplyWatchPort for RegistryApplyWatch {
+    fn cluster_settings_applied_load(&self) -> u32 {
+        self.counters
+            .command
+            .cluster_settings_applied
+            .load(Ordering::Acquire)
+    }
+}
+
 impl PollerSettingsApplyWatchPort for RegistryApplyWatch {
     fn poller_settings_applied_load(&self) -> u32 {
         self.counters

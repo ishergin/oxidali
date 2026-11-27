@@ -44,6 +44,10 @@ pub trait PollerSettingsReadPort: Send + Sync {
     fn poller_settings_view(&self) -> PollerSettingsView;
 }
 
+pub trait ClusterSettingsReadPort: Send + Sync {
+    fn cluster_settings_view(&self) -> super::cluster::ClusterSettingsView;
+}
+
 pub trait DisplaySettingsReadPort: Send + Sync {
     fn display_settings_view(&self) -> DisplaySettingsView;
 }
@@ -248,6 +252,10 @@ pub trait AdapterApplyWatchPort: Send + Sync {
 
 pub trait PollerSettingsApplyWatchPort: Send + Sync {
     fn poller_settings_applied_load(&self) -> u32;
+}
+
+pub trait ClusterSettingsApplyWatchPort: Send + Sync {
+    fn cluster_settings_applied_load(&self) -> u32;
 }
 
 pub trait DisplaySettingsApplyWatchPort: Send + Sync {

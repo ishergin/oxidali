@@ -22,7 +22,7 @@ pub use info::{
     LocalName, PageMeta, PartFlags, PushError, Record, ScenePart,
 };
 pub use limits::{
-    MAX_CLUSTER_NAME_BYTES, MAX_INSTALLATION_BYTES, MAX_NAME_BYTES, NODE_COUNT,
+    ADAPTER_COUNT, MAX_CLUSTER_NAME_BYTES, MAX_INSTALLATION_BYTES, MAX_NAME_BYTES, NODE_COUNT,
     NUMBERS_PER_NODE, RECORD_NUMBER_COUNT,
 };
 pub use presence::{Hello, NodeClaim, Pulse};

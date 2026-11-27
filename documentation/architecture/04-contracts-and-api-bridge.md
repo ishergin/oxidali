@@ -67,7 +67,8 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   bytes in a test and every enum on the wire its variant order, so a reused contract type
   that changes shape or order changes them too.
 - A value outside its range is refused by the encoder and rejects the frame in the
-  decoder.
+  decoder. The ranges — nodes, record numbers, adapters, lamps, groups, scenes — are the
+  registry's own limits in `dali2rust_domain::registry`, never a copy.
 - A large frame is a page of elements. The page writer encodes one element at a time into
   the caller's datagram buffer and closes the page when the next one does not fit; the
   decoder checks every element, then hands them out one at a time, borrowed from the

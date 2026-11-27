@@ -1,4 +1,5 @@
 mod adapter;
+mod cluster_settings;
 mod command_ctx;
 mod config_write;
 mod confirm;
@@ -43,6 +44,7 @@ const MEMORY_BANK_STAGING_MAX_AGE_MS: u64 = 30_000;
 
 use crate::runtime::registry::config_write_stage::CONFIG_WRITE_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::hcl_schedules::HCL_SCHEDULE_STAGE_MAX_AGE_MS;
+use crate::runtime::registry::cluster_settings::CLUSTER_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::home_assistant_settings::HOME_ASSISTANT_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
@@ -164,6 +166,7 @@ pub struct RegistryCommandCounters {
     pub dali_settings_applied: AtomicU32,
     pub redundancy_settings_applied: AtomicU32,
     pub display_settings_applied: AtomicU32,
+    pub cluster_settings_applied: AtomicU32,
     pub policies_applied: AtomicU32,
     pub slice_reloads: AtomicU32,
     pub home_assistant_settings_applied: AtomicU32,
@@ -279,6 +282,7 @@ fn evict_and_flush_on_idle(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
         .evict_stale_hcl_schedule_stages(HCL_SCHEDULE_STAGE_MAX_AGE_MS);
     deps.store
         .evict_stale_home_assistant_stage(HOME_ASSISTANT_STAGE_MAX_AGE_MS);
+    deps.store.evict_stale_cluster_stage(CLUSTER_STAGE_MAX_AGE_MS);
     deps.store.evict_stale_import();
     flush_paced(deps, clock, |_| PERSISTENCE_DEBOUNCE);
     announce_queued(deps);

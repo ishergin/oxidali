@@ -344,6 +344,22 @@ pub(crate) fn display_settings_changed(
     }
 }
 
+pub(crate) fn publish_cluster_settings_changed(
+    publisher: &BusPublisher,
+    correlation_id: u64,
+    target_adapter_id: u16,
+    applied: &super::cluster_settings::ClusterSettingsRecord,
+) -> PublishResult {
+    let payload = cluster_settings_changed(applied);
+    publish_registry_event(publisher, correlation_id, target_adapter_id, payload)
+}
+
+pub(crate) fn cluster_settings_changed(
+    applied: &super::cluster_settings::ClusterSettingsRecord,
+) -> dali2rust_contracts::msg::ClusterSettingsChangedEvent {
+    dali2rust_contracts::msg::ClusterSettingsChangedEvent { enabled: applied.0.enabled }
+}
+
 pub(crate) fn publish_adapter_settings_changed(
     publisher: &BusPublisher,
     adapter_id: u8,

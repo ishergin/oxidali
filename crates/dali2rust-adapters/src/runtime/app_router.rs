@@ -49,6 +49,7 @@ use dali2rust_api::http::handlers::redundancy::{
 use dali2rust_api::http::handlers::settings_dali::{
     DaliSettingsGetHandler, DaliSettingsPatchHandler,
 };
+use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterSettingsPatchHandler};
 use dali2rust_api::http::handlers::settings_display::{
     DisplaySettingsGetHandler, DisplaySettingsPatchHandler,
 };
@@ -868,6 +869,17 @@ fn wire_settings_display(
 }
 
 #[inline(never)]
+fn wire_cluster(builder: AppBuilder, bus: &HttpBusDispatch, registry: &RegistryHttpPorts) -> AppBuilder {
+    let ports = &registry.cluster;
+    builder
+        .with_handler(RouteKey::ClusterSettingsGet, read(&ports.state, ClusterSettingsGetHandler::new))
+        .with_handler(
+            RouteKey::ClusterSettingsPatch,
+            mutation(bus, &ports.state, &ports.apply_watch, ClusterSettingsPatchHandler::new),
+        )
+}
+
+#[inline(never)]
 fn wire_settings_and_lamps(
     builder: AppBuilder,
     bus: &HttpBusDispatch,
@@ -877,6 +889,7 @@ fn wire_settings_and_lamps(
     let builder = wire_settings_poller(builder, bus, registry);
     let builder = wire_settings_dali(builder, bus, registry);
     let builder = wire_settings_display(builder, bus, registry);
+    let builder = wire_cluster(builder, bus, registry);
     let builder = wire_redundancy(builder, bus, registry, redundancy_read);
     let builder = wire_policies(builder, bus, registry);
     let builder = wire_config_transfer(builder, bus, &registry.config_transfer);

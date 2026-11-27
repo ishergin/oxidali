@@ -38,7 +38,7 @@ pub(crate) fn init_registry_slice(
         reads.worker,
         Arc::clone(&store),
         reads.http,
-        Arc::clone(&counters),
+        &counters,
         crate::runtime::http_bridges::TransferSeams {
             slices: persistence_slices.clone(),
             adapter_count,
@@ -91,6 +91,7 @@ pub(crate) struct RegistryHttpReadPorts {
     pub policies: Arc<dyn dali2rust_domain::registry::PoliciesReadPort>,
     pub home_assistant: Arc<dyn dali2rust_domain::registry::HomeAssistantSettingsReadPort>,
     pub display: Arc<dyn dali2rust_domain::registry::DisplaySettingsReadPort>,
+    pub cluster: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
 }
 
 pub(crate) fn new_registry_store(adapter_count: u8) -> Arc<RegistryStore> {
@@ -117,7 +118,8 @@ pub(crate) fn registry_read_handles(store: Arc<RegistryStore>) -> RegistryReadHa
             dali_settings_role: store.clone(),
             policies: store.clone(),
             home_assistant: store.clone(),
-            display: store,
+            display: store.clone(),
+            cluster: store,
         },
     }
 }

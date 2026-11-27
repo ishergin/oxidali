@@ -46,7 +46,7 @@
 - `network` — `hostname`, который несёт интерфейс (он равен `node_id`, его несёт запрос
   DHCP), `mac` линка и `ip` его аренды; поле, за которым ничего нет (адрес до аренды, любое
   поле без линка), — `null`.
-- `cluster` — `enabled: false`, пока кластер не собран.
+- `cluster` — `enabled` из настроек узла кластера ([`cluster.md`](cluster.md)).
 
 Почему установка и узел разделены —
 [ADR-032](../../../architecture/decisions/ADR-032-installation-and-node-identity.md).

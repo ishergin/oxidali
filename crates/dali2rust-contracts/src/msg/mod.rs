@@ -1,4 +1,5 @@
 pub mod bounded;
+pub mod cluster;
 pub mod commands;
 pub mod envelopes;
 pub mod errors;
@@ -15,6 +16,7 @@ pub use bounded::{
     fixed_text_32, fixed_text_48, fixed_text_60, fixed_text_64, fixed_text_96, FixedBytes24, FixedBytes32, FixedItems, FixedText,
     FixedText32, FixedText48, FixedText60, FixedText64, FixedText96,
 };
+pub use cluster::{ClusterForwarding, ClusterTextField};
 pub use commands::{
     MAX_RULES_SOURCE_BYTES, RULE_SOURCE_CHUNK_BYTES,operation_ttl_ms, BusCommandPayload, COMMAND_VARIANT_NAMES};
 pub use envelopes::{BusEnvelope, CommandEnvelope, ConfirmationEnvelope, EventEnvelope};
@@ -113,6 +115,11 @@ pub use commands::{
 };
 pub use commands::PollerSettingsUpdateCommand;
 pub use commands::DisplaySettingsUpdateCommand;
+pub use commands::{
+    ClusterSettingsCommitCommand, ClusterSettingsField, ClusterSettingsUpdateCommand,
+    ClusterTextUpdateCommand,
+};
+pub use events::ClusterSettingsChangedEvent;
 pub use events::DaliSettingsChangedEvent;
 pub use events::{
     Dali103ArbitrationProbedEvent, PoliciesChangedEvent, Dali103HandoverSentEvent, RegistrySliceReloadedEvent, APPLICATION_ACTIVE_UNMOVED, APPLICATION_ACTIVE_MOVED_BY_COMMAND, APPLICATION_ACTIVE_MOVED_BY_WIRE, RedundancySettingsChangedEvent,
