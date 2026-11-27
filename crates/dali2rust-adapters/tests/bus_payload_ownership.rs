@@ -136,6 +136,10 @@ const OBSERVED_ONLY_EVENTS: &[(&str, &str)] = &[
         "the policy is read from the port when it is applied, never latched from an event",
     ),
     (
+        "ClusterSettingsChangedEvent",
+        "a wake for the cluster worker, which is designed but not composed; it reads the settings from the port",
+    ),
+    (
         "Dali103ApplicationControlObservedEvent",
         "retired: nothing publishes it; its slot keeps the wire order of the events after it",
     ),

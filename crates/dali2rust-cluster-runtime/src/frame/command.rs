@@ -1,7 +1,7 @@
 use dali2rust_contracts::msg::{LevelTransition, LightSetpoint};
 use serde::{Deserialize, Serialize};
 
-use super::limits::{is_lamp, is_node, is_record_number};
+use super::limits::{is_adapter, is_lamp, is_node, is_record_number};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BirthMark {
@@ -40,7 +40,7 @@ impl Target {
         match self {
             Self::Channel(channel) => channel.in_range(),
             Self::All => true,
-            Self::Lamp(lamp) => is_node(lamp.node) && is_lamp(lamp.lamp),
+            Self::Lamp(lamp) => is_node(lamp.node) && is_adapter(lamp.adapter) && is_lamp(lamp.lamp),
         }
     }
 }

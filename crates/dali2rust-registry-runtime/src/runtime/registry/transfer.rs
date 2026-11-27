@@ -23,6 +23,7 @@ pub fn transferable_slices(adapter_count: u8) -> Vec<SliceKey> {
     ];
     keys.push(SliceKey::Policies);
     keys.push(SliceKey::HomeAssistantSettings);
+    keys.push(SliceKey::ClusterSettings);
     for bank in 0..SliceKey::INPUT_DEVICE_BANKS {
         keys.push(SliceKey::InputDevices { bank });
     }

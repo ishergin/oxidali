@@ -45,6 +45,7 @@ pub struct ControllerFacts {
     pub ha_enabled: bool,
     pub ha_connected: bool,
     pub ha_own_topics_refused: Vec<String>,
+    pub cluster_enabled: bool,
     pub broker_url: String,
     pub mac: Option<[u8; 6]>,
     pub hostname: Option<String>,
@@ -103,7 +104,7 @@ impl ControllerSummaryHandler {
             firmware_version: self.firmware_version,
             target_mcu: TARGET_MCU,
             uptime_ms: self.uptime.elapsed_ms(),
-            cluster: ControllerClusterBody { enabled: false },
+            cluster: ControllerClusterBody { enabled: facts.cluster_enabled },
             adapter_count: self.adapter_count,
             hydrated: true,
         }

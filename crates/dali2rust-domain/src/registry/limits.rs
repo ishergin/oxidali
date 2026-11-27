@@ -1,3 +1,5 @@
+pub const MAX_ADAPTERS: u8 = 8;
+
 pub const VIRTUAL_LAMP_COUNT: u8 = 64;
 
 pub const GROUP_COUNT: u8 = 16;

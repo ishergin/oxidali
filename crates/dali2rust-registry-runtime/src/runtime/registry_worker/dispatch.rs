@@ -8,6 +8,9 @@ use dali2rust_contracts::msg::BusCommandPayload;
 use crate::runtime::registry::RegistryStore;
 
 use super::adapter::handle_adapter_settings;
+use super::cluster_settings::{
+    handle_cluster_settings_commit, handle_cluster_settings_update, handle_cluster_text_update,
+};
 use super::command_ctx::{CommandCtx, ReloadPorts};
 use super::config_write::handle_config_write_commit;
 use super::group::GroupMatrix;
@@ -133,4 +136,10 @@ dali2rust_contracts::dispatch_bus_commands! {
         handle_controller_id_update(ctx, body),
     HomeAssistantSettingsCommitCommand(body) =>
         handle_settings_commit(ctx, body),
+    ClusterSettingsUpdateCommand(body) =>
+        handle_cluster_settings_update(ctx, body),
+    ClusterTextUpdateCommand(body) =>
+        handle_cluster_text_update(ctx, body),
+    ClusterSettingsCommitCommand(body) =>
+        handle_cluster_settings_commit(ctx, body),
 }

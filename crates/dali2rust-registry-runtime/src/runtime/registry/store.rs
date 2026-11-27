@@ -22,7 +22,12 @@ use dali2rust_platform::slice_store::SliceKey;
 use dali2rust_contracts::msg::DaliSceneTargetState;
 
 pub(crate) use dali2rust_domain::registry::MAX_SHORT_ADDRESSES;
-pub(crate) const MAX_DIRTY_ADAPTERS: usize = 8;
+pub(crate) const MAX_DIRTY_ADAPTERS: usize = dali2rust_domain::registry::MAX_ADAPTERS as usize;
+
+const _: () = assert!(
+    dali2rust_bsp::slice_layout::MAX_ADAPTERS == dali2rust_domain::registry::MAX_ADAPTERS as u32,
+    "the flash layout reserves slots for exactly the adapters the registry and the cluster codec know"
+);
 
 pub fn registry_unix_ms() -> u64 {
     unix_wall_clock_millis()
@@ -69,6 +74,7 @@ pub(crate) struct DirtyFlags {
     pub dali_settings: AtomicBool,
     pub redundancy_settings: AtomicBool,
     pub display_settings: AtomicBool,
+    pub cluster_settings: AtomicBool,
     pub policies: AtomicBool,
     pub home_assistant_settings: AtomicBool,
     pub input_devices: AtomicBool,
@@ -92,6 +98,7 @@ impl DirtyFlags {
             dali_settings: AtomicBool::new(false),
             redundancy_settings: AtomicBool::new(false),
             display_settings: AtomicBool::new(false),
+            cluster_settings: AtomicBool::new(false),
             policies: AtomicBool::new(false),
             home_assistant_settings: AtomicBool::new(false),
             input_devices: AtomicBool::new(false),
@@ -115,6 +122,7 @@ impl DirtyFlags {
             (&self.dali_settings, withheld::DALI_SETTINGS),
             (&self.redundancy_settings, withheld::REDUNDANCY_SETTINGS),
             (&self.display_settings, withheld::DISPLAY_SETTINGS),
+            (&self.cluster_settings, withheld::CLUSTER_SETTINGS),
             (&self.policies, withheld::POLICIES),
             (&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS),
             (&self.input_devices, withheld::INPUT_DEVICES),
@@ -232,6 +240,12 @@ impl DirtyFlags {
         take_display_settings_dirty,
         display_settings,
         withheld::DISPLAY_SETTINGS
+    );
+    global_dirty_flag!(
+        mark_cluster_settings_dirty,
+        take_cluster_settings_dirty,
+        cluster_settings,
+        withheld::CLUSTER_SETTINGS
     );
     global_dirty_flag!(mark_policies_dirty, take_policies_dirty, policies, withheld::POLICIES);
     global_dirty_flag!(
@@ -361,6 +375,8 @@ pub(crate) struct Inner {
     pub(crate) dali_settings: super::dali_settings::DaliSettingsRecord,
     pub(crate) redundancy_settings: super::redundancy_settings::RedundancySettingsRecord,
     pub(crate) display_settings: super::display_settings::DisplaySettingsRecord,
+    pub(crate) cluster_settings: super::cluster_settings::ClusterSettingsRecord,
+    pub(crate) cluster_stage: Option<super::cluster_settings::ClusterStage>,
     pub(crate) policies: super::policies::PoliciesRecord,
     pub(crate) home_assistant_settings:
         super::home_assistant_settings::HomeAssistantSettingsRecord,

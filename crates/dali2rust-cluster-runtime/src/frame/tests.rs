@@ -43,6 +43,7 @@ const INFO_SET: u32 = 9;
 const SAMPLE_GROUP: u8 = 5;
 const SAMPLE_ADAPTER: u8 = 1;
 const SAMPLE_WIRE: u8 = 3;
+const SAMPLE_PART_ADAPTER_AT: usize = 31;
 const SAMPLE_PART_GROUP_AT: usize = 39;
 const LAST_LAMP: u8 = VIRTUAL_LAMP_COUNT - 1;
 const LAST_GROUP: u8 = GROUP_COUNT - 1;
@@ -55,6 +56,7 @@ const CHANNEL_3: RecordRef = RecordRef { number: 3, mark: MARK };
 const LAST_RECORD: u8 = RECORD_NUMBER_COUNT - 1;
 const WIDEST_RECORD: RecordRef = RecordRef { number: LAST_RECORD, mark: WIDEST_MARK };
 const LAST_NODE: u8 = NODE_COUNT - 1;
+const LAST_ADAPTER: u8 = ADAPTER_COUNT - 1;
 
 fn header() -> Header {
     Header {
@@ -211,7 +213,7 @@ fn widest_elements(name: &str) -> [InfoElement<'_>; 7] {
         InfoElement::ChannelRecord(Record { id: WIDEST_RECORD, name, revision: u32::MAX }),
         InfoElement::SceneRecord(Record { id: WIDEST_RECORD, name, revision: u32::MAX }),
         InfoElement::ChannelPart(ChannelPart {
-            adapter: u8::MAX,
+            adapter: LAST_ADAPTER,
             channel: WIDEST_RECORD,
             group: LAST_GROUP,
             taken: true,
@@ -221,15 +223,15 @@ fn widest_elements(name: &str) -> [InfoElement<'_>; 7] {
             written_lamps: u64::MAX,
         }),
         InfoElement::ScenePart(ScenePart {
-            adapter: u8::MAX,
+            adapter: LAST_ADAPTER,
             scene: WIDEST_RECORD,
             node_scene: LAST_SCENE,
             flags,
             revision: u32::MAX,
         }),
-        InfoElement::GroupMap(GroupMap { adapter: u8::MAX, occupied: u16::MAX }),
-        InfoElement::GroupName(LocalName { adapter: u8::MAX, number: LAST_GROUP, name }),
-        InfoElement::SceneName(LocalName { adapter: u8::MAX, number: LAST_SCENE, name }),
+        InfoElement::GroupMap(GroupMap { adapter: LAST_ADAPTER, occupied: u16::MAX }),
+        InfoElement::GroupName(LocalName { adapter: LAST_ADAPTER, number: LAST_GROUP, name }),
+        InfoElement::SceneName(LocalName { adapter: LAST_ADAPTER, number: LAST_SCENE, name }),
     ]
 }
 
@@ -601,12 +603,14 @@ fn a_command_outside_the_cluster_s_numbers_is_refused_and_rejected() {
     let past_last_record = RecordRef { number: RECORD_NUMBER_COUNT, mark: MARK };
     let past_last_lamp = LampAddress { node: 0, adapter: 0, lamp: VIRTUAL_LAMP_COUNT };
     let past_last_node = LampAddress { node: NODE_COUNT, adapter: 0, lamp: 0 };
+    let past_last_adapter = LampAddress { node: 0, adapter: ADAPTER_COUNT, lamp: 0 };
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     assert!(decode(&unchecked(FrameKind::Command, &channel_command())).is_ok());
     for command in [
         Action::Light { target: Target::Channel(past_last_record), verb: LightVerb::StopFade },
         Action::Light { target: Target::Lamp(past_last_lamp), verb: LightVerb::StopFade },
         Action::Light { target: Target::Lamp(past_last_node), verb: LightVerb::StopFade },
+        Action::Light { target: Target::Lamp(past_last_adapter), verb: LightVerb::StopFade },
         Action::RecallScene { scene: past_last_record, scope: RecallScope::Node },
         Action::RecallScene { scene: CHANNEL_3, scope: RecallScope::Channel(past_last_record) },
     ]
@@ -640,10 +644,11 @@ fn a_pulse_with_an_overlong_name_or_a_wire_past_the_last_node_is_refused_and_rej
 #[test]
 fn an_element_outside_its_range_is_refused_by_the_page() {
     let long_name = "x".repeat(MAX_NAME_BYTES + 1);
-    let [record, _, channel_part, scene_part, _, group_name, scene_name] = info_sample();
+    let [record, _, channel_part, scene_part, group_map, group_name, scene_name] = info_sample();
     let InfoElement::ChannelRecord(record) = record else { panic!("record") };
     let InfoElement::ChannelPart(channel_part) = channel_part else { panic!("part") };
     let InfoElement::ScenePart(scene_part) = scene_part else { panic!("part") };
+    let InfoElement::GroupMap(group_map) = group_map else { panic!("map") };
     let InfoElement::GroupName(group_name) = group_name else { panic!("name") };
     let InfoElement::SceneName(scene_name) = scene_name else { panic!("name") };
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
@@ -660,6 +665,11 @@ fn an_element_outside_its_range_is_refused_by_the_page() {
         InfoElement::GroupName(LocalName { name: &long_name, ..group_name }),
         InfoElement::SceneName(LocalName { name: &long_name, ..scene_name }),
         InfoElement::SceneName(LocalName { number: SCENE_COUNT, ..scene_name }),
+        InfoElement::ChannelPart(ChannelPart { adapter: ADAPTER_COUNT, ..channel_part }),
+        InfoElement::ScenePart(ScenePart { adapter: ADAPTER_COUNT, ..scene_part }),
+        InfoElement::GroupMap(GroupMap { adapter: ADAPTER_COUNT, ..group_map }),
+        InfoElement::GroupName(LocalName { adapter: ADAPTER_COUNT, ..group_name }),
+        InfoElement::SceneName(LocalName { adapter: ADAPTER_COUNT, ..scene_name }),
     ] {
         assert_eq!(writer.push(&element), Err(PushError::OutOfRange));
     }
@@ -669,9 +679,14 @@ fn an_element_outside_its_range_is_refused_by_the_page() {
 fn an_element_out_of_range_inside_a_received_page_rejects_the_page() {
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let len = sample_page(&mut buffer, true);
-    let mut bytes = buffer[..len].to_vec();
-    let group_at = bytes.len() - GOLDEN_INFO_BODY.len() + SAMPLE_PART_GROUP_AT;
-    assert_eq!(bytes[group_at], SAMPLE_GROUP);
-    bytes[group_at] = GROUP_COUNT;
-    assert_eq!(decode(&bytes), Err(Rejection::Malformed));
+    let body_at = len - GOLDEN_INFO_BODY.len();
+    for (at, sample, past_last) in [
+        (SAMPLE_PART_GROUP_AT, SAMPLE_GROUP, GROUP_COUNT),
+        (SAMPLE_PART_ADAPTER_AT, SAMPLE_ADAPTER, ADAPTER_COUNT),
+    ] {
+        let mut bytes = buffer[..len].to_vec();
+        assert_eq!(bytes[body_at + at], sample);
+        bytes[body_at + at] = past_last;
+        assert_eq!(decode(&bytes), Err(Rejection::Malformed));
+    }
 }

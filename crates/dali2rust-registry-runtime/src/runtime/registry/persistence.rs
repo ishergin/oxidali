@@ -13,6 +13,7 @@ use crate::runtime::registry::input_devices::{
     hydrate_input_devices_bank_inner, rebank_input_devices, PersistableInputDevicesSlice,
 };
 
+use super::cluster_settings::decode_cluster_settings;
 use super::dali_settings::decode_dali_settings_slice;
 use super::groups::{GroupMembershipRowRecord, GroupRecord};
 use super::persistence_slices::{
@@ -28,7 +29,7 @@ use super::persistence_slices::{
     POLLER_SETTINGS_SLICE_VERSION,
     POLICIES_SLICE_VERSION,
     REDUNDANCY_SETTINGS_SLICE_VERSION,
-    DISPLAY_SETTINGS_SLICE_VERSION,
+    DISPLAY_SETTINGS_SLICE_VERSION, CLUSTER_SETTINGS_SLICE_VERSION,
     SCENES_SLICE_VERSION,
     VIRTUAL_LAMPS_SLICE_VERSION,
 };
@@ -338,6 +339,7 @@ impl crate::runtime::registry::store::RegistryStore {
         self.flush_dali_settings_if_dirty(slices);
         self.flush_redundancy_settings_if_dirty(slices);
         self.flush_display_settings_if_dirty(slices);
+        self.flush_cluster_settings_if_dirty(slices);
         self.flush_policies_if_dirty(slices);
         self.flush_home_assistant_settings_if_dirty(slices);
         self.flush_input_devices_if_dirty(slices);
@@ -524,6 +526,13 @@ impl crate::runtime::registry::store::RegistryStore {
             DISPLAY_SETTINGS_SLICE_VERSION,
             "display_settings",
             crate::runtime::registry::display_settings::persistable_snapshot;
+        flush_cluster_settings_if_dirty =>
+            take_cluster_settings_dirty,
+            mark_cluster_settings_dirty,
+            SliceKey::ClusterSettings,
+            CLUSTER_SETTINGS_SLICE_VERSION,
+            "cluster_settings",
+            crate::runtime::registry::cluster_settings::persistable_snapshot;
         flush_policies_if_dirty =>
             take_policies_dirty,
             mark_policies_dirty,
@@ -692,6 +701,7 @@ fn registry_kind(key: SliceKey) -> Option<PersistenceSliceKind> {
         SliceKey::RedundancySettings => PersistenceSliceKind::RedundancySettings,
         SliceKey::Policies => PersistenceSliceKind::Policies,
         SliceKey::DisplaySettings => PersistenceSliceKind::DisplaySettings,
+        SliceKey::ClusterSettings => PersistenceSliceKind::ClusterSettings,
         SliceKey::InputDevices { bank } => PersistenceSliceKind::InputDevices { bank },
         SliceKey::ControllerSettings | SliceKey::Rules { .. } => return None,
     })
@@ -727,6 +737,7 @@ fn validate_kind(kind: &PersistenceSliceKind, bytes: &[u8]) -> Result<(), StoreE
         PersistenceSliceKind::DisplaySettings => {
             decodes::<PersistableDisplaySettingsSlice>(bytes, DISPLAY_SETTINGS_SLICE_VERSION)
         }
+        PersistenceSliceKind::ClusterSettings => decode_cluster_settings(bytes).map(drop),
         PersistenceSliceKind::InputDevices { .. } => {
             decodes::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION)
         }
@@ -832,6 +843,7 @@ fn key_of(kind: &PersistenceSliceKind) -> SliceKey {
         PersistenceSliceKind::RedundancySettings => SliceKey::RedundancySettings,
         PersistenceSliceKind::Policies => SliceKey::Policies,
         PersistenceSliceKind::DisplaySettings => SliceKey::DisplaySettings,
+        PersistenceSliceKind::ClusterSettings => SliceKey::ClusterSettings,
         PersistenceSliceKind::InputDevices { bank } => SliceKey::InputDevices { bank },
     }
 }
@@ -954,6 +966,7 @@ fn mark_slice_dirty(store: &RegistryStore, kind: &PersistenceSliceKind) {
         PersistenceSliceKind::RedundancySettings => store.dirty.mark_redundancy_settings_dirty(),
         PersistenceSliceKind::Policies => store.dirty.mark_policies_dirty(),
         PersistenceSliceKind::DisplaySettings => store.dirty.mark_display_settings_dirty(),
+        PersistenceSliceKind::ClusterSettings => store.dirty.mark_cluster_settings_dirty(),
         PersistenceSliceKind::InputDevices { .. } => store.dirty.mark_input_devices_dirty(),
     }
 }
@@ -1057,11 +1070,17 @@ hydrate_wrappers! { decoded:
         "no dali settings stored",
         decode_dali_settings,
         crate::runtime::registry::dali_settings::hydrate_dali_settings_inner;
+    hydrate_cluster_settings_slice =>
+        PersistenceSliceKind::ClusterSettings,
+        "cluster settings",
+        "no cluster settings stored",
+        decode_cluster_settings,
+        crate::runtime::registry::cluster_settings::hydrate_cluster_settings_inner;
 }
 
 type GlobalHydrate = fn(&RegistryStore, &dyn SliceStore, &mut HydrateSink<'_>);
 
-const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 7] = [
+const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 8] = [
     (SliceKey::HclSchedules, hydrate_hcl_schedules_slice),
     (SliceKey::PollerSettings, hydrate_poller_settings_slice),
     (SliceKey::DaliSettings, hydrate_dali_settings_slice),
@@ -1069,6 +1088,7 @@ const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 7] = [
     (SliceKey::Policies, hydrate_policies_slice),
     (SliceKey::HomeAssistantSettings, hydrate_home_assistant_settings_slice),
     (SliceKey::DisplaySettings, hydrate_display_settings_slice),
+    (SliceKey::ClusterSettings, hydrate_cluster_settings_slice),
 ];
 
 hydrate_wrappers! { per_adapter:

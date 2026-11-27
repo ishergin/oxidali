@@ -1,19 +1,28 @@
-use dali2rust_domain::registry::{GROUP_COUNT, SCENE_COUNT, VIRTUAL_LAMP_COUNT};
+use dali2rust_domain::registry::{
+    CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE, CLUSTER_RECORD_NUMBER_COUNT, GROUP_COUNT,
+    MAX_ADAPTERS, MAX_CLUSTER_NAME_BYTES as DOMAIN_CLUSTER_NAME_BYTES, SCENE_COUNT, VIRTUAL_LAMP_COUNT,
+};
 
-pub const NODE_COUNT: u8 = 8;
+pub const NODE_COUNT: u8 = CLUSTER_NODE_COUNT;
 
-pub const NUMBERS_PER_NODE: u8 = 16;
+pub const NUMBERS_PER_NODE: u8 = CLUSTER_NUMBERS_PER_NODE;
 
-pub const RECORD_NUMBER_COUNT: u8 = NODE_COUNT * NUMBERS_PER_NODE;
+pub const RECORD_NUMBER_COUNT: u8 = CLUSTER_RECORD_NUMBER_COUNT;
 
 pub const MAX_NAME_BYTES: usize = 64;
 
-pub const MAX_CLUSTER_NAME_BYTES: usize = MAX_NAME_BYTES;
+pub const MAX_CLUSTER_NAME_BYTES: usize = DOMAIN_CLUSTER_NAME_BYTES;
+
+pub const ADAPTER_COUNT: u8 = MAX_ADAPTERS;
 
 pub const MAX_INSTALLATION_BYTES: usize = 32;
 
 pub(crate) const fn is_node(node: u8) -> bool {
     node < NODE_COUNT
+}
+
+pub(crate) const fn is_adapter(adapter: u8) -> bool {
+    adapter < ADAPTER_COUNT
 }
 
 pub(crate) const fn is_record_number(number: u8) -> bool {

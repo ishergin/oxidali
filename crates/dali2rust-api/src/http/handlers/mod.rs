@@ -19,6 +19,7 @@ pub mod physical_devices;
 pub(crate) mod resource_surface;
 pub mod scenes;
 pub mod settings_home_assistant;
+pub mod cluster;
 pub mod config_transfer;
 pub mod policies;
 pub mod redundancy;

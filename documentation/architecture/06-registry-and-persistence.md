@@ -225,6 +225,11 @@ filtered: they address one device.
   an older image reads the fields it knows and ignores the rest, and a newer one starts a
   field the stored slice lacks from its factory value. Redundancy settings keep a slice of
   their own, whose reset (`enabled: false`) only switches the mechanism off.
+- A stored cluster settings slice that breaks a rule the REST resource enforces — a field
+  out of its range, an enabled node without a cluster name, a shared wire naming this
+  node, the storm combination — does not decode, and is rejected and rewritten with
+  defaults like any other. A reset (a bump or a rejection) takes the node out of the
+  cluster (`enabled: false`, node `0`, the factory forwarding) and touches no other slice.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

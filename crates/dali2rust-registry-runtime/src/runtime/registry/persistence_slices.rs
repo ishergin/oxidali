@@ -15,6 +15,7 @@ pub const REDUNDANCY_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const POLICIES_SLICE_VERSION: u32 = 2;
 pub const HOME_ASSISTANT_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const DISPLAY_SETTINGS_SLICE_VERSION: u32 = 1;
+pub const CLUSTER_SETTINGS_SLICE_VERSION: u32 = 1;
 
 
 
@@ -169,6 +170,23 @@ pub struct PersistableDisplaySettingsSlice {
     pub upside_down: bool,
     pub screensaver_timeout_s: u32,
     pub pages_mask: u8,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PersistableClusterSettingsSlice {
+    pub enabled: bool,
+    pub cluster_name: String,
+    pub node_number: u8,
+    pub port: u16,
+    pub wire_same_as: Option<u8>,
+    pub forward_operator: bool,
+    pub forward_home_assistant: bool,
+    pub forward_hcl: bool,
+    pub forward_foreign_master: bool,
+    pub accept_all_lamps: bool,
+    pub send_all_lamps: bool,
+    pub accept_single_lamps: bool,
+    pub wire_protection: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -229,6 +229,7 @@ fn controller_summary_source(
 ) -> Arc<dyn dali2rust_api::http::handlers::controller::ControllerSummarySource> {
     Arc::new(http_bridges::ControllerSummaryBridge::new(
         Arc::clone(&booted.registry.http.home_assistant_settings_port),
+        Arc::clone(&booted.registry.http.cluster.read),
         Arc::clone(&booted.mqtt_counters),
         link,
     ))
