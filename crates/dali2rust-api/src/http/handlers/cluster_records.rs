@@ -18,8 +18,8 @@ use crate::http::handler::ApiHandler;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    check_body_keys, json_err, json_stream_dto, parse_json_body, parse_resource_id_param,
-    wait_apply_counter, write_json_array_items, APPLY_WATCH_BUDGET_MS,
+    json_err, json_stream_dto, parse_body_object, parse_resource_id_param, wait_apply_counter,
+    write_json_array_items, APPLY_WATCH_BUDGET_MS,
 };
 
 type JsonObject = serde_json::Map<String, serde_json::Value>;
@@ -118,7 +118,7 @@ impl ClusterRecordHandler {
     }
 
     fn create(&self, body: &[u8]) -> Answer {
-        let obj = body_object(body, CREATE_KEYS, CREATE_READ_ONLY)?;
+        let obj = parse_body_object(body, CREATE_KEYS, CREATE_READ_ONLY)?;
         let number = optional_number(&obj)?;
         let name = optional_name(&obj)?;
         let nonce = record_nonce();
@@ -131,18 +131,16 @@ impl ClusterRecordHandler {
 
     fn rename(&self, params: &HashMap<String, String>, body: &[u8]) -> Answer {
         let number = path_number(params)?;
-        let obj = body_object(body, RENAME_KEYS, EDIT_READ_ONLY)?;
+        let obj = parse_body_object(body, RENAME_KEYS, EDIT_READ_ONLY)?;
         let name = required_name(&obj)?;
         let revision = required_revision(&obj)?;
-        self.held(number)?;
         self.commit(ClusterRecordAction::Rename { number, revision }, Some(name))?;
         Ok(json_stream_dto(self.held(number)?))
     }
 
     fn delete(&self, params: &HashMap<String, String>, body: &[u8]) -> Answer {
         let number = path_number(params)?;
-        let revision = required_revision(&body_object(body, DELETE_KEYS, EDIT_READ_ONLY)?)?;
-        self.held(number)?;
+        let revision = required_revision(&parse_body_object(body, DELETE_KEYS, EDIT_READ_ONLY)?)?;
         self.commit(ClusterRecordAction::Delete { number, revision }, None)?;
         Ok(HttpResponse::no_content())
     }
@@ -203,15 +201,6 @@ fn invalid() -> HttpResponse {
 
 fn path_number(params: &HashMap<String, String>) -> Result<u8, HttpResponse> {
     parse_resource_id_param(params, NUMBER_PARAM, u16::from(CLUSTER_RECORD_NUMBER_COUNT) - 1)
-}
-
-fn body_object(body: &[u8], writable: &[&str], read_only: &[&str]) -> Result<JsonObject, HttpResponse> {
-    let value = parse_json_body(body)?;
-    let serde_json::Value::Object(obj) = value else {
-        return Err(json_err(400, "invalid_json"));
-    };
-    check_body_keys(&obj, writable, read_only)?;
-    Ok(obj)
 }
 
 fn optional_number(obj: &JsonObject) -> Result<Option<u8>, HttpResponse> {

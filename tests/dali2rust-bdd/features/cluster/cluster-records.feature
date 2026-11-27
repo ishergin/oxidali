@@ -196,20 +196,26 @@ Feature: Cluster — channel and cluster-scene records on their home node
 
   @id:CLU-026
   Scenario Outline: A record this node is not home to is not found, and a number past the last is no record
-    When I send a GET request to "/api/v1/cluster/<kind>/7"
+    When I POST JSON {"number":4} to "/api/v1/cluster/<kind>"
+    Then the response status should be 201
+    When I send a GET request to "/api/v1/cluster/<kind>/<absent>"
     Then the response status should be 404
-    When I PATCH JSON {"name":"Hall","revision":1} to "/api/v1/cluster/<kind>/7"
+    When I PATCH JSON {"name":"Hall","revision":1} to "/api/v1/cluster/<kind>/<absent>"
     Then the response status should be 404
-    When I DELETE JSON {"revision":1} to "/api/v1/cluster/<kind>/7"
+    When I DELETE JSON {"revision":1} to "/api/v1/cluster/<kind>/<absent>"
     Then the response status should be 404
+    When I send a GET request to "/api/v1/cluster/<kind>/4"
+    Then the JSON pointer "/revision" should be 1
     When I send a GET request to "/api/v1/cluster/<kind>/128"
     Then the response status should be 400
     And the JSON error should be "invalid_resource_id"
 
     Examples:
-      | kind     |
-      | channels |
-      | scenes   |
+      | kind     | absent |
+      | channels | 7      |
+      | channels | 20     |
+      | scenes   | 7      |
+      | scenes   | 20     |
 
   @id:CLU-027
   Scenario Outline: The node number cannot change while the node is home to a record
@@ -270,20 +276,30 @@ Feature: Cluster — channel and cluster-scene records on their home node
 
   @id:CLU-030
   Scenario Outline: A standby reads the records and refuses to write them
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/<kind>"
+    Then the response status should be 201
     Given this controller has stood down
     When I send a GET request to "/api/v1/cluster/<kind>"
     Then the response status should be 200
-    When I POST JSON {"name":"Corridor"} to "/api/v1/cluster/<kind>"
+    When I <method> JSON <body> to "/api/v1/cluster/<path>"
     Then the response status should be 409
     And the JSON error should be "controller_standby"
     And the response header "X-Dali2rust-Role" should be "standby"
     When I send a GET request to "/api/v1/cluster/<kind>"
-    Then the JSON pointer "/<kind>/0" should be absent
+    Then the JSON pointer "/<kind>/1" should be absent
+    When I send a GET request to "/api/v1/cluster/<kind>/2"
+    Then the JSON field "name" should be "Corridor"
+    And the JSON pointer "/revision" should be 1
 
     Examples:
-      | kind     |
-      | channels |
-      | scenes   |
+      | kind     | method | path       | body                          |
+      | channels | POST   | channels   | {"name":"Hall"}               |
+      | channels | PATCH  | channels/2 | {"name":"Hall","revision":1}  |
+      | channels | DELETE | channels/2 | {"revision":1}                |
+      | channels | PATCH  | channels/5 | {"name":"Hall","revision":1}  |
+      | scenes   | POST   | scenes     | {"name":"Hall"}               |
+      | scenes   | DELETE | scenes/2   | {"revision":1}                |
+      | scenes   | DELETE | scenes/5   | {"revision":1}                |
 
   @id:CLU-031
   Scenario Outline: A record write refuses a body it does not take
@@ -294,6 +310,8 @@ Feature: Cluster — channel and cluster-scene records on their home node
     And the JSON error should be "<error>"
     When I send a GET request to "/api/v1/cluster/<kind>/2"
     Then the JSON field "name" should be "Corridor"
+    When I send a GET request to "/api/v1/cluster/<kind>"
+    Then the JSON pointer "/<kind>/1" should be absent
 
     Examples:
       | kind     | method | path        | body                                     | status | error             |

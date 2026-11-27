@@ -42,6 +42,7 @@ pub enum ClusterRecordConflict {
     BlockFull,
     StaleRevision,
     NodeNumberPinned,
+    NonceTaken,
 }
 
 impl ClusterRecordConflict {
@@ -53,6 +54,7 @@ impl ClusterRecordConflict {
             Self::BlockFull => "cluster_block_full",
             Self::StaleRevision => "cluster_stale_revision",
             Self::NodeNumberPinned => "cluster_node_number_pinned",
+            Self::NonceTaken => "cluster_nonce_taken",
         }
     }
 }

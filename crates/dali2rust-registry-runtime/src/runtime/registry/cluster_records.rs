@@ -138,6 +138,9 @@ fn created(
     request: &RecordRequest<'_>,
 ) -> Result<ClusterRecordEntry, ClusterRefusal> {
     let index = create_index(block, node, number)?;
+    if block.entries.iter().any(|held| held.mark.nonce == nonce) {
+        return Err(ClusterRefusal::Record(ClusterRecordConflict::NonceTaken));
+    }
     let generation = block.generation(index).checked_add(1).ok_or(ClusterRefusal::OutOfRange)?;
     let name = named(request.name, request.command.kind, cluster_block(node).start() + index);
     Ok(ClusterRecordEntry { index, mark: ClusterBirthMark { generation, nonce }, name, revision: 1 })
@@ -229,7 +232,7 @@ pub(crate) fn stored_block(
     let mut block = ClusterRecordBlock { entries: Vec::with_capacity(BLOCK_SIZE), generations };
     for record in records {
         let issued = block.generations.get(usize::from(record.index)).copied()?;
-        let fits = record.generation >= 1 && record.generation <= issued && record.revision >= 1;
+        let fits = record.generation >= 1 && record.generation == issued && record.revision >= 1;
         let named = record.name.len() <= MAX_CLUSTER_RECORD_NAME_BYTES;
         let later = block.entries.last().is_none_or(|last| last.index < record.index);
         if !(fits && named && later) {
@@ -260,6 +263,8 @@ mod tests {
         encode_persistence_blob, PersistableClusterSettingsSlice, PersistenceEnvelope,
         CLUSTER_SETTINGS_SLICE_VERSION,
     };
+    use std::sync::atomic::{AtomicU32, Ordering};
+
     use super::super::store::Inner;
     use super::*;
 
@@ -272,8 +277,14 @@ mod tests {
         ClusterPatch::Record(ClusterRecordUpdateCommand { series: SERIES, kind, action })
     }
 
+    static NEXT_NONCE: AtomicU32 = AtomicU32::new(1);
+
     fn create(kind: ClusterRecordKind, number: Option<u8>) -> ClusterPatch {
-        record(kind, ClusterRecordAction::Create { number, nonce: NONCE })
+        create_with(kind, number, NEXT_NONCE.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn create_with(kind: ClusterRecordKind, number: Option<u8>, nonce: u32) -> ClusterPatch {
+        record(kind, ClusterRecordAction::Create { number, nonce })
     }
 
     fn record_name(text: &str) -> ClusterPatch {
@@ -322,7 +333,7 @@ mod tests {
     fn a_record_without_a_number_takes_the_lowest_number_of_the_node_s_block() {
         let store = RegistryStore::with_adapter_count(1);
         commit(&store, vec![node_number(2)]).expect("node 2");
-        commit(&store, vec![create(CHANNEL, None), record_name("Corridor")]).expect("created");
+        commit(&store, vec![create_with(CHANNEL, None, NONCE), record_name("Corridor")]).expect("created");
         let made = held(&store, CHANNEL, 32);
         assert_eq!((made.home_node, made.name.as_str(), made.revision), (2, "Corridor", 1));
         assert_eq!(made.mark, ClusterBirthMark { generation: 1, nonce: NONCE });
@@ -361,6 +372,18 @@ mod tests {
         commit(&store, vec![create(CHANNEL, None)]).expect("the freed number");
         assert_eq!(held(&store, CHANNEL, 0).mark.generation, 2);
         assert_eq!(commit(&store, vec![create(CHANNEL, None)]), conflict(ClusterRecordConflict::BlockFull));
+    }
+
+    #[test]
+    fn a_nonce_names_one_live_record_of_its_kind() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![create_with(CHANNEL, Some(1), NONCE)]).expect("created");
+        let again = commit(&store, vec![create_with(CHANNEL, Some(2), NONCE)]);
+        assert_eq!(again, conflict(ClusterRecordConflict::NonceTaken));
+        assert!(store.cluster_record(CHANNEL, 2).is_none());
+        commit(&store, vec![create_with(SCENE, Some(1), NONCE)]).expect("a scene draws its own");
+        commit(&store, vec![record(CHANNEL, ClusterRecordAction::Delete { number: 1, revision: 1 })]).expect("gone");
+        commit(&store, vec![create_with(CHANNEL, Some(2), NONCE)]).expect("free once its record is gone");
     }
 
     #[test]
@@ -425,7 +448,7 @@ mod tests {
         let store = RegistryStore::with_adapter_count(1);
         commit(&store, vec![create(CHANNEL, Some(1))]).expect("created");
         commit(&store, vec![record(CHANNEL, ClusterRecordAction::Delete { number: 1, revision: 1 })]).expect("gone");
-        commit(&store, vec![create(CHANNEL, Some(1)), record_name("Hall")]).expect("again");
+        commit(&store, vec![create_with(CHANNEL, Some(1), NONCE), record_name("Hall")]).expect("again");
         commit(&store, vec![create(SCENE, Some(9)), record_name("Evening")]).expect("scene");
         let slice = persistable_snapshot(&store.read_inner());
         slice
@@ -450,8 +473,9 @@ mod tests {
 
     type Break = fn(&mut PersistableClusterSettingsSlice);
 
-    const BREAKS: [(&str, Break); 6] = [
+    const BREAKS: [(&str, Break); 7] = [
         ("a generation never issued", |s| s.channels[0].generation = 3),
+        ("a live record older than its number", |s| s.channels[0].generation = 1),
         ("generation zero", |s| s.channels[0].generation = 0),
         ("revision zero", |s| s.channels[0].revision = 0),
         ("an index past the block", |s| s.scenes[0].index = 16),
