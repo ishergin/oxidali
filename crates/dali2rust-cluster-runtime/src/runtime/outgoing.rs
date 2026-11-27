@@ -426,7 +426,7 @@ impl Outgoing {
 }
 
 pub(crate) fn placed_outgoing() -> PsramBox<Outgoing> {
-    // SAFETY: `slots` and `next_order` are the fields of `Outgoing`; each, and every field of each slot and of its line, is written once, in place.
+    // SAFETY: every field of `Outgoing`, of each slot and of its line is written once, in place.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<Outgoing>| {
             ptr::addr_of_mut!((*place.as_mut_ptr()).next_order).write(0);
