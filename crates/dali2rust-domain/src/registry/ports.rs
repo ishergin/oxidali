@@ -48,6 +48,19 @@ pub trait ClusterSettingsReadPort: Send + Sync {
     fn cluster_settings_view(&self) -> super::cluster::ClusterSettingsView;
 }
 
+pub trait ClusterRecordReadPort: Send + Sync {
+    fn cluster_record(
+        &self,
+        kind: dali2rust_contracts::msg::ClusterRecordKind,
+        number: u8,
+    ) -> Option<super::cluster_records::ClusterRecordView>;
+
+    fn cluster_record_numbers(
+        &self,
+        kind: dali2rust_contracts::msg::ClusterRecordKind,
+    ) -> super::cluster_records::ClusterRecordNumbers;
+}
+
 pub trait DisplaySettingsReadPort: Send + Sync {
     fn display_settings_view(&self) -> DisplaySettingsView;
 }

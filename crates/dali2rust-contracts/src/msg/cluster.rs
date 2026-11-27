@@ -20,6 +20,26 @@ impl ClusterForwarding {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClusterTextField {
     ClusterName,
+    RecordName,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClusterBirthMark {
+    pub generation: u32,
+    pub nonce: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ClusterRecordKind {
+    Channel,
+    Scene,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterRecordAction {
+    Create { number: Option<u8>, nonce: u32 },
+    Rename { number: u8, revision: u32 },
+    Delete { number: u8, revision: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +54,35 @@ mod tests {
     #[test]
     fn the_text_field_order_is_the_wire_discriminant() {
         assert_eq!(postcard::to_allocvec(&ClusterTextField::ClusterName).expect("encodes"), [0]);
+    }
+
+    #[test]
+    fn the_record_kinds_and_actions_keep_their_wire_discriminants() {
+        let encode = |value: &dyn erased::Encode| value.encode();
+        assert_eq!(encode(&ClusterTextField::RecordName), [1]);
+        assert_eq!(encode(&ClusterRecordKind::Channel), [0]);
+        assert_eq!(encode(&ClusterRecordKind::Scene), [1]);
+        assert_eq!(encode(&ClusterRecordAction::Create { number: None, nonce: 0 }), [0, 0, 0]);
+        assert_eq!(encode(&ClusterRecordAction::Rename { number: 3, revision: 2 }), [1, 3, 2]);
+        assert_eq!(encode(&ClusterRecordAction::Delete { number: 3, revision: 2 }), [2, 3, 2]);
+    }
+
+    #[test]
+    fn the_birth_mark_is_the_generation_then_the_nonce() {
+        let mark = ClusterBirthMark { generation: 1, nonce: 2 };
+        assert_eq!(postcard::to_allocvec(&mark).expect("encodes"), [1, 2]);
+    }
+
+    mod erased {
+        pub trait Encode {
+            fn encode(&self) -> Vec<u8>;
+        }
+
+        impl<T: serde::Serialize> Encode for T {
+            fn encode(&self) -> Vec<u8> {
+                postcard::to_allocvec(self).expect("encodes")
+            }
+        }
     }
 
     #[test]

@@ -1,12 +1,16 @@
 use dali2rust_contracts::msg::{
-    ClusterForwarding, ClusterSettingsField as Field, ClusterSettingsUpdateCommand,
-    ClusterTextField, ClusterTextUpdateCommand, ErrorCode,
+    ClusterForwarding, ClusterRecordUpdateCommand, ClusterSettingsField as Field,
+    ClusterSettingsUpdateCommand, ClusterTextField, ClusterTextUpdateCommand, ErrorCode, FixedText64,
 };
 use dali2rust_domain::registry::{
-    ClusterSettingsConflict, ClusterSettingsReadPort, ClusterSettingsView, ClusterWire,
+    ClusterRecordConflict, ClusterSettingsConflict, ClusterSettingsReadPort, ClusterSettingsView,
+    ClusterWire,
 };
 use dali2rust_platform::slice_store::StoreError;
 
+use super::cluster_records::{
+    persistable_records, plan_record_edit, stored_block, ClusterRecords, RecordEdit, RecordRequest,
+};
 use super::persistence_slices::{
     decode_versioned_slice, PersistableClusterSettingsSlice, CLUSTER_SETTINGS_SLICE_VERSION,
 };
@@ -22,6 +26,7 @@ pub(crate) struct ClusterSettingsRecord(pub ClusterSettingsView);
 pub(crate) enum ClusterPatch {
     Settings(ClusterSettingsUpdateCommand),
     Text(ClusterTextUpdateCommand),
+    Record(ClusterRecordUpdateCommand),
 }
 
 pub(crate) struct ClusterStage {
@@ -38,12 +43,15 @@ pub(crate) enum ClusterRefusal {
     FrameCountMismatch,
     OutOfRange,
     Conflict(ClusterSettingsConflict),
+    Record(ClusterRecordConflict),
+    RecordNotFound,
 }
 
 impl ClusterRefusal {
     pub(crate) const fn code(self) -> ErrorCode {
         match self {
-            Self::Standby | Self::Conflict(_) => ErrorCode::Conflict,
+            Self::Standby | Self::Conflict(_) | Self::Record(_) => ErrorCode::Conflict,
+            Self::RecordNotFound => ErrorCode::NotFound,
             Self::TooManyFrames | Self::NoStage | Self::FrameCountMismatch | Self::OutOfRange => {
                 ErrorCode::InvalidValue
             }
@@ -58,6 +66,8 @@ impl ClusterRefusal {
             Self::FrameCountMismatch => "cluster_frame_mismatch",
             Self::OutOfRange => "cluster_out_of_range",
             Self::Conflict(conflict) => conflict.message(),
+            Self::Record(conflict) => conflict.message(),
+            Self::RecordNotFound => "cluster_record_not_found",
         }
     }
 }
@@ -95,9 +105,10 @@ impl ClusterPatch {
     fn apply(&self, view: &mut ClusterSettingsView) {
         match self {
             Self::Settings(body) => apply_settings(view, body),
-            Self::Text(body) => match body.field {
-                ClusterTextField::ClusterName => view.cluster_name = body.text.as_str().to_string(),
-            },
+            Self::Text(body) if body.field == ClusterTextField::ClusterName => {
+                view.cluster_name = body.text.as_str().to_string();
+            }
+            Self::Text(_) | Self::Record(_) => {}
         }
     }
 }
@@ -115,6 +126,40 @@ fn merged(stored: &ClusterSettingsView, patches: &[ClusterPatch]) -> Result<Clus
         patch.apply(&mut view);
     }
     checked(view)
+}
+
+fn record_request(patches: &[ClusterPatch]) -> Result<Option<RecordRequest<'_>>, ClusterRefusal> {
+    let mut commands = patches.iter().filter_map(|patch| match patch {
+        ClusterPatch::Record(command) => Some(command),
+        _ => None,
+    });
+    let mut names = patches.iter().filter_map(record_name);
+    let (command, name) = (commands.next(), names.next());
+    if commands.next().is_some() || names.next().is_some() || (command.is_none() && name.is_some()) {
+        return Err(ClusterRefusal::OutOfRange);
+    }
+    Ok(command.map(|command| RecordRequest { command, name }))
+}
+
+fn record_name(patch: &ClusterPatch) -> Option<&FixedText64> {
+    match patch {
+        ClusterPatch::Text(body) if body.field == ClusterTextField::RecordName => Some(&body.text),
+        _ => None,
+    }
+}
+
+fn planned_record_edit(
+    stored: &ClusterSettingsView,
+    records: &ClusterRecords,
+    settings: &ClusterSettingsView,
+    patches: &[ClusterPatch],
+) -> Result<Option<RecordEdit>, ClusterRefusal> {
+    if settings.node_number != stored.node_number && records.any_live() {
+        return Err(ClusterRefusal::Record(ClusterRecordConflict::NodeNumberPinned));
+    }
+    record_request(patches)?
+        .map(|request| plan_record_edit(records, settings.node_number, &request))
+        .transpose()
 }
 
 impl RegistryStore {
@@ -148,7 +193,12 @@ impl RegistryStore {
         if stage.patches.len() != usize::from(frames) {
             return Err(ClusterRefusal::FrameCountMismatch);
         }
-        g.cluster_settings = ClusterSettingsRecord(merged(&g.cluster_settings.0, &stage.patches)?);
+        let settings = merged(&g.cluster_settings.0, &stage.patches)?;
+        let edit = planned_record_edit(&g.cluster_settings.0, &g.cluster_records, &settings, &stage.patches)?;
+        g.cluster_settings = ClusterSettingsRecord(settings);
+        if let Some(edit) = edit {
+            g.cluster_records.apply(edit);
+        }
         let applied = g.cluster_settings.clone();
         drop(g);
         self.dirty.mark_cluster_settings_dirty();
@@ -185,6 +235,10 @@ pub(crate) fn persistable_snapshot(inner: &Inner) -> PersistableClusterSettingsS
         send_all_lamps: row.send_all_lamps,
         accept_single_lamps: row.accept_single_lamps,
         wire_protection: row.wire_protection,
+        channels: persistable_records(&inner.cluster_records.channels),
+        channel_generations: inner.cluster_records.channels.generations,
+        scenes: persistable_records(&inner.cluster_records.scenes),
+        scene_generations: inner.cluster_records.scenes.generations,
     }
 }
 
@@ -208,25 +262,36 @@ fn stored_view(slice: &PersistableClusterSettingsSlice) -> ClusterSettingsView {
     }
 }
 
+fn stored_records(slice: &PersistableClusterSettingsSlice) -> Option<ClusterRecords> {
+    Some(ClusterRecords {
+        channels: stored_block(&slice.channels, slice.channel_generations)?,
+        scenes: stored_block(&slice.scenes, slice.scene_generations)?,
+    })
+}
+
 pub(crate) fn decode_cluster_settings(bytes: &[u8]) -> Result<PersistableClusterSettingsSlice, StoreError> {
     let slice = decode_versioned_slice::<PersistableClusterSettingsSlice>(bytes, CLUSTER_SETTINGS_SLICE_VERSION)
         .map_err(|e| StoreError::Backend(e.to_string()))?;
-    checked(stored_view(&slice))
-        .map(|_| slice)
-        .map_err(|refusal| StoreError::Backend(format!("cluster settings refused: {}", refusal.message())))
+    let refused = |reason: &str| StoreError::Backend(format!("cluster settings refused: {reason}"));
+    checked(stored_view(&slice)).map_err(|refusal| refused(refusal.message()))?;
+    stored_records(&slice).ok_or_else(|| refused("cluster_records_inconsistent"))?;
+    Ok(slice)
 }
 
 pub(crate) fn hydrate_cluster_settings_inner(inner: &mut Inner, slice: &PersistableClusterSettingsSlice) {
     inner.cluster_settings = ClusterSettingsRecord(stored_view(slice));
+    inner.cluster_records = stored_records(slice).unwrap_or_else(ClusterRecords::preallocated);
 }
 
 #[cfg(test)]
 mod tests {
     use dali2rust_contracts::msg::fixed_text_64;
-    use dali2rust_domain::registry::{CLUSTER_NODE_COUNT, MAX_CLUSTER_NAME_BYTES};
+    use dali2rust_domain::registry::{
+        CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_NAME_BYTES, MAX_CLUSTER_RECORD_NAME_BYTES,
+    };
 
     use super::super::persistence_slices::encode_persistence_blob;
-    use super::super::persistence_slices::PersistenceEnvelope;
+    use super::super::persistence_slices::{PersistableClusterRecord, PersistenceEnvelope};
     use super::*;
 
     const SERIES: u64 = 7;
@@ -482,10 +547,23 @@ mod tests {
 
     #[test]
     fn the_widest_slice_fits_one_small_bank() {
+        let widest_record = |index| PersistableClusterRecord {
+            index,
+            generation: u32::MAX,
+            nonce: u32::MAX,
+            name: "\u{10FFFF}".repeat(MAX_CLUSTER_RECORD_NAME_BYTES / 4),
+            revision: u32::MAX,
+        };
+        let records: Vec<_> = (0..CLUSTER_NUMBERS_PER_NODE).map(widest_record).collect();
+        let generations = [u32::MAX; CLUSTER_NUMBERS_PER_NODE as usize];
         let widest = PersistableClusterSettingsSlice {
             cluster_name: "\u{10FFFF}".repeat(MAX_CLUSTER_NAME_BYTES / 4),
             port: u16::MAX,
             wire_same_as: Some(u8::MAX),
+            channels: records.clone(),
+            channel_generations: generations,
+            scenes: records,
+            scene_generations: generations,
             ..persistable_snapshot(&Inner::default())
         };
         let envelope = PersistenceEnvelope { version: u32::MAX, data: widest };

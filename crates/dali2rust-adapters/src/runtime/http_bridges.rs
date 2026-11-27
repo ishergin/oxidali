@@ -6,6 +6,7 @@ use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState, ClusterWireOwnerDto,
     MAX_CLUSTER_STATUS_IGNORED,
 };
+use dali2rust_api::http::cluster_records_state::{ClusterRecordsHttpState, ClusterRecordsHttpStateBridge};
 use dali2rust_api::http::cluster_settings_state::{
     ClusterSettingsApplyWatch, ClusterSettingsApplyWatchBridge, ClusterSettingsHttpState,
     ClusterSettingsHttpStateBridge,
@@ -177,19 +178,21 @@ pub(crate) struct ClusterHttpPorts {
     pub state: Arc<dyn ClusterSettingsHttpState>,
     pub apply_watch: Arc<dyn ClusterSettingsApplyWatch>,
     pub read: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
+    pub records: Arc<dyn ClusterRecordsHttpState>,
 }
 
 fn role_and_cluster(
-    role_source: Arc<dyn dali2rust_domain::registry::DaliSettingsReadPort>,
-    read: Arc<dyn dali2rust_domain::registry::ClusterSettingsReadPort>,
+    read: &RegistryHttpReadPorts,
     counters: &Arc<RegistryWorkerCounters>,
 ) -> (Arc<dyn dali2rust_api::http::role::ControllerRolePort>, ClusterHttpPorts) {
     let role: Arc<dyn dali2rust_api::http::role::ControllerRolePort> =
-        Arc::new(RoleBridge::new(role_source));
+        Arc::new(RoleBridge::new(Arc::clone(&read.dali_settings_role)));
+    let settings = Arc::clone(&read.cluster);
     let cluster = ClusterHttpPorts {
-        state: Arc::new(ClusterSettingsHttpStateBridge::new(Arc::clone(&read), Arc::clone(&role))),
+        state: Arc::new(ClusterSettingsHttpStateBridge::new(Arc::clone(&settings), Arc::clone(&role))),
         apply_watch: Arc::new(ClusterSettingsApplyWatchBridge::new(apply_watch(counters))),
-        read,
+        read: settings,
+        records: Arc::new(ClusterRecordsHttpStateBridge::new(Arc::clone(&read.cluster_records))),
     };
     (role, cluster)
 }
@@ -268,7 +271,7 @@ pub(crate) fn wire_registry_http_ports(
     c: &Arc<RegistryWorkerCounters>,
     transfer: TransferSeams,
 ) -> RegistryHttpPorts {
-    let (role_port, cluster) = role_and_cluster(http_read.dali_settings_role, http_read.cluster, c);
+    let (role_port, cluster) = role_and_cluster(&http_read, c);
     RegistryHttpPorts {
         read_port: worker_read_port,
         config_transfer: transfer_port(&store, transfer),

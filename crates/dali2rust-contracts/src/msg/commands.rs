@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::cluster::{ClusterForwarding, ClusterTextField};
+use super::cluster::{ClusterForwarding, ClusterRecordAction, ClusterRecordKind, ClusterTextField};
 use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText60, FixedText64, FixedText96};
 use super::kinds::{
     CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DimDirection, DiscoveryMode,
@@ -1281,6 +1281,17 @@ declare_bus_payloads! {
         pub node: u8,
     }
     budget = ClusterForgetNodeCommand { node: u8::MAX };
+
+    pub struct ClusterRecordUpdateCommand {
+        pub series: u64,
+        pub kind: ClusterRecordKind,
+        pub action: ClusterRecordAction,
+    }
+    budget = ClusterRecordUpdateCommand {
+        series: u64::MAX,
+        kind: ClusterRecordKind::Scene,
+        action: ClusterRecordAction::Create { number: Some(u8::MAX), nonce: u32::MAX },
+    };
 }
 
 impl FirmwareUpdateBeginCommand {

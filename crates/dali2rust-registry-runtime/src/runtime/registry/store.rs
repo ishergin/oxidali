@@ -377,6 +377,7 @@ pub(crate) struct Inner {
     pub(crate) display_settings: super::display_settings::DisplaySettingsRecord,
     pub(crate) cluster_settings: super::cluster_settings::ClusterSettingsRecord,
     pub(crate) cluster_stage: Option<super::cluster_settings::ClusterStage>,
+    pub(crate) cluster_records: super::cluster_records::ClusterRecords,
     pub(crate) policies: super::policies::PoliciesRecord,
     pub(crate) home_assistant_settings:
         super::home_assistant_settings::HomeAssistantSettingsRecord,
@@ -417,6 +418,7 @@ impl Inner {
             hcl_schedule_stage: HashMap::with_capacity(psram_capacity::SCHEDULES),
             hcl_schedule_refused: HashMap::with_capacity(psram_capacity::SCHEDULES),
             input_devices: HashMap::with_capacity(psram_capacity::SMALL_ROWS),
+            cluster_records: super::cluster_records::ClusterRecords::preallocated(),
             config_write_stage: HashMap::with_capacity(
                 super::config_write_stage::MAX_CONFIG_WRITE_STAGES,
             ),

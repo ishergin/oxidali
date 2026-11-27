@@ -2,6 +2,8 @@ use dali2rust_contracts::msg::PolicyException;
 use dali2rust_domain::registry::{MemoryBankSummaryView, PhysicalDeviceAttributesView};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+const CLUSTER_BLOCK_SIZE: usize = dali2rust_domain::registry::CLUSTER_NUMBERS_PER_NODE as usize;
+
 pub const ADAPTERS_SLICE_VERSION: u32 = 9;
 pub const GROUPS_SLICE_VERSION: u32 = 10;
 pub const VIRTUAL_LAMPS_SLICE_VERSION: u32 = 9;
@@ -15,7 +17,7 @@ pub const REDUNDANCY_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const POLICIES_SLICE_VERSION: u32 = 2;
 pub const HOME_ASSISTANT_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const DISPLAY_SETTINGS_SLICE_VERSION: u32 = 1;
-pub const CLUSTER_SETTINGS_SLICE_VERSION: u32 = 1;
+pub const CLUSTER_SETTINGS_SLICE_VERSION: u32 = 2;
 
 
 
@@ -187,6 +189,19 @@ pub struct PersistableClusterSettingsSlice {
     pub send_all_lamps: bool,
     pub accept_single_lamps: bool,
     pub wire_protection: bool,
+    pub channels: Vec<PersistableClusterRecord>,
+    pub channel_generations: [u32; CLUSTER_BLOCK_SIZE],
+    pub scenes: Vec<PersistableClusterRecord>,
+    pub scene_generations: [u32; CLUSTER_BLOCK_SIZE],
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PersistableClusterRecord {
+    pub index: u8,
+    pub generation: u32,
+    pub nonce: u32,
+    pub name: String,
+    pub revision: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

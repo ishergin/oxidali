@@ -51,6 +51,10 @@ use dali2rust_api::http::handlers::settings_dali::{
 };
 use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterSettingsPatchHandler};
 use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
+use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_api::http::handlers::cluster_records::{
+    ClusterRecordDeps, ClusterRecordHandler, ClusterRecordRoute,
+};
 use dali2rust_api::http::handlers::settings_display::{
     DisplaySettingsGetHandler, DisplaySettingsPatchHandler,
 };
@@ -77,7 +81,7 @@ use dali2rust_domain::registry::{HclOverrideReadPort, OperationReadPort};
 use dali2rust_operations_runtime::OperationTrackerHttpRead;
 use dali2rust_platform::clock::Uptime;
 
-use super::http_bridges::RegistryHttpPorts;
+use super::http_bridges::{ClusterHttpPorts, RegistryHttpPorts};
 use dali2rust_api::http::handlers::input_devices::{
     InputDeviceAction, InputDeviceActionHandler, InputDeviceBus, InputDeviceGetHandler,
     InputDeviceListHandler,
@@ -892,12 +896,41 @@ fn wire_cluster_status(
 #[inline(never)]
 fn wire_cluster(builder: AppBuilder, bus: &HttpBusDispatch, registry: &RegistryHttpPorts) -> AppBuilder {
     let ports = &registry.cluster;
-    builder
+    let builder = builder
         .with_handler(RouteKey::ClusterSettingsGet, read(&ports.state, ClusterSettingsGetHandler::new))
         .with_handler(
             RouteKey::ClusterSettingsPatch,
             mutation(bus, &ports.state, &ports.apply_watch, ClusterSettingsPatchHandler::new),
-        )
+        );
+    wire_cluster_records(builder, bus, ports)
+}
+
+const CLUSTER_RECORD_ROUTES: [(RouteKey, ClusterRecordKind, ClusterRecordRoute); 10] = [
+    (RouteKey::ClusterChannelsList, ClusterRecordKind::Channel, ClusterRecordRoute::List),
+    (RouteKey::ClusterChannelCreate, ClusterRecordKind::Channel, ClusterRecordRoute::Create),
+    (RouteKey::ClusterChannelGet, ClusterRecordKind::Channel, ClusterRecordRoute::Get),
+    (RouteKey::ClusterChannelRename, ClusterRecordKind::Channel, ClusterRecordRoute::Rename),
+    (RouteKey::ClusterChannelDelete, ClusterRecordKind::Channel, ClusterRecordRoute::Delete),
+    (RouteKey::ClusterScenesList, ClusterRecordKind::Scene, ClusterRecordRoute::List),
+    (RouteKey::ClusterSceneCreate, ClusterRecordKind::Scene, ClusterRecordRoute::Create),
+    (RouteKey::ClusterSceneGet, ClusterRecordKind::Scene, ClusterRecordRoute::Get),
+    (RouteKey::ClusterSceneRename, ClusterRecordKind::Scene, ClusterRecordRoute::Rename),
+    (RouteKey::ClusterSceneDelete, ClusterRecordKind::Scene, ClusterRecordRoute::Delete),
+];
+
+fn wire_cluster_records(builder: AppBuilder, bus: &HttpBusDispatch, ports: &ClusterHttpPorts) -> AppBuilder {
+    let deps = Arc::new(ClusterRecordDeps {
+        publisher: bus.publisher.clone(),
+        slots: Arc::clone(&bus.slots),
+        correlation: Arc::clone(&bus.correlation),
+        state: Arc::clone(&ports.records),
+        apply_watch: Arc::clone(&ports.apply_watch),
+        bus_id: bus.bus_id,
+        timeout_ms: bus.confirmation_timeout_ms,
+    });
+    CLUSTER_RECORD_ROUTES.into_iter().fold(builder, |builder, (key, kind, route)| {
+        builder.with_handler(key, Box::new(ClusterRecordHandler::new(Arc::clone(&deps), kind, route)))
+    })
 }
 
 #[inline(never)]

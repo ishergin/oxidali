@@ -3,11 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::limits::{is_adapter, is_lamp, is_node, is_record_number};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BirthMark {
-    pub generation: u32,
-    pub nonce: u32,
-}
+pub use dali2rust_contracts::msg::ClusterBirthMark as BirthMark;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordRef {
