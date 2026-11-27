@@ -60,7 +60,7 @@ impl ClusterStatusHttpState for NullCluster {
             node_number: 0,
             wire: 0,
             board: None,
-            boot_epoch: 0,
+            boot_epoch: None,
             wire_owner: None,
             split_pair: false,
             wire_chain: false,
