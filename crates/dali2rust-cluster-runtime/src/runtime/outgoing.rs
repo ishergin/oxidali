@@ -46,7 +46,7 @@ pub(crate) struct Queued {
 
 impl Queued {
     fn folded_over(mut self, earlier: Option<&Self>) -> Self {
-        let Some(earlier) = earlier else {
+        let Some(earlier) = earlier.filter(|earlier| self.folds_over(earlier)) else {
             return self;
         };
         let setpoints = (setpoint_mut(&mut self.request.action), setpoint_of(&earlier.request.action));
@@ -54,9 +54,13 @@ impl Queued {
             let mut merged = base.clone();
             merged.merge_from(later);
             *later = merged;
-            self.forwarded &= earlier.forwarded;
         }
         self
+    }
+
+    fn folds_over(&self, earlier: &Self) -> bool {
+        let same_source = self.request.source == earlier.request.source;
+        self.forwarded && earlier.forwarded && same_source && self.request.hold_hcl == earlier.request.hold_hcl
     }
 }
 

@@ -186,21 +186,46 @@ fn warm_white() -> Option<ColorValue> {
     Some(ColorValue { mode: ColorMode::Cct, color_temperature_kelvin: 2700, ..ColorValue::default() })
 }
 
-#[test]
-fn a_colour_only_setpoint_inside_the_spacing_keeps_the_waiting_off_it_supersedes() {
+fn forwarded(request: ClusterCommandCommand) -> Queued {
+    Queued { correlation_id: CORRELATION_NONE, request, forwarded: true }
+}
+
+fn waiting_after(earlier: Queued, later: Queued) -> Option<Due> {
     let mut outgoing = Outgoing::new();
     send(&mut outgoing, 1, setpoint(3, 100), START_MS);
-    let off = LightSetpoint { power: PowerState::Off, level: None, color: None };
-    let waiting = queued(2, on_channel(3, off, SourceClass::Operator));
-    assert_eq!(outgoing.admit(waiting, START_MS + 1), Admission::Later { superseded: None });
-    let colour_only = LightSetpoint { power: PowerState::Unknown, level: None, color: warm_white() };
-    let tick = Queued { correlation_id: CORRELATION_NONE, request: on_channel(3, colour_only, SourceClass::Hcl), forwarded: true };
-    assert!(matches!(outgoing.admit(tick, START_MS + 2), Admission::Later { superseded: Some(_) }));
+    assert_eq!(outgoing.admit(earlier, START_MS + 1), Admission::Later { superseded: None });
+    assert!(matches!(outgoing.admit(later, START_MS + 2), Admission::Later { superseded: Some(_) }));
     assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
-    let both = LightSetpoint { power: PowerState::Off, level: None, color: warm_white() };
-    let folded = Queued { correlation_id: CORRELATION_NONE, request: on_channel(3, both, SourceClass::Hcl), forwarded: false };
-    let due = outgoing.take_due(START_MS + TARGET_SPACING_MS);
-    assert_eq!(due, Some(Due::Waiting(folded)), "no field of the superseded setpoint is lost, and its own part still runs");
+    outgoing.take_due(START_MS + TARGET_SPACING_MS)
+}
+
+#[test]
+fn a_forwarded_setpoint_inside_the_spacing_keeps_the_fields_of_the_waiting_one_of_its_class() {
+    let colour_only = LightSetpoint { power: PowerState::Unknown, level: None, color: warm_white() };
+    let on = LightSetpoint { power: PowerState::On, level: None, color: None };
+    let earlier = forwarded(on_channel(3, colour_only, SourceClass::Hcl));
+    let due = waiting_after(earlier, forwarded(on_channel(3, on, SourceClass::Hcl)));
+    let both = LightSetpoint { power: PowerState::On, level: None, color: warm_white() };
+    let folded = forwarded(on_channel(3, both, SourceClass::Hcl));
+    assert_eq!(due, Some(Due::Waiting(folded)), "the colour of the waiting tick is not lost");
+}
+
+#[test]
+fn a_setpoint_of_another_class_hold_or_requester_replaces_the_waiting_one_whole() {
+    let off = LightSetpoint { power: PowerState::Off, level: None, color: None };
+    let colour_only = LightSetpoint { power: PowerState::Unknown, level: None, color: warm_white() };
+    let tick = forwarded(on_channel(3, colour_only.clone(), SourceClass::Hcl));
+    let released = ClusterCommandCommand { hold_hcl: false, ..on_channel(3, off.clone(), SourceClass::Hcl) };
+    let pairs = [
+        (forwarded(on_channel(3, off.clone(), SourceClass::Operator)), tick.clone()),
+        (forwarded(released), tick.clone()),
+        (queued(2, on_channel(3, off.clone(), SourceClass::Hcl)), tick),
+        (forwarded(on_channel(3, off, SourceClass::Hcl)), queued(3, on_channel(3, colour_only, SourceClass::Hcl))),
+    ];
+    for (earlier, later) in pairs {
+        let due = waiting_after(earlier.clone(), later.clone());
+        assert_eq!(due, Some(Due::Waiting(later)), "not merged over {earlier:?}");
+    }
 }
 
 #[test]
