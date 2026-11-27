@@ -7,7 +7,7 @@
 (§Поля, §Статус, §Сведения узлов, §Ошибки); механизм —
 [`../runtime-modules/cluster/README.md`](../runtime-modules/cluster/README.md); карточки —
 `web/design-system/screens/settings-cluster.html`, `components/controller-role.html`.
-Каналы и сцены кластера живут на Control → Cluster, а не здесь.
+Каналы и сцены кластера живут на [Control → Cluster](cluster-control.md), а не здесь.
 
 ## Страница
 
