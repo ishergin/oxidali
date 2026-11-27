@@ -12,8 +12,11 @@ macro_rules! declare_settings_http_surface {
         read_bridge: $read_bridge:ident,
         watch_bridge: $watch_bridge:ident,
     ) => {
-        pub trait $apply_watch: Send + Sync {
-            fn $watch_load(&self) -> u32;
+        $crate::http::settings_surface::declare_settings_apply_watch! {
+            watch_port: $watch_port,
+            watch_load: $watch_load,
+            apply_watch: $apply_watch,
+            watch_bridge: $watch_bridge,
         }
 
         pub trait $http_state: Send + Sync {
@@ -35,6 +38,19 @@ macro_rules! declare_settings_http_surface {
                 $view_to_dto(self.port.$view_fn())
             }
         }
+    };
+}
+
+macro_rules! declare_settings_apply_watch {
+    (
+        watch_port: $watch_port:ident,
+        watch_load: $watch_load:ident,
+        apply_watch: $apply_watch:ident,
+        watch_bridge: $watch_bridge:ident,
+    ) => {
+        pub trait $apply_watch: Send + Sync {
+            fn $watch_load(&self) -> u32;
+        }
 
         pub struct $watch_bridge {
             port: std::sync::Arc<dyn dali2rust_domain::registry::$watch_port>,
@@ -54,4 +70,5 @@ macro_rules! declare_settings_http_surface {
     };
 }
 
+pub(crate) use declare_settings_apply_watch;
 pub(crate) use declare_settings_http_surface;

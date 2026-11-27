@@ -421,6 +421,52 @@ mod tests {
         assert_eq!(store.commit_cluster_settings(SERIES, 1), Err(ClusterRefusal::NoStage));
     }
 
+    const STAGE_AGE_MS: u64 = 1_000;
+
+    #[test]
+    fn a_new_series_replaces_a_half_staged_one() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.stage_cluster_patch(SERIES, name("abandoned")).expect("staged");
+        store.stage_cluster_patch(SERIES + 1, name("current")).expect("staged");
+        let applied = store.commit_cluster_settings(SERIES + 1, 1).expect("committed");
+        assert_eq!(applied.0.cluster_name, "current");
+    }
+
+    #[test]
+    fn a_commit_of_another_series_leaves_the_stage_alone() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.stage_cluster_patch(SERIES, name("dali-cluster")).expect("staged");
+        assert_eq!(store.commit_cluster_settings(SERIES + 1, 1), Err(ClusterRefusal::NoStage));
+        assert_eq!(store.cluster_settings_view(), ClusterSettingsView::default());
+        let applied = store.commit_cluster_settings(SERIES, 1).expect("committed");
+        assert_eq!(applied.0.cluster_name, "dali-cluster");
+    }
+
+    #[test]
+    fn a_frame_past_the_stage_limit_drops_the_stage() {
+        let store = RegistryStore::with_adapter_count(1);
+        for text in ["first", "second"] {
+            store.stage_cluster_patch(SERIES, name(text)).expect("within the limit");
+        }
+        let third = store.stage_cluster_patch(SERIES, name("third"));
+        assert_eq!(third, Err(ClusterRefusal::TooManyFrames));
+        assert_eq!(store.commit_cluster_settings(SERIES, 2), Err(ClusterRefusal::NoStage));
+        assert_eq!(store.cluster_settings_view(), ClusterSettingsView::default());
+    }
+
+    #[test]
+    fn only_a_stage_older_than_the_limit_is_evicted() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.stage_cluster_patch(SERIES, name("dali-cluster")).expect("staged");
+        if let Some(stage) = store.write_inner().cluster_stage.as_mut() {
+            stage.staged_at_ms = registry_unix_ms().saturating_sub(STAGE_AGE_MS);
+        }
+        store.evict_stale_cluster_stage(STAGE_AGE_MS * 2);
+        assert!(store.read_inner().cluster_stage.is_some(), "a young stage stays");
+        store.evict_stale_cluster_stage(STAGE_AGE_MS / 2);
+        assert!(store.read_inner().cluster_stage.is_none(), "an old stage goes");
+    }
+
     #[test]
     fn a_stored_slice_that_breaks_a_rule_does_not_decode() {
         let mut slice = persistable_snapshot(&Inner::default());

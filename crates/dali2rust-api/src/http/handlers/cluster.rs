@@ -305,4 +305,14 @@ mod tests {
             assert!(parsed(body.clone()).is_err(), "{body}");
         }
     }
+
+    #[test]
+    fn a_name_of_the_full_length_is_kept_and_one_byte_more_refused() {
+        let full = "n".repeat(MAX_CLUSTER_NAME_BYTES);
+        let kept = parsed(serde_json::json!({ "cluster_name": full })).ok().expect("parses");
+        let kept = kept.cluster_name;
+        assert_eq!(kept.as_deref(), Some(full.as_str()));
+        let longer = "n".repeat(MAX_CLUSTER_NAME_BYTES + 1);
+        assert!(parsed(serde_json::json!({ "cluster_name": longer })).is_err());
+    }
 }
