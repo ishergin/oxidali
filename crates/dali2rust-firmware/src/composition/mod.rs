@@ -192,7 +192,7 @@ fn cluster_composition() -> dali2rust_adapters::ClusterComposition {
 
 #[cfg(target_os = "espidf")]
 fn cluster_boot_epoch() -> u32 {
-    // SAFETY: `esp_random` reads the hardware RNG register and `esp_timer_get_time` the system timer; neither has preconditions.
+    // SAFETY: `esp_random` reads the RNG register, `esp_timer_get_time` the system timer; no preconditions.
     let (drawn, since_boot_us) =
         unsafe { (esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_timer_get_time()) };
     let [a, b, c, d, ..] = since_boot_us.to_le_bytes();

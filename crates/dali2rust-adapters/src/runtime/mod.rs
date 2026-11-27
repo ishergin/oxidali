@@ -1,8 +1,6 @@
 mod app_router;
 pub mod time_settings;
 mod bus_host;
-mod cluster;
-pub use cluster::{host_boot_epoch, ClusterComposition};
 pub use bus_host::NAMED_EVENT_SUBSCRIBERS;
 mod display_source;
 mod bus_stack;
@@ -15,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use dali2rust_api::http::handlers::static_assets::StaticAsset;
 use dali2rust_api::http::router::Router;
 use dali2rust_bus::{BusConfig, BusId, BusPublisher};
+pub use dali2rust_cluster_runtime::{host_boot_epoch, ClusterComposition};
+use dali2rust_cluster_runtime::{spawn_cluster_worker, ClusterSeams, ClusterWorkerPorts, ClusterWorkerThreads};
 use dali2rust_dali_runtime::DaliRuntimeConfig;
 pub use dali2rust_display_runtime::{DisplayView, HardwareDisplay};
 use dali2rust_platform::dali::DaliTransport;
@@ -91,6 +91,12 @@ fn boot_from_options(
     version: &'static str,
     options: StackOptions,
 ) -> (Box<BootedStack>, PostBootOptions) {
+    let (args, rest) = split_options(version, options);
+    registry_init::log_internal_free("before workers");
+    (boot_stack(args), rest)
+}
+
+fn split_options(version: &'static str, options: StackOptions) -> (BootArgs, PostBootOptions) {
     let StackOptions {
         runtime_config,
         bus_config,
@@ -107,8 +113,7 @@ fn boot_from_options(
         firmware_update,
         cluster,
     } = options;
-    registry_init::log_internal_free("before workers");
-    let booted = boot_stack(BootArgs {
+    let args = BootArgs {
         version,
         bus_config,
         bus_id,
@@ -119,20 +124,9 @@ fn boot_from_options(
         poller_config,
         controller_hardware_id: network_link.as_ref().and_then(|l| l.hardware_address()),
         mqtt_client,
-    });
-    (
-        booted,
-        PostBootOptions {
-            runtime_config,
-            gauges: http_bridges::PlatformGauges {
-                heap: heap_stats,
-                link: network_link,
-            },
-            web_assets,
-            firmware_update,
-            cluster,
-        },
-    )
+    };
+    let gauges = http_bridges::PlatformGauges { heap: heap_stats, link: network_link };
+    (args, PostBootOptions { runtime_config, gauges, web_assets, firmware_update, cluster })
 }
 
 pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
@@ -206,24 +200,28 @@ fn spawn_cluster_slice(
     booted: &BootedStack,
     rest: &PostBootOptions,
     inbox: dali2rust_bus::BusSubscriberRx,
-) -> (cluster::ClusterSeams, dali2rust_cluster_runtime::ClusterWorkerThreads) {
-    let seams = cluster::ClusterSeams::new(&rest.cluster);
-    let sources = cluster::ClusterSources {
+) -> (ClusterSeams, ClusterWorkerThreads) {
+    let seams = ClusterSeams::new(&rest.cluster);
+    let store = &booted.diagnostics_store;
+    let ports = ClusterWorkerPorts {
         publisher: booted.bus.publisher.clone(),
         bus_id: booted.bus_id,
-        store: Arc::clone(&booted.diagnostics_store),
+        settings: Arc::clone(store) as _,
+        home_assistant: Arc::clone(store) as _,
+        role: Arc::clone(store) as _,
         network: rest.gauges.link.clone(),
         binder: Arc::clone(&rest.cluster.binder),
+        presence: Arc::clone(&seams.presence),
+        counters: Arc::clone(&seams.counters),
     };
-    let threads = cluster::spawn_cluster(inbox, &seams, sources);
-    (seams, threads)
+    (seams, spawn_cluster_worker(inbox, ports))
 }
 
 fn boot_read_models(
     version: &'static str,
     booted: &mut BootedStack,
     rest: &PostBootOptions,
-    (counter_handles, cluster): (RuntimeCounterHandles, cluster::ClusterSeams),
+    (counter_handles, cluster): (RuntimeCounterHandles, ClusterSeams),
     clock: &Arc<dyn dali2rust_platform::clock::Clock>,
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
 ) -> ReadModelPorts {
@@ -657,7 +655,7 @@ struct ReadModelArgs {
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
     ota: OtaShared,
     firmware_port: Option<Arc<dyn dali2rust_platform::firmware::FirmwareUpdatePort>>,
-    cluster: cluster::ClusterSeams,
+    cluster: ClusterSeams,
 }
 
 fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
@@ -683,7 +681,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             (args.counters, Arc::clone(&args.cluster.counters)),
             args.gauges,
         )),
-        cluster: Arc::new(cluster::ClusterStatusBridge::new(args.cluster.presence)),
+        cluster: Arc::new(http_bridges::ClusterStatusBridge::new(args.cluster.presence)),
         firmware: Arc::new(http_bridges::FirmwareBridge::new(
             args.ota.state,
             args.firmware_port,
@@ -771,7 +769,7 @@ mod tests {
             transitions: Arc::default(),
             ota: OtaShared::default(),
             firmware_port: None,
-            cluster: cluster::ClusterSeams::new(&ClusterComposition::default()),
+            cluster: ClusterSeams::new(&ClusterComposition::default()),
         });
 
         clock.set(NOW_MS);

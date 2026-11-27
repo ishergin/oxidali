@@ -251,7 +251,7 @@ fn ignored_view(roster: &Roster<'_>, board: &HeardBoard, reason: IgnoredReason) 
 }
 
 fn placed_state() -> PsramBox<PresenceState> {
-    // SAFETY: every field of the place is written exactly once below — each of the `MAX_HEARD_BOARDS` table slots, then `own`, `mode` and `mac_known` — so the place is initialised.
+    // SAFETY: each field is written once below: the `MAX_HEARD_BOARDS` slots, `own`, `mode`, `mac_known`.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<PresenceState>| {
             let state = place.as_mut_ptr();

@@ -177,18 +177,20 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   in the datagram header, and the bus envelope's `cluster_origin_id` is not stamped.
 - The UDP receive mailbox, today at the ESP-IDF default, and the socket count are raised in
   `sdkconfig.p4.defaults`, which only a flash proves.
-- The cluster's counters are a block in `/api/v1/stats`. The snapshot ceilings of
-  `/api/v1/stats` and `/api/v1/diagnostics` are raised to carry it, and the floor of
-  internal SRAM is lowered by measurement; each new value is written here with its
-  measurement when the block lands, and none moves before that.
+- The cluster's counters are a block in `/api/v1/stats`, and its worker one more command
+  and event subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 6912 against a measured worst case of 6849,
+  `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8768 against 8749. The status resource goes out
+  whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
+  of 15857: eight nodes and 24 ignored boards, every text at its widest. The floor of
+  internal SRAM moves only by a census on the board.
 - Input-device events and rule targets across nodes are later stages, and the rule targets
   get a record of their own. The stages are in the
   [roadmap](../../product-design/roadmap.md); the module's design is in
   [`cluster`](../../product-design/runtime-modules/cluster/README.md).
 - BDD drives a node through HTTP, the WebSocket and the hub double, with a scenario playing
-  the neighbour in frames of the production codec. The hub becomes one more surface of
-  [ADR-004](ADR-004-bdd-black-box-boundary.md) when a node composes the cluster, as the
-  broker side of the MQTT double is. What needs two composed stacks is a crate integration
-  test.
+  the neighbour in frames of the production codec. The hub is one more surface of
+  [ADR-004](ADR-004-bdd-black-box-boundary.md), as the broker side of the MQTT double is.
+  What needs two composed stacks is a crate integration test.
 - Not promised: delivery, exactly one wire owner, and equal levels after a lost `UP` or
   `DOWN` between segments — the next absolute command brings the segments together.

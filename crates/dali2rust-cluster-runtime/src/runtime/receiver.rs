@@ -106,7 +106,7 @@ impl Intake {
 }
 
 fn receive_buffer() -> PsramBox<ClusterReceiveBuffer> {
-    // SAFETY: every one of the `CLUSTER_RECEIVE_BUFFER_BYTES` bytes is written once by `write_bytes`, and a zero byte is a valid `u8`, so the place is initialised.
+    // SAFETY: `write_bytes` zeroes all `CLUSTER_RECEIVE_BUFFER_BYTES` bytes, and a zero byte is a valid `u8`.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<ClusterReceiveBuffer>| {
             place.as_mut_ptr().cast::<u8>().write_bytes(0, CLUSTER_RECEIVE_BUFFER_BYTES);

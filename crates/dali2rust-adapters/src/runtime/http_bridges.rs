@@ -2,6 +2,9 @@ use core::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 
 use dali2rust_api::confirmation_bridge::PendingConfirmationSlots;
+use dali2rust_api::http::cluster_status_state::{
+    ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState, ClusterWireOwnerDto,
+};
 use dali2rust_api::http::cluster_settings_state::{
     ClusterSettingsApplyWatch, ClusterSettingsApplyWatchBridge, ClusterSettingsHttpState,
     ClusterSettingsHttpStateBridge,
@@ -54,12 +57,15 @@ use dali2rust_api::http::{
 };
 use dali2rust_api::http::handlers::config_transfer::{ImportRefusal, SliceManifestEntry};
 use dali2rust_bus::BusPublisher;
-use dali2rust_cluster_runtime::ClusterCounters;
+use dali2rust_cluster_runtime::presence::{IgnoredReason, OwnMode, WireOwner};
+use dali2rust_cluster_runtime::{
+    ClusterCounters, ClusterPresenceReadPort, IgnoredView, NodeView, OwnStatus,
+};
 use dali2rust_domain::registry::{AdapterReadPort, RegistryReadPort};
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
 use dali2rust_platform::clock::Uptime;
 use dali2rust_platform::heap::{HeapStats, HeapStatsPort};
-use dali2rust_platform::net::{LinkStats, NetworkLink};
+use dali2rust_platform::net::{ipv4_text, node_name, LinkStats, NetworkLink};
 use dali2rust_mqtt_runtime::MqttCounters;
 use dali2rust_platform::slice_store::{SliceKey, SliceStore};
 use dali2rust_registry_runtime::{
@@ -1463,6 +1469,106 @@ impl dali2rust_api::http::firmware_state::FirmwareHttpState for FirmwareBridge {
                 error: snapshot.error.map(|e| e.as_str()),
             },
         }
+    }
+}
+
+pub(crate) struct ClusterStatusBridge {
+    port: Arc<dyn ClusterPresenceReadPort>,
+}
+
+impl ClusterStatusBridge {
+    pub(crate) fn new(port: Arc<dyn ClusterPresenceReadPort>) -> Self {
+        Self { port }
+    }
+}
+
+impl ClusterStatusHttpState for ClusterStatusBridge {
+    fn own(&self) -> ClusterOwnDto {
+        own_dto(&self.port.own_status())
+    }
+
+    fn node(&self, node: u8) -> Option<ClusterNodeDto> {
+        self.port.heard_node(node).map(|view| node_dto(&view))
+    }
+
+    fn ignored(&self, index: usize) -> Option<ClusterIgnoredDto> {
+        self.port.ignored_board(index).map(|view| ignored_dto(&view))
+    }
+}
+
+fn own_dto(status: &OwnStatus) -> ClusterOwnDto {
+    ClusterOwnDto {
+        state: mode_name(status.mode),
+        node_number: status.node,
+        wire: status.wire,
+        board: status.mac.map(node_name),
+        boot_epoch: status.boot_epoch,
+        wire_owner: wire_owner_dto(status),
+        split_pair: status.faults.split_pair,
+        wire_chain: status.faults.wire_chain,
+        number_held_by: status.held_by.map(node_name),
+    }
+}
+
+fn wire_owner_dto(status: &OwnStatus) -> Option<ClusterWireOwnerDto> {
+    match status.wire_owner {
+        WireOwner::Nobody => None,
+        WireOwner::ThisNode => Some(ClusterWireOwnerDto {
+            node: status.node,
+            board: status.mac.map(node_name).unwrap_or_default(),
+            this_node: true,
+        }),
+        WireOwner::Board { node, mac } => {
+            Some(ClusterWireOwnerDto { node, board: node_name(mac), this_node: false })
+        }
+    }
+}
+
+fn node_dto(view: &NodeView) -> ClusterNodeDto {
+    ClusterNodeDto {
+        node: view.node,
+        board: node_name(view.mac),
+        address: ipv4_text(view.source),
+        installation: view.installation.as_str().to_owned(),
+        wire: view.wire,
+        wire_protection: view.wire_protection,
+        home_assistant_face: view.ha_face,
+        heard: view.live,
+        age_ms: view.age_ms,
+        sequence_gaps: view.sequence_gaps,
+        split: view.split,
+    }
+}
+
+fn ignored_dto(view: &IgnoredView) -> ClusterIgnoredDto {
+    let other_cluster = view.reason == IgnoredReason::OtherCluster;
+    ClusterIgnoredDto {
+        board: node_name(view.mac),
+        address: ipv4_text(view.source),
+        node: view.node,
+        reason: reason_name(view.reason),
+        cluster_name: other_cluster.then(|| view.cluster_name.as_str().to_owned()),
+        age_ms: view.age_ms,
+    }
+}
+
+const fn mode_name(mode: OwnMode) -> &'static str {
+    match mode {
+        OwnMode::Off => "off",
+        OwnMode::NoAddress => "no_address",
+        OwnMode::BindFailed => "bind_failed",
+        OwnMode::Standby => "standby",
+        OwnMode::Listening => "listening",
+        OwnMode::Waiting => "waiting",
+        OwnMode::Running => "running",
+    }
+}
+
+const fn reason_name(reason: IgnoredReason) -> &'static str {
+    match reason {
+        IgnoredReason::OtherCluster => "other_cluster",
+        IgnoredReason::Waiting => "waiting",
+        IgnoredReason::NumberHeld => "number_held",
     }
 }
 

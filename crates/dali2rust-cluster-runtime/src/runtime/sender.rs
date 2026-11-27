@@ -341,7 +341,7 @@ fn confirm(publisher: &BusPublisher, correlation_id: u64, product_error: Option<
 }
 
 fn datagram_buffer() -> PsramBox<DatagramBuffer> {
-    // SAFETY: every one of the `MAX_CLUSTER_DATAGRAM_BYTES` bytes is written once by `write_bytes`, and a zero byte is a valid `u8`, so the place is initialised.
+    // SAFETY: `write_bytes` zeroes all `MAX_CLUSTER_DATAGRAM_BYTES` bytes, and a zero byte is a valid `u8`.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<DatagramBuffer>| {
             place.as_mut_ptr().cast::<u8>().write_bytes(0, MAX_CLUSTER_DATAGRAM_BYTES);
