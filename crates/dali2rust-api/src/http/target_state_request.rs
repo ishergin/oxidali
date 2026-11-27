@@ -74,15 +74,15 @@ pub struct RgbwafBody {
     f: Option<MaybeU64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct SetpointFields {
-    power: Option<MaybeString>,
-    level: Option<MaybeU64>,
-    color_mode: Option<MaybeString>,
-    color_temperature_kelvin: Option<MaybeU64>,
-    xy: Option<MaybeObj<XyBody>>,
-    rgb: Option<MaybeObj<RgbBody>>,
-    rgbwaf: Option<MaybeObj<RgbwafBody>>,
+    pub(crate) power: Option<MaybeString>,
+    pub(crate) level: Option<MaybeU64>,
+    pub(crate) color_mode: Option<MaybeString>,
+    pub(crate) color_temperature_kelvin: Option<MaybeU64>,
+    pub(crate) xy: Option<MaybeObj<XyBody>>,
+    pub(crate) rgb: Option<MaybeObj<RgbBody>>,
+    pub(crate) rgbwaf: Option<MaybeObj<RgbwafBody>>,
 }
 
 impl SetpointFields {
@@ -124,6 +124,16 @@ pub struct TargetStateBody {
     recall: Option<MaybeString>,
     #[serde(flatten)]
     extra: BTreeMap<String, IgnoredAny>,
+}
+
+impl TargetStateBody {
+    pub(crate) fn recalling(recall: Option<MaybeString>) -> Self {
+        Self { setpoint: SetpointFields::default(), transition: None, recall, extra: BTreeMap::new() }
+    }
+
+    pub(crate) fn setpoint_mut(&mut self) -> &mut SetpointFields {
+        &mut self.setpoint
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
