@@ -132,6 +132,10 @@ impl Taken {
     pub const fn applies(self) -> bool {
         matches!(self, Self::Fresh { .. } | Self::Restarted)
     }
+
+    pub const fn admits_command(self) -> bool {
+        matches!(self, Self::Fresh { .. } | Self::Restarted | Self::Late)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

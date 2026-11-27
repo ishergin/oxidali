@@ -41,11 +41,12 @@
 | Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id` + `HomeAssistantSettingsCommitCommand`), отказоустойчивость, политики, дисплей | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
 | Настройки и записи узла кластера | `ClusterSettingsUpdateCommand`, `ClusterRecordUpdateCommand` (создание, переименование, удаление записи канала или сцены), `ClusterTextUpdateCommand` (имя кластера, имя записи), `ClusterPartUpdateCommand` (связь группы или сцены адаптера с записью или её снятие) + `ClusterSettingsCommitCommand` | registry worker | HTTP | подтверждение + apply-watch |
 | Забыть узел кластера | `ClusterForgetNodeCommand` | воркер кластера | HTTP | подтверждение запроса (`204`; слышимый узел — `409 node_heard`) |
+| Команда кластера | `ClusterCommandCommand` (уставка, пресет уровня или вызов сцены каналу; вызов сцены на весь узел) | воркер кластера | HTTP | подтверждение запроса: `200`, когда кадр ушёл в сеть, отказ до сети — `409` с причиной |
 | Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
 | Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
 | Runtime реестра | `RegistryRuntimeUpdateCommand`, `RegistryLevelTransitionCommand` | registry worker | только проектор state-fanout | подтверждение (short/VL) или внутренний факт |
 | Перечитать слайс | `RegistrySliceReloadCommand` | registry worker | импорт конфигурации (HTTP), воркер репликации | `202` + операция `config_write` (импорт); от репликации — без ответа |
-| Семантические DALI (102/207/209) | `Dali*Command` для control gear | `DaliWorker` | HTTP, MQTT, HCL, поллер, правила, оркестратор | по виду, см. [`semantic-dali-commands.md`](semantic-dali-commands.md) |
+| Семантические DALI (102/207/209) | `Dali*Command` для control gear | `DaliWorker` | HTTP, MQTT, HCL, поллер, правила, оркестратор, воркер кластера | по виду, см. [`semantic-dali-commands.md`](semantic-dali-commands.md); исполненное по кластеру — внутренний факт, отказы которого считает воркер кластера |
 | Part 103 | `Dali103*Command` | `DaliWorker` | HTTP, правила, арбитраж | по виду, там же |
 | Диагностический сырой кадр | `DaliCommandPayload` (`raw_mode`) | `DaliWorker` | только диагностический REST | подтверждение запроса |
 | Операции | `OperationBeginCommand`, `OperationRegistryResetCommand` | operation tracker | HTTP; правила и `DaliWorker` — начало своего применения (у `OperationRegistryResetCommand` продового издателя нет) | — |
@@ -203,7 +204,8 @@ Volatile runtime-состояние меняют только `RegistryRuntimeUp
 - `correlation_id` — связь с ожидающим подтверждением или с операцией;
   `CORRELATION_NONE` — факт, которого никто не ждёт.
 - `origin` — кто попросил: `Api`, `Mqtt`, `Hcl`, `Rules`, `Poller`, `Sniffer`,
-  `Registry`, `Internal`, а также зарезервированные `Cluster` и `AdapterProxy`.
+  `Registry`, `Internal`, `Cluster` — команда, которую узел исполняет по кадру кластера,
+  — а также зарезервированный `AdapterProxy`.
   Происхождение отображается в `RuntimeSource` провенанса и уточняет приоритет
   провода для нескольких видов (см. [`semantic-dali-commands.md`](semantic-dali-commands.md)).
 - `target_adapter_id` — адаптер-адресат, его фильтрует потребитель. `bus_id`,

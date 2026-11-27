@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -25,6 +26,7 @@ struct HubState {
     ends: Vec<EndQueue>,
     sent: Sender<HubDatagram>,
     next_host: u8,
+    refusing: bool,
 }
 
 impl HubState {
@@ -49,7 +51,7 @@ impl Default for ClusterHub {
 impl ClusterHub {
     pub fn new() -> Self {
         let (sent_tx, sent_rx) = mpsc::channel();
-        let state = HubState { ends: Vec::new(), sent: sent_tx, next_host: FIRST_HUB_HOST };
+        let state = HubState { ends: Vec::new(), sent: sent_tx, next_host: FIRST_HUB_HOST, refusing: false };
         Self { state: Arc::new(Mutex::new(state)), sent: Mutex::new(sent_rx) }
     }
 
@@ -72,6 +74,10 @@ impl ClusterHub {
 
     pub fn inject(&self, source: [u8; 4], bytes: &[u8]) {
         lock(&self.state).deliver(&HubDatagram { source, bytes: bytes.to_vec() });
+    }
+
+    pub fn refuse_sends(&self, refusing: bool) {
+        lock(&self.state).refusing = refusing;
     }
 
     pub fn next_sent(&self, timeout: Duration) -> Option<HubDatagram> {
@@ -98,6 +104,9 @@ impl ClusterLink for HubEnd {
         }
         let datagram = HubDatagram { source: self.source, bytes: datagram.to_vec() };
         let mut state = lock(&self.state);
+        if state.refusing {
+            return Err(ClusterLinkError::Io(ErrorKind::ConnectionRefused));
+        }
         state.deliver(&datagram);
         let _ = state.sent.send(datagram);
         Ok(())

@@ -1189,6 +1189,20 @@ export type StatsCluster = {
   info_pages_ignored_total: number
   info_pages_stale_total: number
   info_elements_skipped_total: number
+  commands_sent_total: number
+  commands_delayed_total: number
+  commands_superseded_total: number
+  commands_received_total: number
+  commands_executed_total: number
+  commands_rejected_total: number
+  commands_dropped_not_member_total: number
+  commands_dropped_duplicate_total: number
+  commands_dropped_not_running_total: number
+  commands_dropped_unsupported_total: number
+  commands_dropped_no_part_total: number
+  commands_dropped_accept_off_total: number
+  commands_dropped_not_wire_owner_total: number
+  commands_dropped_executed_on_wire_total: number
 }
 
 export type InputDeviceSummary = {

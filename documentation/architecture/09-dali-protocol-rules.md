@@ -41,8 +41,8 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - `WirePriority` says who is waiting: `Interactive` (a caller holds the HTTP task),
   `Attended` (answered `202` + operation id; someone watches), `Unattended` (nobody).
   A lease is revoked only by a strictly higher arrival. `Origin` refines only kinds whose
-  producers answer differently: a poller read is `Unattended`, HCL and Home Assistant
-  light commands are `Attended`, a rule's are `Interactive`. The bank 1
+  producers answer differently: a poller read is `Unattended`, HCL, Home Assistant and
+  cluster light commands are `Attended`, a rule's are `Interactive`. The bank 1
   `memory_luminaire` write is `Attended` like `write-attributes`: a Home Assistant or HCL
   light command waits for the whole write, because a write that yields between text
   stages leaves the field empty.

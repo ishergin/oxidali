@@ -1,83 +1,40 @@
-use dali2rust_contracts::msg::{LevelTransition, LightSetpoint};
 use serde::{Deserialize, Serialize};
 
 use super::limits::{is_adapter, is_lamp, is_node, is_record_number};
 
+pub use dali2rust_contracts::msg::ClusterAction as Action;
 pub use dali2rust_contracts::msg::ClusterBirthMark as BirthMark;
+pub use dali2rust_contracts::msg::ClusterLampAddress as LampAddress;
+pub use dali2rust_contracts::msg::ClusterLightVerb as LightVerb;
+pub use dali2rust_contracts::msg::ClusterRecallScope as RecallScope;
 pub use dali2rust_contracts::msg::ClusterRecordRef as RecordRef;
+pub use dali2rust_contracts::msg::ClusterSourceClass as SourceClass;
+pub use dali2rust_contracts::msg::ClusterTarget as Target;
 
 pub(crate) const fn is_record_ref(record: &RecordRef) -> bool {
     is_record_number(record.number)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LampAddress {
-    pub node: u8,
-    pub adapter: u8,
-    pub lamp: u8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Target {
-    Channel(RecordRef),
-    All,
-    Lamp(LampAddress),
-}
-
-impl Target {
-    const fn in_range(&self) -> bool {
-        match self {
-            Self::Channel(channel) => is_record_ref(channel),
-            Self::All => true,
-            Self::Lamp(lamp) => is_node(lamp.node) && is_adapter(lamp.adapter) && is_lamp(lamp.lamp),
-        }
+const fn target_in_range(target: &Target) -> bool {
+    match target {
+        Target::Channel(channel) => is_record_ref(channel),
+        Target::All => true,
+        Target::Lamp(lamp) => is_node(lamp.node) && is_adapter(lamp.adapter) && is_lamp(lamp.lamp),
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RecallScope {
-    Node,
-    Channel(RecordRef),
-}
-
-impl RecallScope {
-    const fn in_range(&self) -> bool {
-        match self {
-            Self::Node => true,
-            Self::Channel(channel) => is_record_ref(channel),
-        }
+const fn scope_in_range(scope: &RecallScope) -> bool {
+    match scope {
+        RecallScope::Node => true,
+        RecallScope::Channel(channel) => is_record_ref(channel),
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LightVerb {
-    Setpoint(LightSetpoint),
-    Transition(LevelTransition),
-    StopFade,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Action {
-    Light { target: Target, verb: LightVerb },
-    RecallScene { scene: RecordRef, scope: RecallScope },
-}
-
-impl Action {
-    const fn in_range(&self) -> bool {
-        match self {
-            Self::Light { target, .. } => target.in_range(),
-            Self::RecallScene { scene, scope } => is_record_ref(scene) && scope.in_range(),
-        }
+pub const fn action_in_range(action: &Action) -> bool {
+    match action {
+        Action::Light { target, .. } => target_in_range(target),
+        Action::RecallScene { scene, scope } => is_record_ref(scene) && scope_in_range(scope),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SourceClass {
-    Operator,
-    HomeAssistant,
-    Hcl,
-    Rules,
-    ForeignMaster,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +47,6 @@ pub struct Command {
 
 impl Command {
     pub(crate) fn in_range(&self) -> bool {
-        self.action.in_range() && self.executed_on_wire.is_none_or(is_node)
+        action_in_range(&self.action) && self.executed_on_wire.is_none_or(is_node)
     }
 }

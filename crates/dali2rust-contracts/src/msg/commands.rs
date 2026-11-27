@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::cluster::{ClusterForwarding, ClusterPartLink, ClusterRecordAction, ClusterRecordKind, ClusterTextField};
+use super::cluster::{
+    ClusterAction, ClusterForwarding, ClusterPartLink, ClusterRecordAction, ClusterRecordKind, ClusterSourceClass,
+    ClusterTextField,
+};
 use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText60, FixedText64, FixedText96};
 use super::kinds::{
     CommissioningStep, ConfigWriteResource, DaliTargetScope, DeviceTypeSet, DimDirection, DiscoveryMode,
@@ -1313,6 +1316,23 @@ declare_bus_payloads! {
             send: true,
             accept: true,
         }),
+    };
+
+    pub struct ClusterCommandCommand {
+        pub action: ClusterAction,
+        pub source: ClusterSourceClass,
+        pub hold_hcl: bool,
+    }
+    budget = ClusterCommandCommand {
+        action: ClusterAction::Light {
+            target: crate::msg::ClusterTarget::Channel(crate::msg::ClusterRecordRef {
+                number: u8::MAX,
+                mark: crate::msg::ClusterBirthMark { generation: u32::MAX, nonce: u32::MAX },
+            }),
+            verb: crate::msg::ClusterLightVerb::Setpoint(crate::msg::payload_test_samples::worst_setpoint()),
+        },
+        source: ClusterSourceClass::ForeignMaster,
+        hold_hcl: true,
     };
 }
 

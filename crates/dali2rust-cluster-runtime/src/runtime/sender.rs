@@ -36,8 +36,18 @@ use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 
 use super::announce::{reached, Announcer, OwnInfo, Turn};
 use super::counters::{bump, ClusterCounters};
+use super::execute::ClusterExecution;
+use super::incoming::CommandIntake;
+use super::outgoing::{placed_outgoing, Outgoing};
 use super::receiver::{run_receiver, LinkHandoff};
 use super::shared::{ClusterPresence, Forgotten, Settled};
+
+mod command;
+
+pub use command::{
+    CLUSTER_BUSY, CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING, CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED,
+    CONTROLLER_PASSIVE,
+};
 
 pub const NODE_HEARD: &str = "node_heard";
 
@@ -67,21 +77,31 @@ pub struct ClusterWorkerThreads {
     pub receiver: JoinHandle<()>,
 }
 
-pub fn spawn_cluster_worker(inbox: BusSubscriberRx, ports: ClusterWorkerPorts) -> ClusterWorkerThreads {
+pub struct ClusterInboxes {
+    pub commands_and_events: BusSubscriberRx,
+    pub confirmations: BusSubscriberRx,
+}
+
+pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) -> ClusterWorkerThreads {
     let (handoff_tx, handoff_rx) = mpsc::channel();
     let (presence, counters) = (Arc::clone(&ports.presence), Arc::clone(&ports.counters));
     let info = Arc::clone(&ports.info);
+    let bus = (ports.publisher.clone(), ports.bus_id);
+    let execution = Arc::new(ClusterExecution::new(bus, Arc::clone(&ports.parts), Arc::clone(&ports.counters)));
+    let settings = Arc::clone(&ports.settings);
+    let intake = CommandIntake { execution: Arc::clone(&execution), settings, confirmations: inboxes.confirmations };
     let receiver = spawn_named_stack_in(
         c"cluster_rx",
         std_thread_stack::EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        move || run_receiver(handoff_rx, (presence, info), counters),
+        move || run_receiver(handoff_rx, (presence, info), counters, intake),
     );
+    let inbox = inboxes.commands_and_events;
     let sender = spawn_named_stack_in(
         c"cluster_tx",
         std_thread_stack::EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        move || run_sender(inbox, &ports, handoff_tx),
+        move || run_sender(inbox, &ports, (handoff_tx, execution)),
     );
     ClusterWorkerThreads { sender, receiver }
 }
@@ -96,10 +116,11 @@ dali2rust_contracts::dispatch_bus_commands! {
     payload = payload;
     ignored = {};
     ClusterForgetNodeCommand(forget) => node.on_forget(correlation_id, forget),
+    ClusterCommandCommand(command) => node.on_command(correlation_id, command),
 }
 
-fn run_sender(inbox: BusSubscriberRx, ports: &ClusterWorkerPorts, handoff: Sender<LinkHandoff>) {
-    let mut node = NodeSender::new(ports, handoff);
+fn run_sender(inbox: BusSubscriberRx, ports: &ClusterWorkerPorts, links: (Sender<LinkHandoff>, Arc<ClusterExecution>)) {
+    let mut node = NodeSender::new(ports, links);
     SENDER_STACK.note("start");
     loop {
         node.advance(monotonic_ms());
@@ -176,6 +197,9 @@ impl Reading {
 struct NodeSender<'a> {
     ports: &'a ClusterWorkerPorts,
     handoff: Sender<LinkHandoff>,
+    execution: Arc<ClusterExecution>,
+    outgoing: PsramBox<Outgoing>,
+    mode: OwnMode,
     buffer: PsramBox<DatagramBuffer>,
     link: Option<Bound>,
     wants_link: bool,
@@ -187,13 +211,16 @@ struct NodeSender<'a> {
 }
 
 impl<'a> NodeSender<'a> {
-    fn new(ports: &'a ClusterWorkerPorts, handoff: Sender<LinkHandoff>) -> Self {
+    fn new(ports: &'a ClusterWorkerPorts, (handoff, execution): (Sender<LinkHandoff>, Arc<ClusterExecution>)) -> Self {
         let now_ms = monotonic_ms();
         let digest = ports.presence.digest(now_ms);
         let buffer = datagram_buffer();
         Self {
             ports,
             handoff,
+            execution,
+            outgoing: placed_outgoing(),
+            mode: OwnMode::Off,
             buffer,
             link: None,
             wants_link: false,
@@ -215,12 +242,14 @@ impl<'a> NodeSender<'a> {
         let (listened_ms, renamed) = self.listened_ms(&reading, now_ms);
         let base = self.base_mode(&reading);
         let settled = self.ports.presence.settle(reading.identity(), base, listened_ms, now_ms);
+        self.mode = settled.mode;
         if renamed {
             self.ports.info.clear();
         }
         if settled.entered_running || self.slot_due(now_ms) {
             self.on_slot(&reading, settled, now_ms);
         }
+        self.carry_commands(&reading, now_ms);
         self.announce(&reading, settled.mode == OwnMode::Running, now_ms);
         self.ports.presence.prune(now_ms);
         self.publish_if_changed(now_ms);
@@ -277,7 +306,8 @@ impl<'a> NodeSender<'a> {
         self.wants_link.then(|| {
             let left = |at_ms: u32| if reached(now_ms, at_ms) { 0 } else { at_ms.wrapping_sub(now_ms) };
             let info = self.announcer.deadline().map_or(u32::MAX, left);
-            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info)))
+            let commands = self.outgoing.deadline().map_or(u32::MAX, left);
+            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info).min(commands)))
         })
     }
 

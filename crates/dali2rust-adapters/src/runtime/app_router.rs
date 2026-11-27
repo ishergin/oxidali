@@ -53,6 +53,7 @@ use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterS
 use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
 use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
+use dali2rust_api::http::handlers::cluster_commands::{ClusterCommandDeps, ClusterCommandHandler, ClusterCommandRoute};
 use dali2rust_api::http::handlers::cluster_info::{ClusterInfoGetHandler, ClusterNodePartsHandler};
 use dali2rust_api::http::handlers::cluster_parts::{ClusterPartDeps, ClusterPartHandler, ClusterPartRoute};
 use dali2rust_api::http::handlers::cluster_records::{
@@ -348,7 +349,7 @@ fn wire_read_models(
 ) -> AppBuilder {
     let builder = wire_firmware(builder, bus, &read_models.firmware);
     let builder = wire_cluster_status(builder, bus, &read_models.cluster);
-    let builder = wire_cluster_info(builder, &read_models.cluster_info);
+    let builder = wire_cluster_info(builder, bus, &read_models.cluster_info);
     builder
         .with_handler(
             RouteKey::Diagnostics,
@@ -913,12 +914,29 @@ fn wire_cluster(builder: AppBuilder, bus: &HttpBusDispatch, registry: &RegistryH
 }
 
 #[inline(never)]
-fn wire_cluster_info(builder: AppBuilder, info: &Arc<dyn ClusterInfoHttpState>) -> AppBuilder {
+fn wire_cluster_info(builder: AppBuilder, bus: &HttpBusDispatch, info: &Arc<dyn ClusterInfoHttpState>) -> AppBuilder {
     let parts = |kind| -> Box<dyn ApiHandler> { Box::new(ClusterNodePartsHandler::new(Arc::clone(info), kind)) };
-    builder
+    let builder = builder
         .with_handler(RouteKey::ClusterInfoGet, read(info, ClusterInfoGetHandler::new))
         .with_handler(RouteKey::ClusterNodeChannelPartsList, parts(ClusterRecordKind::Channel))
-        .with_handler(RouteKey::ClusterNodeScenePartsList, parts(ClusterRecordKind::Scene))
+        .with_handler(RouteKey::ClusterNodeScenePartsList, parts(ClusterRecordKind::Scene));
+    wire_cluster_commands(builder, bus, info)
+}
+
+#[inline(never)]
+fn wire_cluster_commands(builder: AppBuilder, bus: &HttpBusDispatch, info: &Arc<dyn ClusterInfoHttpState>) -> AppBuilder {
+    let deps = Arc::new(ClusterCommandDeps {
+        publisher: bus.publisher.clone(),
+        slots: Arc::clone(&bus.slots),
+        correlation: Arc::clone(&bus.correlation),
+        cluster: Arc::clone(info),
+        bus_id: bus.bus_id,
+        timeout_ms: bus.confirmation_timeout_ms,
+    });
+    let handler = |route| -> Box<dyn ApiHandler> { Box::new(ClusterCommandHandler::new(Arc::clone(&deps), route)) };
+    builder
+        .with_handler(RouteKey::ClusterChannelTargetState, handler(ClusterCommandRoute::ChannelTargetState))
+        .with_handler(RouteKey::ClusterSceneRecall, handler(ClusterCommandRoute::SceneRecall))
 }
 
 const CLUSTER_RECORD_ROUTES: [(RouteKey, ClusterRecordKind, ClusterRecordRoute); 10] = [

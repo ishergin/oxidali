@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use super::kinds::LevelTransition;
+use super::state::LightSetpoint;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClusterForwarding {
     pub operator: bool,
@@ -53,6 +56,48 @@ pub enum ClusterRecordAction {
     Create { number: Option<u8>, nonce: u32 },
     Rename { number: u8, revision: u32 },
     Delete { number: u8, revision: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClusterLampAddress {
+    pub node: u8,
+    pub adapter: u8,
+    pub lamp: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterTarget {
+    Channel(ClusterRecordRef),
+    All,
+    Lamp(ClusterLampAddress),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterRecallScope {
+    Node,
+    Channel(ClusterRecordRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterLightVerb {
+    Setpoint(LightSetpoint),
+    Transition(LevelTransition),
+    StopFade,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterAction {
+    Light { target: ClusterTarget, verb: ClusterLightVerb },
+    RecallScene { scene: ClusterRecordRef, scope: ClusterRecallScope },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterSourceClass {
+    Operator,
+    HomeAssistant,
+    Hcl,
+    Rules,
+    ForeignMaster,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

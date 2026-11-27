@@ -112,7 +112,7 @@ pub(crate) struct WorkerChannels {
     pub pipeline: PipelineChannels,
     pub services: ServiceChannels,
     pub ws_ev: WsInboxPending,
-    pub cluster: BusSubscriberRx,
+    pub cluster: dali2rust_cluster_runtime::ClusterInboxes,
 }
 
 pub(crate) struct WsInbox {

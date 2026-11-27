@@ -3,9 +3,9 @@ use crate::http::health_state::HealthHttpState;
 use crate::http::stats_state::{StatsHttpState, StatsReportDto};
 use crate::ws::protocol::{event_frame_reserving, Channel};
 
-pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8768;
+pub const DIAGNOSTICS_SNAPSHOT_CEILING_BYTES: usize = 8832;
 
-pub const STATS_SNAPSHOT_CEILING_BYTES: usize = 7168;
+pub const STATS_SNAPSHOT_CEILING_BYTES: usize = 7744;
 
 pub const HEALTH_SNAPSHOT_CEILING_BYTES: usize = 256;
 

@@ -12,6 +12,7 @@ use dali2rust_platform::cluster_link::{
 use dali2rust_platform::liveness::monotonic_ms;
 
 use super::counters::{bump, ClusterCounters};
+use super::incoming::CommandIntake;
 use super::shared::{ClusterPresence, Delivery};
 use crate::info::ClusterInfo;
 
@@ -49,6 +50,7 @@ struct Intake {
     presence: Arc<ClusterPresence>,
     info: Arc<ClusterInfo>,
     counters: Arc<ClusterCounters>,
+    commands: CommandIntake,
     buffer: PsramBox<ClusterReceiveBuffer>,
 }
 
@@ -56,20 +58,30 @@ pub(crate) fn run_receiver(
     handoff: Receiver<LinkHandoff>,
     (presence, info): (Arc<ClusterPresence>, Arc<ClusterInfo>),
     counters: Arc<ClusterCounters>,
+    commands: CommandIntake,
 ) {
-    let mut intake = Intake { presence, info, counters, buffer: receive_buffer() };
+    let mut intake = Intake { presence, info, counters, commands, buffer: receive_buffer() };
     let mut link: Option<HeldLink> = None;
     RECEIVER_STACK.note("start");
     loop {
         let next = match &link {
-            None => handoff.recv().map_or(Next::Stop, Next::Switch),
+            None => idle(&handoff),
             Some(held) => intake.serve(held, &handoff),
         };
+        intake.commands.drain_confirmations();
         match next {
             Next::Keep => {}
             Next::Switch(handed) => link = handed.into_link(),
             Next::Stop => return,
         }
+    }
+}
+
+fn idle(handoff: &Receiver<LinkHandoff>) -> Next {
+    match handoff.recv_timeout(RECEIVE_SLICE) {
+        Ok(handed) => Next::Switch(handed),
+        Err(RecvTimeoutError::Timeout) => Next::Keep,
+        Err(RecvTimeoutError::Disconnected) => Next::Stop,
     }
 }
 
@@ -82,11 +94,7 @@ impl Intake {
                 Err(TryRecvError::Disconnected) => Next::Stop,
             };
         }
-        match handoff.recv_timeout(RECEIVE_SLICE) {
-            Ok(handed) => Next::Switch(handed),
-            Err(RecvTimeoutError::Timeout) => Next::Keep,
-            Err(RecvTimeoutError::Disconnected) => Next::Stop,
-        }
+        idle(handoff)
     }
 
     fn receive_one(&mut self, held: &HeldLink) -> bool {
@@ -95,7 +103,10 @@ impl Intake {
             Ok(Received::Datagram { len, source }) => {
                 bump(&counters.datagrams_received_total);
                 let delivery = Delivery { source, link: held.generation, now_ms: monotonic_ms() };
-                self.presence.take_datagram(self.buffer.get(..len).unwrap_or_default(), delivery, counters, &self.info);
+                let bytes = self.buffer.get(..len).unwrap_or_default();
+                if let Some(heard) = self.presence.take_datagram(bytes, delivery, counters, &self.info) {
+                    self.commands.take(heard, counters);
+                }
                 RECEIVER_STACK.note("datagram");
             }
             Ok(Received::Oversize { .. }) => {

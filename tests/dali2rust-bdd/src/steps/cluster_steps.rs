@@ -22,6 +22,7 @@ const PULSE_PERIOD_MS: u32 = 200;
 const OWN_BOOT_EPOCH: u32 = 0x0C1A_0001;
 const NEIGHBOUR_BOOT_EPOCH: u32 = 0x0C1A_0002;
 const HUB_DEADLINE: Duration = Duration::from_secs(4);
+const IMPOSTOR_ADDRESS: [u8; 4] = [10, 0, 0, 99];
 
 pub struct ClusterRig {
     hub: Arc<ClusterHub>,
@@ -71,6 +72,11 @@ impl ClusterRig {
     pub(crate) const fn mac(&self) -> [u8; 6] {
         self.mac
     }
+
+    pub(crate) fn impostor(&self, node: u8, cluster_name: String) -> Speaker {
+        let (hub, source, mac) = (Arc::clone(&self.hub), IMPOSTOR_ADDRESS, self.mac);
+        Speaker { hub, source, mac, node, cluster_name, seq: Arc::new(Mutex::new(0)) }
+    }
 }
 
 #[derive(Clone)]
@@ -95,6 +101,10 @@ impl Speaker {
         };
         *seq = seq.wrapping_add(1);
         self.hub.inject(self.source, &write(&header));
+    }
+
+    pub(crate) fn repeat(&self, bytes: &[u8]) {
+        self.hub.inject(self.source, bytes);
     }
 
     pub(crate) fn say(&self, buffer: &mut DatagramBuffer, frame: &Frame<'_>) {
@@ -181,7 +191,7 @@ fn holds_node(datagram: &HubDatagram, mac: [u8; 6], node: u8, cluster_name: &str
         && pulse.cluster_name == cluster_name)
 }
 
-// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075
+// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-084 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089
 #[given(regex = r#"^the controller runs on a cluster hub as board "([0-9a-f:]{17})" at "([0-9.]+)"$"#)]
 async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     let (mac, address) = (hardware_address(&mac), ipv4(&address));
@@ -189,7 +199,7 @@ async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     world.run_on_network_link(mac, Some(address), node_name(mac));
 }
 
-// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075
+// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089
 #[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) of cluster "([^"]*)" for installation "([^"]*)"$"#)]
 async fn board_pulses(world: &mut DaliWorld, mac: String, source: String, node: u8, name: String, site: String) {
     let rig = rig(world);
@@ -234,7 +244,7 @@ async fn board_stops(world: &mut DaliWorld, mac: String) {
     assert!(rig.neighbours.len() < before, "no board {mac:02x?} was pulsing");
 }
 
-// CLU-023 CLU-066 CLU-068 CLU-070
+// CLU-023 CLU-066 CLU-068 CLU-070 CLU-076 CLU-083 CLU-084
 #[when("the cluster hub sets aside what this controller has sent so far")]
 async fn hub_sets_aside(world: &mut DaliWorld) {
     let hub = &rig(world).hub;
@@ -291,7 +301,7 @@ async fn ws_cluster_status(world: &mut DaliWorld, node: u64, board: String) {
     assert!(frame.is_some(), "no ClusterStatus frame showed node {node} heard from {board}");
 }
 
-// CLU-046 CLU-052 CLU-065
+// CLU-046 CLU-052 CLU-065 CLU-084
 #[when(regex = r#"^I link "([^"]+)" to the cluster record "([^"]+)" with send (true|false) and accept (true|false)$"#)]
 async fn link_part_to_record(world: &mut DaliWorld, part: String, record: String, send: String, accept: String) {
     world.send_http_request("GET", &record, None, "");
