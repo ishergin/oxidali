@@ -4,7 +4,9 @@ mod receiver;
 mod sender;
 mod shared;
 
-pub use composition::{host_boot_epoch, ClusterComposition, ClusterSeams};
+pub use composition::{
+    fixed_boot_epoch, mixed_boot_epoch, wall_clock_now, ClusterComposition, ClusterSeams, EpochSource,
+};
 pub use counters::ClusterCounters;
 pub use sender::{
     spawn_cluster_worker, ClusterWorkerPorts, ClusterWorkerThreads, CLUSTER_WORKER_HANDLED_COMMANDS,

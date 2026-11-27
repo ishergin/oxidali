@@ -292,7 +292,7 @@ impl<'a> NodeSender<'a> {
         let header = Header {
             cluster_tag: cluster_tag(&reading.settings.cluster_name),
             sender_mac: reading.mac.unwrap_or_default(),
-            boot_epoch: self.ports.presence.boot_epoch(),
+            boot_epoch: self.ports.presence.draw_boot_epoch(),
             node_no: reading.settings.node_number,
             seq: self.seq,
         };

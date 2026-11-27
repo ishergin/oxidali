@@ -12,16 +12,19 @@ Feature: Cluster — presence of the nodes
     Given the controller runs on a cluster hub as board "02:00:00:0a:0b:01" at "10.0.0.1"
 
   @id:CLU-015
-  Scenario: A cluster that is off sends nothing, and once on it holds its number in a pulse
+  Scenario: A cluster that is off sends nothing and has drawn no boot epoch, and once on it holds its number in a pulse
     When I PATCH JSON {"cluster_name":"hall","node_number":2} to "/api/v1/cluster"
     Then the response status should be 200
     And the cluster hub should carry no datagram from this controller within 1000 ms
     And the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "off"
+    When I send a GET request to "/api/v1/cluster/status"
+    Then the JSON pointer "/own/boot_epoch" should be null
     When I PATCH JSON {"enabled":true} to "/api/v1/cluster"
     Then the response status should be 200
     And the cluster hub should carry a pulse from this controller holding node 2 of cluster "hall"
     And the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "running"
     And the JSON pointer "/own/board" at "/api/v1/cluster/status" should eventually be "dali-0a0b01"
+    And the JSON pointer "/own/boot_epoch" at "/api/v1/cluster/status" should eventually be "203030529"
     And the JSON pointer "/cluster/datagrams_sent_total" at "/api/v1/stats" should eventually be greater than 0
 
   @id:CLU-016

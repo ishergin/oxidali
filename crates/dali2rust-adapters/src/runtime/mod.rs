@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex};
 use dali2rust_api::http::handlers::static_assets::StaticAsset;
 use dali2rust_api::http::router::Router;
 use dali2rust_bus::{BusConfig, BusId, BusPublisher};
-pub use dali2rust_cluster_runtime::{host_boot_epoch, ClusterComposition};
+pub use dali2rust_cluster_runtime::{
+    fixed_boot_epoch, mixed_boot_epoch, wall_clock_now, ClusterComposition, EpochSource,
+};
 use dali2rust_cluster_runtime::{spawn_cluster_worker, ClusterSeams, ClusterWorkerPorts, ClusterWorkerThreads};
 use dali2rust_dali_runtime::DaliRuntimeConfig;
 pub use dali2rust_display_runtime::{DisplayView, HardwareDisplay};

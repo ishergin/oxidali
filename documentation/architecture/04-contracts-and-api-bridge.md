@@ -77,9 +77,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
   it heard last with a new frame, each judged by its own window: sequence numbers compare
   by wrapping arithmetic, and a frame of any other epoch starts a window in place of the
-  one heard least recently and counts as new. A board's boot epoch never repeats, a copy
-  carries its original's number, and every kind of frame of that board draws from one
-  sequence.
+  one heard least recently and counts as new. A board draws its boot epoch once, with its
+  first frame, from the hardware random source, the time since boot and the wall clock
+  together, so it repeats only when all three repeat; a copy carries its original's number,
+  and every kind of frame of that board draws from one sequence.
 - The network port is `ClusterLink` in `dali2rust-platform`: send one datagram from any
   thread; one thread receives, with a timeout. `UdpClusterLink` is its one implementation,
   for the board and the host: it binds, enables broadcast, sends to the limited broadcast

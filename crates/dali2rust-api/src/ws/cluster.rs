@@ -59,7 +59,7 @@ mod tests {
                 node_number: u8::MAX,
                 wire: u8::MAX,
                 board: Some(WIDEST_BOARD.into()),
-                boot_epoch: u32::MAX,
+                boot_epoch: Some(u32::MAX),
                 wire_owner: Some(ClusterWireOwnerDto { node: u8::MAX, board: WIDEST_BOARD.into(), this_node: false }),
                 split_pair: true,
                 wire_chain: true,

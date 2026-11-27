@@ -1,8 +1,12 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
 use dali2rust_contracts::msg::{fixed_text_32, fixed_text_64};
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 
 use super::*;
 use crate::frame::{cluster_tag, encode, DatagramBuffer, Header, NodeClaim, Pulse};
+use crate::runtime::fixed_boot_epoch;
 
 const TIMING: PresenceTiming = PresenceTiming::every_ms(1_000);
 const NAME: &str = "home";
@@ -14,6 +18,7 @@ const SOURCE: [u8; 4] = [10, 0, 0, 9];
 const START_MS: u32 = 100_000;
 const STEP_MS: u32 = 1 << 28;
 const STEPS_PAST_A_WRAP: u32 = 20;
+const DRAWN_EPOCH: u32 = 0x0e90_c400;
 
 fn identity(node: u8) -> OwnFacts {
     OwnFacts {
@@ -37,7 +42,7 @@ fn pulse(cluster_name: &str, installation: &str, node: u8, seq: u32) -> Vec<u8> 
 }
 
 fn present() -> (ClusterPresence, ClusterCounters) {
-    let presence = ClusterPresence::new(TIMING, 1);
+    let presence = ClusterPresence::new(TIMING, fixed_boot_epoch(1));
     presence.settle(identity(0), Some(OwnMode::Standby), 0, START_MS);
     (presence, ClusterCounters::default())
 }
@@ -91,16 +96,29 @@ fn a_kept_silent_holder_never_comes_back_as_heard_when_the_clock_wraps() {
 
 #[test]
 fn a_node_that_has_run_longer_than_half_the_clock_still_sees_its_split_pair() {
-    let presence = ClusterPresence::new(TIMING, 1);
+    let presence = ClusterPresence::new(TIMING, fixed_boot_epoch(1));
     let counters = ClusterCounters::default();
     assert!(presence.settle(identity(0), None, TIMING.listen_ms(), START_MS).entered_running);
     for step in 1..=STEPS_PAST_A_WRAP {
         let now = stepped(step);
         presence.settle(identity(0), None, TIMING.listen_ms(), now);
         presence.prune(now);
+        deliver(&presence, &counters, &pulse(NAME, HOUSE, 0, step), presence.link(), now);
+        let state = presence.lock();
+        assert!(state.roster(now, TIMING).faults().split_pair, "step {step}");
     }
-    let now = stepped(STEPS_PAST_A_WRAP);
-    deliver(&presence, &counters, &pulse(NAME, HOUSE, 0, 1), presence.link(), now);
-    let state = presence.lock();
-    assert!(state.roster(now, TIMING).faults().split_pair);
+}
+
+#[test]
+fn the_boot_epoch_is_drawn_once_and_not_before_it_is_asked_for() {
+    let draws = Arc::new(AtomicU32::new(0));
+    let counted = Arc::clone(&draws);
+    let presence =
+        ClusterPresence::new(TIMING, Arc::new(move || DRAWN_EPOCH + counted.fetch_add(1, Ordering::Relaxed)));
+    assert_eq!(presence.own_status().boot_epoch, None);
+    assert_eq!(draws.load(Ordering::Relaxed), 0);
+    assert_eq!(presence.draw_boot_epoch(), DRAWN_EPOCH);
+    assert_eq!(presence.draw_boot_epoch(), DRAWN_EPOCH);
+    assert_eq!(presence.own_status().boot_epoch, Some(DRAWN_EPOCH));
+    assert_eq!(draws.load(Ordering::Relaxed), 1);
 }

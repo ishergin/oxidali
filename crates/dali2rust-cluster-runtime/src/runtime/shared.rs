@@ -2,7 +2,7 @@ use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
 use std::collections::hash_map::DefaultHasher;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
@@ -13,6 +13,7 @@ use crate::presence::{
     PresenceTiming, Roster, Taken, WireOwner, MAX_HEARD_BOARDS,
 };
 
+use super::composition::EpochSource;
 use super::counters::{bump, ClusterCounters};
 
 #[cfg(test)]
@@ -24,7 +25,7 @@ pub struct OwnStatus {
     pub node: u8,
     pub wire: u8,
     pub mac: Option<[u8; 6]>,
-    pub boot_epoch: u32,
+    pub boot_epoch: Option<u32>,
     pub wire_owner: WireOwner,
     pub faults: OwnFaults,
     pub held_by: Option<[u8; 6]>,
@@ -94,20 +95,25 @@ pub(crate) enum Forgotten {
 pub struct ClusterPresence {
     state: Mutex<PsramBox<PresenceState>>,
     timing: PresenceTiming,
-    boot_epoch: u32,
+    epoch_source: EpochSource,
+    boot_epoch: OnceLock<u32>,
 }
 
 impl ClusterPresence {
-    pub fn new(timing: PresenceTiming, boot_epoch: u32) -> Self {
-        Self { state: Mutex::new(placed_state()), timing, boot_epoch }
+    pub fn new(timing: PresenceTiming, epoch_source: EpochSource) -> Self {
+        Self { state: Mutex::new(placed_state()), timing, epoch_source, boot_epoch: OnceLock::new() }
     }
 
     pub const fn timing(&self) -> PresenceTiming {
         self.timing
     }
 
-    pub const fn boot_epoch(&self) -> u32 {
-        self.boot_epoch
+    pub(crate) fn draw_boot_epoch(&self) -> u32 {
+        *self.boot_epoch.get_or_init(|| (self.epoch_source)())
+    }
+
+    fn drawn_boot_epoch(&self) -> Option<u32> {
+        self.boot_epoch.get().copied()
     }
 
     fn lock(&self) -> MutexGuard<'_, PsramBox<PresenceState>> {
@@ -181,7 +187,7 @@ impl ClusterPresence {
         let state = self.lock();
         let roster = state.roster(now_ms, self.timing);
         let mut hasher = DefaultHasher::new();
-        state.status(&roster, self.boot_epoch).hash(&mut hasher);
+        state.status(&roster, self.drawn_boot_epoch()).hash(&mut hasher);
         for board in state.table.iter() {
             (board.mac, board.node_no, roster.standing(board), roster.live(board)).hash(&mut hasher);
             (&board.pulse, board.ha_face).hash(&mut hasher);
@@ -221,7 +227,7 @@ impl PresenceState {
         })
     }
 
-    fn status(&self, roster: &Roster<'_>, boot_epoch: u32) -> OwnStatus {
+    fn status(&self, roster: &Roster<'_>, boot_epoch: Option<u32>) -> OwnStatus {
         let waiting = self.mode == OwnMode::Waiting;
         OwnStatus {
             mode: self.mode,
@@ -240,7 +246,7 @@ impl ClusterPresenceReadPort for ClusterPresence {
     fn own_status(&self) -> OwnStatus {
         let state = self.lock();
         let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
-        state.status(&roster, self.boot_epoch)
+        state.status(&roster, self.drawn_boot_epoch())
     }
 
     fn heard_node(&self, node: u8) -> Option<NodeView> {

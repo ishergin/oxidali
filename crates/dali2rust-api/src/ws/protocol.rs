@@ -324,6 +324,7 @@ mod tests {
                 "rules",
                 "logs",
                 "health",
+                "cluster",
             ]
         );
     }

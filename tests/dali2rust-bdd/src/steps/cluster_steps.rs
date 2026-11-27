@@ -5,7 +5,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
-use dali2rust_adapters::ClusterComposition;
+use dali2rust_adapters::{fixed_boot_epoch, ClusterComposition};
 use dali2rust_cluster_runtime::frame::{
     cluster_tag, decode, encode, DatagramBuffer, Frame, Header, NodeClaim, Pulse,
 };
@@ -40,7 +40,7 @@ impl ClusterRig {
         ClusterComposition {
             binder: Arc::new(ClusterHubBinder::new(Arc::clone(&self.hub), self.address)),
             timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
-            boot_epoch: OWN_BOOT_EPOCH,
+            boot_epoch: fixed_boot_epoch(OWN_BOOT_EPOCH),
         }
     }
 

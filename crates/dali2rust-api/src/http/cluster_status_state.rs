@@ -20,7 +20,7 @@ pub struct ClusterOwnDto {
     pub node_number: u8,
     pub wire: u8,
     pub board: Option<String>,
-    pub boot_epoch: u32,
+    pub boot_epoch: Option<u32>,
     pub wire_owner: Option<ClusterWireOwnerDto>,
     pub split_pair: bool,
     pub wire_chain: bool,

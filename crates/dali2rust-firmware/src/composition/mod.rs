@@ -180,13 +180,10 @@ fn stack_options(
 }
 
 #[cfg(target_os = "espidf")]
-const EPOCH_TIMER_ROTATION: u32 = 16;
-
-#[cfg(target_os = "espidf")]
 fn cluster_composition() -> dali2rust_adapters::ClusterComposition {
     dali2rust_adapters::ClusterComposition::production(
         Arc::new(dali2rust_platform::cluster_link::UdpClusterBinder),
-        cluster_boot_epoch(),
+        Arc::new(cluster_boot_epoch),
     )
 }
 
@@ -195,8 +192,7 @@ fn cluster_boot_epoch() -> u32 {
     // SAFETY: `esp_random` reads the RNG register, `esp_timer_get_time` the system timer; no preconditions.
     let (drawn, since_boot_us) =
         unsafe { (esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_timer_get_time()) };
-    let [a, b, c, d, ..] = since_boot_us.to_le_bytes();
-    drawn ^ u32::from_le_bytes([a, b, c, d]).rotate_left(EPOCH_TIMER_ROTATION)
+    dali2rust_adapters::mixed_boot_epoch(drawn, since_boot_us.unsigned_abs(), dali2rust_adapters::wall_clock_now())
 }
 
 #[cfg(not(target_os = "espidf"))]
