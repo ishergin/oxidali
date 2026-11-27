@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::limits::{is_node, MAX_CLUSTER_NAME_BYTES, MAX_INSTALLATION_BYTES};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeClaim {
     Holding,
     Waiting,

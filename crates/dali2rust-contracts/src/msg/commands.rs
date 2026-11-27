@@ -1276,6 +1276,11 @@ declare_bus_payloads! {
         series: u64::MAX,
         frames: u8::MAX,
     };
+
+    pub struct ClusterForgetNodeCommand {
+        pub node: u8,
+    }
+    budget = ClusterForgetNodeCommand { node: u8::MAX };
 }
 
 impl FirmwareUpdateBeginCommand {

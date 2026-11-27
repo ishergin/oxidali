@@ -1,8 +1,8 @@
 use serde::Serialize;
 
-pub const WORST_COMMAND_SUBSCRIBERS: usize = 8;
+pub const WORST_COMMAND_SUBSCRIBERS: usize = 9;
 pub const WORST_CONFIRMATION_SUBSCRIBERS: usize = 4;
-pub const WORST_EVENT_SUBSCRIBERS: usize = 13;
+pub const WORST_EVENT_SUBSCRIBERS: usize = 14;
 pub const WORST_EVENT_SUBSCRIBER_NAME: &str = "wwwwwwwwwwwwwwwwwwwwwwww";
 
 #[cfg(test)]
