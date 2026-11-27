@@ -4,6 +4,7 @@ mod set;
 #[cfg(test)]
 mod tests;
 
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use dali2rust_bsp::psram::PsramBox;
@@ -43,6 +44,7 @@ pub trait ClusterInfoReadPort: Send + Sync {
 
 pub struct ClusterInfo {
     cache: Mutex<PsramBox<InfoCache>>,
+    era: AtomicU32,
 }
 
 impl Default for ClusterInfo {
@@ -53,15 +55,23 @@ impl Default for ClusterInfo {
 
 impl ClusterInfo {
     pub fn new() -> Self {
-        Self { cache: Mutex::new(placed_cache()) }
+        Self { cache: Mutex::new(placed_cache()), era: AtomicU32::new(0) }
     }
 
     fn lock(&self) -> MutexGuard<'_, PsramBox<InfoCache>> {
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn take_page(&self, at: Arrival, page: &InfoPage<'_>) -> PageTally {
-        self.lock().take_page(at, page)
+    pub(crate) fn era(&self) -> u32 {
+        self.era.load(Relaxed)
+    }
+
+    pub(crate) fn take_page(&self, at: Arrival, page: &InfoPage<'_>, era: u32) -> PageTally {
+        let mut cache = self.lock();
+        if self.era.load(Relaxed) != era {
+            return PageTally::default();
+        }
+        cache.take_page(at, page)
     }
 
     pub(crate) fn forget(&self, node: u8) {
@@ -69,7 +79,9 @@ impl ClusterInfo {
     }
 
     pub(crate) fn clear(&self) {
-        self.lock().clear();
+        let mut cache = self.lock();
+        self.era.fetch_add(1, Relaxed);
+        cache.clear();
     }
 
     pub(crate) fn changes(&self, now_ms: u32) -> u32 {

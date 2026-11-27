@@ -81,8 +81,9 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   flag closes it. A gap or a newer set number abandons the open set, and the previous
   whole set stays shown. Set numbers compare by wrapping arithmetic within one board and
   boot epoch; another board or epoch always follows. A page feeds the cache only from the
-  board presence shows for its node, live, and only when the duplicate window takes it as
-  new. Records and parts are what a page carries now; a receiver counts and skips a record
+  board presence shows for its node, live, under this cluster's tag, and only when the
+  duplicate window takes it as next in order or as the first of a new boot epoch, never as
+  late; a page admitted before the cache was cleared never lands after the clear. Records and parts are what a page carries now; a receiver counts and skips a record
   outside the sender's block, a part's lamp maps and taken flag, group maps and names, and
   never fails the set over them.
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs

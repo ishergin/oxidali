@@ -4,7 +4,6 @@ mod bus_host;
 pub use bus_host::NAMED_EVENT_SUBSCRIBERS;
 mod display_source;
 mod bus_stack;
-mod cluster_info_bridge;
 mod http_bridges;
 mod registry_init;
 mod workers;
@@ -707,13 +706,13 @@ fn cluster_info_bridge(
     store: &Arc<RegistryStore>,
     seams: &ClusterSeams,
 ) -> Arc<dyn dali2rust_api::http::cluster_info_state::ClusterInfoHttpState> {
-    let registry = cluster_info_bridge::ClusterRegistryPorts {
+    let registry = http_bridges::ClusterRegistryPorts {
         settings: Arc::clone(store) as _,
         records: Arc::clone(store) as _,
         parts: Arc::clone(store) as _,
     };
     let (info, presence) = (Arc::clone(&seams.info) as _, Arc::clone(&seams.presence) as _);
-    Arc::new(cluster_info_bridge::ClusterInfoBridge::new(registry, info, presence))
+    Arc::new(http_bridges::ClusterInfoBridge::new(registry, info, presence))
 }
 
 #[derive(Default)]

@@ -42,8 +42,11 @@ fn pulse(cluster_name: &str, installation: &str, node: u8, seq: u32) -> Vec<u8> 
 }
 
 fn info_page(cluster_name: &str, node: u8, seq: u32) -> Vec<u8> {
-    let header =
-        Header { cluster_tag: cluster_tag(cluster_name), sender_mac: NEIGHBOUR_MAC, boot_epoch: 7, node_no: node, seq };
+    info_page_from(NEIGHBOUR_MAC, cluster_name, node, seq)
+}
+
+fn info_page_from(sender_mac: [u8; 6], cluster_name: &str, node: u8, seq: u32) -> Vec<u8> {
+    let header = Header { cluster_tag: cluster_tag(cluster_name), sender_mac, boot_epoch: 7, node_no: node, seq };
     let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let len = InfoPageWriter::start(&mut buffer, &header, seq, 0).expect("a page starts").finish(true);
     buffer[..len].to_vec()
@@ -151,4 +154,15 @@ fn a_late_page_of_a_member_is_stale_and_a_page_of_another_cluster_is_ignored() {
     take(&info_page("garage", 1, 17));
     assert_eq!(read(&counters.info_pages_ignored_total), 1);
     assert_eq!(read(&counters.info_sets_taken_total), 1);
+}
+
+
+#[test]
+fn this_node_s_own_page_heard_back_is_dropped_and_not_counted_as_ignored() {
+    let (presence, counters) = present();
+    deliver(&presence, &counters, &info_page_from(OWN_MAC, NAME, 0, 1), 0, START_MS);
+    assert_eq!(counters.own_frames_dropped_total.load(Ordering::Relaxed), 1);
+    assert_eq!(counters.info_pages_ignored_total.load(Ordering::Relaxed), 0);
+    deliver(&presence, &counters, &info_page_from(NEIGHBOUR_MAC, NAME, 1, 1), 0, START_MS);
+    assert_eq!(counters.info_pages_ignored_total.load(Ordering::Relaxed), 1);
 }

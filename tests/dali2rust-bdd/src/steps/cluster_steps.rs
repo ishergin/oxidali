@@ -1,7 +1,6 @@
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -81,27 +80,28 @@ pub(crate) struct Speaker {
     mac: [u8; 6],
     node: u8,
     cluster_name: String,
-    seq: Arc<AtomicU32>,
+    seq: Arc<Mutex<u32>>,
 }
 
 impl Speaker {
-    pub(crate) fn header(&self) -> Header {
-        Header {
+    pub(crate) fn speak(&self, write: impl FnOnce(&Header) -> Vec<u8>) {
+        let mut seq = self.seq.lock().unwrap_or_else(PoisonError::into_inner);
+        let header = Header {
             cluster_tag: cluster_tag(&self.cluster_name),
             sender_mac: self.mac,
             boot_epoch: NEIGHBOUR_BOOT_EPOCH,
             node_no: self.node,
-            seq: self.seq.fetch_add(1, Relaxed),
-        }
-    }
-
-    pub(crate) fn inject(&self, datagram: &[u8]) {
-        self.hub.inject(self.source, datagram);
+            seq: *seq,
+        };
+        *seq = seq.wrapping_add(1);
+        self.hub.inject(self.source, &write(&header));
     }
 
     pub(crate) fn say(&self, buffer: &mut DatagramBuffer, frame: &Frame<'_>) {
-        let len = encode(&self.header(), frame, buffer).expect("the frame fits one datagram");
-        self.inject(buffer.get(..len).expect("the encoded length"));
+        self.speak(|header| {
+            let len = encode(header, frame, buffer).expect("the frame fits one datagram");
+            buffer.get(..len).expect("the encoded length").to_vec()
+        });
     }
 }
 
@@ -129,7 +129,7 @@ struct Pulser {
 impl Pulser {
     fn new(hub: &Arc<ClusterHub>, (source, mac, node): ([u8; 4], [u8; 6], u8), wire: u8, names: [String; 2]) -> Self {
         let [cluster_name, installation] = names;
-        let seq = Arc::new(AtomicU32::new(0));
+        let seq = Arc::new(Mutex::new(0));
         let speaker = Speaker { hub: Arc::clone(hub), source, mac, node, cluster_name, seq };
         Self { speaker, wire, installation }
     }

@@ -132,13 +132,14 @@ Feature: Cluster — the channels and scenes of every node
     When a board "02:00:00:0a:0b:03" at "10.0.0.3" pulses as node 1 of cluster "hall" for installation "site-c"
     And a board "02:00:00:0a:0b:04" at "10.0.0.4" pulses as node 2 of cluster "garage" for installation "site-d"
     Then the JSON pointer "/ignored/1/board" at "/api/v1/cluster/status" should eventually contain "dali-0a0b0"
+    When the board "02:00:00:0a:0b:02" sends info page 0 of set 1 as the last page with [{"channel":17,"mark":[1,5],"name":"Real"}]
+    Then the JSON pointer "/channels/0/name" at "/api/v1/cluster/channels" should eventually be "Real"
     When the board "02:00:00:0a:0b:03" sends info page 0 of set 1 as the last page with [{"channel":16,"mark":[1,5],"name":"Fake"}]
     And the board "02:00:00:0a:0b:04" sends info page 0 of set 1 as the last page with [{"channel":32,"mark":[1,5],"name":"Garage"}]
-    And the board "02:00:00:0a:0b:02" sends info page 0 of set 1 as the last page with [{"channel":17,"mark":[1,5],"name":"Real"}]
-    Then the JSON pointer "/channels/0/name" at "/api/v1/cluster/channels" should eventually be "Real"
-    And the JSON pointer "/cluster/info_pages_ignored_total" at "/api/v1/stats" should eventually be greater than 0
+    Then the JSON pointer "/cluster/info_pages_ignored_total" at "/api/v1/stats" should eventually be greater than 1
     When I send a GET request to "/api/v1/cluster/channels"
-    Then the JSON pointer "/channels/1" should be absent
+    Then the JSON pointer "/channels/0/name" should be "Real"
+    And the JSON pointer "/channels/1" should be absent
     When I send a GET request to "/api/v1/cluster/info"
     Then the JSON pointer "/nodes/2" should be absent
 

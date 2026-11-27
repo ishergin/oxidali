@@ -8,6 +8,9 @@ use crate::frame::{DatagramBuffer, EncodeError, Header, PageCursor, NODE_COUNT};
 use crate::info::{placed_set, InfoSet};
 use crate::presence::{PresenceTiming, HALF_CLOCK_MS};
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) const PAGE_GAP_MS: u32 = 10;
 
 #[derive(Clone, Copy)]
@@ -143,11 +146,12 @@ impl Announcer {
 
     pub(crate) fn deadline(&self) -> Option<u32> {
         let paging = self.paging.map(|paging| paging.next_ms);
-        [self.due_ms, paging, self.refresh_ms].into_iter().flatten().reduce(|earliest, at_ms| {
+        let due_ms = self.due_ms.filter(|_| paging.is_none());
+        [due_ms, paging, self.refresh_ms].into_iter().flatten().reduce(|earliest, at_ms| {
             if reached(at_ms, earliest) {
-                at_ms
-            } else {
                 earliest
+            } else {
+                at_ms
             }
         })
     }

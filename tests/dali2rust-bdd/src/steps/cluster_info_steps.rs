@@ -2,14 +2,14 @@ use std::time::{Duration, Instant};
 
 use cucumber::{then, when};
 use dali2rust_cluster_runtime::frame::{
-    decode, BirthMark, ChannelPart, DatagramBuffer, Frame, GroupMap, Hello, InfoElement, InfoPageWriter, LocalName,
+    decode, BirthMark, ChannelPart, DatagramBuffer, Frame, GroupMap, Header, Hello, InfoElement, InfoPageWriter, LocalName,
     PartFlags, Record, RecordRef, ScenePart,
 };
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 use dali2rust_test_support::wait_until;
 use serde::Deserialize;
 
-use crate::steps::cluster_steps::{hardware_address, rig, ClusterRig};
+use crate::steps::cluster_steps::{hardware_address, rig};
 use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 
@@ -99,10 +99,9 @@ fn parse_elements(json: &str) -> Vec<ElementSpec> {
     serde_json::from_str(json).expect("a JSON array of info elements")
 }
 
-fn page_datagram(rig: &ClusterRig, mac: [u8; 6], (set, page, last): (u32, u8, bool), specs: &[ElementSpec]) -> Vec<u8> {
+fn page_datagram(header: &Header, (set, page, last): (u32, u8, bool), specs: &[ElementSpec]) -> Vec<u8> {
     let mut buffer: Box<DatagramBuffer> = Box::new([0; MAX_CLUSTER_DATAGRAM_BYTES]);
-    let header = rig.speaker(mac).header();
-    let mut writer = InfoPageWriter::start(&mut buffer, &header, set, page).expect("the page opens");
+    let mut writer = InfoPageWriter::start(&mut buffer, header, set, page).expect("the page opens");
     for spec in specs {
         writer.push(&spec.element()).expect("the element fits the page");
     }
@@ -113,10 +112,9 @@ fn page_datagram(rig: &ClusterRig, mac: [u8; 6], (set, page, last): (u32, u8, bo
 // CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends info page (\d+) of set (\d+) as (the last page|a page before the last) with (\[.*\])$"#)]
 async fn board_sends_page(world: &mut DaliWorld, mac: String, page: u8, set: u32, last: String, json: String) {
-    let rig = rig(world);
-    let mac = hardware_address(&mac);
-    let datagram = page_datagram(rig, mac, (set, page, last == "the last page"), &parse_elements(&json));
-    rig.speaker(mac).inject(&datagram);
+    let specs = parse_elements(&json);
+    let place = (set, page, last == "the last page");
+    rig(world).speaker(hardware_address(&mac)).speak(|header| page_datagram(header, place, &specs));
 }
 
 // CLU-068 CLU-070

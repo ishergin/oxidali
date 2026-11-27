@@ -266,3 +266,17 @@ fn a_node_s_own_info_goes_out_in_pages_and_comes_back_whole() {
     assert_eq!(cache.counts(NODE, Channel), Some((1, 2)));
     assert_eq!(cache.counts(NODE, Scene), Some((1, 2)));
 }
+
+#[test]
+fn a_page_admitted_before_the_cache_was_cleared_never_lands_after_the_clear() {
+    let info = ClusterInfo::new();
+    let bytes = page_bytes(1, 0, true, &[record(OWN_NUMBER, "Hall", 1)]);
+    let Frame::ChannelSceneInfo(page) = decode(&bytes).expect("decode").frame else { panic!("not a page") };
+    let at = Arrival { node: NODE, mac: MAC, epoch: EPOCH, now_ms: NOW_MS };
+    let admitted = info.era();
+    info.clear();
+    assert!(!info.take_page(at, &page, admitted).taken);
+    assert!(info.info_held(NODE).is_none());
+    assert!(info.take_page(at, &page, info.era()).taken);
+    assert!(info.info_held(NODE).is_some());
+}

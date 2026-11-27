@@ -163,21 +163,22 @@ impl ClusterPresence {
             return bump(&counters.stale_link_frames_total);
         }
         let admitted = state.take(&decoded, delivery, self.timing, counters);
+        let era = info.era();
         drop(state);
         if let Some(taken) = admitted.taken {
             counters.count_taken(taken);
         }
         if admitted.feeds_info() {
-            self.hear_member(&decoded, delivery.now_ms, counters, info);
+            self.hear_member(&decoded, (delivery.now_ms, era), counters, info);
         } else if matches!(decoded.frame, Frame::ChannelSceneInfo(_)) {
             counters.count_unfed_page(admitted.member, admitted.taken);
         }
     }
 
-    fn hear_member(&self, decoded: &Decoded<'_>, now_ms: u32, counters: &ClusterCounters, info: &ClusterInfo) {
+    fn hear_member(&self, decoded: &Decoded<'_>, at: (u32, u32), counters: &ClusterCounters, info: &ClusterInfo) {
         match &decoded.frame {
             Frame::Hello(_) => self.hello_heard.store(true, Relaxed),
-            Frame::ChannelSceneInfo(page) => feed_info(info, &decoded.header, page, now_ms, counters),
+            Frame::ChannelSceneInfo(page) => feed_info(info, &decoded.header, page, at, counters),
             _ => {}
         }
     }
@@ -360,11 +361,11 @@ fn feed_info(
     info: &ClusterInfo,
     header: &Header,
     page: &crate::frame::InfoPage<'_>,
-    now_ms: u32,
+    (now_ms, era): (u32, u32),
     counters: &ClusterCounters,
 ) {
     let at = Arrival { node: header.node_no, mac: header.sender_mac, epoch: header.boot_epoch, now_ms };
-    counters.count_page(info.take_page(at, page));
+    counters.count_page(info.take_page(at, page, era));
 }
 
 fn placed_state() -> PsramBox<PresenceState> {

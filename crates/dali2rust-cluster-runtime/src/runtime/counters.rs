@@ -56,6 +56,9 @@ impl ClusterCounters {
     }
 
     pub(crate) fn count_unfed_page(&self, member: bool, taken: Option<Taken>) {
+        if taken.is_none() {
+            return;
+        }
         if !member {
             bump(&self.info_pages_ignored_total);
         } else if taken == Some(Taken::Late) {

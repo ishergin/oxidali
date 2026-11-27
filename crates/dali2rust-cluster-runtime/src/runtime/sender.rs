@@ -212,9 +212,12 @@ impl<'a> NodeSender<'a> {
     fn advance(&mut self, now_ms: u32) {
         let reading = Reading::of(self.ports);
         self.reconcile(&reading, now_ms);
-        let listened_ms = self.listened_ms(&reading, now_ms);
+        let (listened_ms, renamed) = self.listened_ms(&reading, now_ms);
         let base = self.base_mode(&reading);
         let settled = self.ports.presence.settle(reading.identity(), base, listened_ms, now_ms);
+        if renamed {
+            self.ports.info.clear();
+        }
         if settled.entered_running || self.slot_due(now_ms) {
             self.on_slot(&reading, settled, now_ms);
         }
@@ -240,19 +243,17 @@ impl<'a> NodeSender<'a> {
         }
     }
 
-    fn listened_ms(&mut self, reading: &Reading, now_ms: u32) -> u32 {
+    fn listened_ms(&mut self, reading: &Reading, now_ms: u32) -> (u32, bool) {
         let Some(bound) = self.link.as_mut() else {
-            return 0;
+            return (0, false);
         };
         let claim = reading.claim();
+        let renamed = bound.claim.1 != claim.1;
         if bound.claim != claim {
-            if bound.claim.1 != claim.1 {
-                self.ports.info.clear();
-            }
             bound.claim = claim;
             bound.listen = ListenWindow::opened_at(now_ms);
         }
-        bound.listen.listened_ms(now_ms)
+        (bound.listen.listened_ms(now_ms), renamed)
     }
 
     fn base_mode(&self, reading: &Reading) -> Option<OwnMode> {
