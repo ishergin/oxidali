@@ -42,7 +42,7 @@ fn panel_powered(world: &mut DaliWorld, state: String) {
     assert!(reached, "panel never powered {state}: {}", panel_state(world));
 }
 
-// SET-DISP-009, SET-DISP-011, SET-DISP-012, SET-DISP-013, SET-DALI-024, CLU-120, CLU-121
+// SET-DISP-009, SET-DISP-011, SET-DISP-012, SET-DISP-013, SET-DALI-024, CLU-027, CLU-121
 #[then(expr = "the display panel should eventually show a row starting with {string}")]
 fn panel_shows(world: &mut DaliWorld, prefix: String) {
     let reached = panel_reaches(world, |panel| panel.shows_row_starting_with(&prefix));
