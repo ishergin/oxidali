@@ -22,6 +22,7 @@ const STATUS: &str = "/api/v1/cluster/status";
 const OK: u16 = 200;
 const NO_CONTENT: u16 = 204;
 const CONFLICT: u16 = 409;
+const MOVED_PORT: u16 = 47_811;
 
 struct Node {
     router: Router,
@@ -163,6 +164,21 @@ fn forget_waits_until_the_node_is_silent_and_then_drops_it() {
     assert!(try_wait_until(|| first.heard(1) == Some(false), SETTLE), "{:?}", first.status());
     assert_eq!(first.forget(1), NO_CONTENT);
     assert_eq!(first.heard(1), None, "{:?}", first.status());
+}
+
+#[test]
+fn a_node_moved_to_another_port_hears_its_neighbour_on_the_new_link() {
+    let hub = Arc::new(ClusterHub::new());
+    let (first, second) = (node_on(&hub, &FIRST), node_on(&hub, &SECOND));
+    first.join(0);
+    second.join(1);
+    assert!(try_wait_until(|| first.heard(1) == Some(true), SETTLE), "{:?}", first.status());
+    second.patch(r#"{"enabled":false}"#);
+    assert!(try_wait_until(|| first.heard(1) == Some(false), SETTLE), "{:?}", first.status());
+    first.patch(&format!(r#"{{"port":{MOVED_PORT}}}"#));
+    assert!(try_wait_until(|| first.heard(1).is_none(), SETTLE), "the move clears the table: {:?}", first.status());
+    second.patch(r#"{"enabled":true}"#);
+    assert!(try_wait_until(|| first.heard(1) == Some(true), SETTLE), "{:?}", first.status());
 }
 
 #[test]
