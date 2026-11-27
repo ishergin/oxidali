@@ -22,6 +22,11 @@ pub enum ClusterTextField {
     ClusterName,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterSubject {
+    Status,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

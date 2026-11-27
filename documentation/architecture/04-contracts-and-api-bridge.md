@@ -77,9 +77,10 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
   it heard last with a new frame, each judged by its own window: sequence numbers compare
   by wrapping arithmetic, and a frame of any other epoch starts a window in place of the
-  one heard least recently and counts as new. A board's boot epoch never repeats, a copy
-  carries its original's number, and every kind of frame of that board draws from one
-  sequence.
+  one heard least recently and counts as new. A board draws its boot epoch once, with its
+  first frame, by hashing the hardware random source, the time since boot and the wall
+  clock together, so a stuck random source alone does not repeat it; a copy carries its original's number,
+  and every kind of frame of that board draws from one sequence.
 - The network port is `ClusterLink` in `dali2rust-platform`: send one datagram from any
   thread; one thread receives, with a timeout. `UdpClusterLink` is its one implementation,
   for the board and the host: it binds, enables broadcast, sends to the limited broadcast
@@ -88,6 +89,11 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   so dropping a board's own frame is the receiver's job, by the sender MAC in the header,
   which is the one `NetworkLink::hardware_address` reports. Tests connect link ends
   through `ClusterHub` in `dali2rust-test-support`.
+- The worker opens and closes the port through `ClusterLinkBinder`: `UdpClusterBinder` on
+  the board, `ClusterHubBinder` on the hub in tests, and `NoClusterLink` where the
+  composition wires no cluster port, which a node with an address shows as `bind_failed`.
+  Without an address or a lease the state is `no_address`, and a switched-off cluster
+  holds no socket.
 
 ## JSON boundaries
 

@@ -109,7 +109,7 @@ unless named.
 | `OTA_UPDATE_STACK` | 16 KiB | One update, spawned fallibly when it starts |
 | `COMMAND_WORKER_STACK` | 12 KiB | Deep executors: DALI worker, rules worker |
 | `STATE_WORKER_STACK` | 10 KiB | Workers that own state and build views: registry, operation tracker |
-| `EVENT_WORKER_STACK` | 8 KiB | Workers that route small payloads: projector, sniffer translator, apply orchestrator, HCL, poller, WebSocket, MQTT, replication; the boot verifier; the `ws-client` senders of the WebSocket clients ([02](02-runtime-and-threading.md)), up to 64 KiB under the four-client cap and kept once started |
+| `EVENT_WORKER_STACK` | 8 KiB | Workers that route small payloads: projector, sniffer translator, apply orchestrator, HCL, poller, WebSocket, MQTT, replication, the cluster's `cluster_tx` and `cluster_rx`, whose datagram buffers are in PSRAM; the boot verifier; the `ws-client` senders of the WebSocket clients ([02](02-runtime-and-threading.md)), up to 64 KiB under the four-client cap and kept once started |
 | `RING_CONSUMER_STACK` | 8 KiB | Ring and driver pollers: `dali-sniff`, IP watcher |
 | `DISPLAY_WORKER` | 6 KiB | Display worker, SNTP watcher |
 | `ARBITRATION_WORKER_STACK` | 4 KiB | Arbitration probe worker |

@@ -19,7 +19,7 @@ fn scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-010 SET-DALI-011 RED-034 SET-DALI-015 SET-DALI-016 RED-035 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022 INP-105 INP-106 INP-107 INP-108 INP-109 CLU-014
+// RED-026 RED-027 CFG-009 CFG-010 RULE-085 RULE-090 PERS-006 CFG-011 RED-031 RED-032 PERS-007 PERS-008 PERS-009 SET-DALI-007 SET-DALI-008 SET-DALI-009 SET-DALI-010 SET-DALI-011 RED-034 SET-DALI-015 SET-DALI-016 RED-035 SET-DALI-019 SET-DALI-020 RED-037 SET-DALI-021 SET-DALI-022 INP-105 INP-106 INP-107 INP-108 INP-109 CLU-014 CLU-015 CLU-016 CLU-017 CLU-018 CLU-020 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be "([^"]*)"$"#)]
 async fn json_pointer_eventually(world: &mut DaliWorld, pointer: String, path: String, expected: String) {
     let port = world.server_port();
@@ -51,7 +51,7 @@ async fn json_pointer_eventually_contains(
     assert!(holds(), "{path}{pointer} never contained {part:?}: {:?}", read());
 }
 
-// RED-029 SET-DALI-010 SET-DALI-011 RED-034 INP-104
+// RED-029 SET-DALI-010 SET-DALI-011 RED-034 INP-104 CLU-015 CLU-016 CLU-017 CLU-019 CLU-023
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be greater than (\d+)$"#)]
 async fn json_pointer_eventually_greater(world: &mut DaliWorld, pointer: String, path: String, floor: u64) {
     let port = world.server_port();

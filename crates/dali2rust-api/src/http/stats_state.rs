@@ -195,6 +195,23 @@ pub struct StatsNetworkDto {
     pub link_up_events_total: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct StatsClusterDto {
+    pub datagrams_sent_total: u32,
+    pub send_failures_total: u32,
+    pub bind_failures_total: u32,
+    pub datagrams_received_total: u32,
+    pub receive_failures_total: u32,
+    pub own_frames_dropped_total: u32,
+    pub other_cluster_frames_total: u32,
+    pub unknown_version_frames_total: u32,
+    pub rejected_frames_total: u32,
+    pub duplicates_total: u32,
+    pub sequence_gaps_total: u32,
+    pub withheld_standby_total: u32,
+    pub boards_evicted_total: u32,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct StatsReportDto {
     pub controller: StatsControllerDto,
@@ -206,6 +223,7 @@ pub struct StatsReportDto {
     pub input: StatsInputDto,
     pub hcl: StatsHclDto,
     pub rules: StatsRulesDto,
+    pub cluster: StatsClusterDto,
     pub network: Option<StatsNetworkDto>,
 }
 
@@ -290,12 +308,19 @@ declare_widest_dtos! {
         rx_packets_total, tx_packets_total, rx_dropped_total, tx_dropped_total,
         rx_ring_overruns_total, rx_fifo_overflows_total, link_up_events_total,
     }
+    StatsClusterDto {
+        datagrams_sent_total, send_failures_total, bind_failures_total, datagrams_received_total,
+        receive_failures_total, own_frames_dropped_total, other_cluster_frames_total,
+        unknown_version_frames_total, rejected_frames_total, duplicates_total, sequence_gaps_total,
+        withheld_standby_total, boards_evicted_total,
+    }
     StatsReportDto {
         controller = StatsControllerDto::widest(),
         bus = StatsBusDto::widest(), dali = StatsDaliDto::widest(),
         operations = StatsOperationsDto::widest(), websocket = StatsWebSocketDto::widest(),
         mqtt = StatsMqttDto::widest(), input = StatsInputDto::widest(),
         hcl = StatsHclDto::widest(), rules = StatsRulesDto::widest(),
+        cluster = StatsClusterDto::widest(),
         network = Some(StatsNetworkDto::widest()),
     }
 }

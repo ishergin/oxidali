@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::bounded::{FixedBytes24, FixedItems, FixedText32, FixedText48, FixedText64};
+use super::cluster::ClusterSubject;
 use super::commands::{
     DaliProgramTarget, DaliSceneTargetState, GroupMembershipAction, SceneProgramAction,
 };
@@ -953,6 +954,11 @@ declare_bus_payloads! {
         pub enabled: bool,
     }
     budget = ClusterSettingsChangedEvent { enabled: true };
+
+    pub struct ClusterStateChangedEvent {
+        pub subject: ClusterSubject,
+    }
+    budget = ClusterStateChangedEvent { subject: ClusterSubject::Status };
 
 }
 

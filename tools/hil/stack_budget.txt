@@ -28,6 +28,9 @@ ip-watch              8192   1712
 # the runs that accept that change, the sender's across four of them.
 ws-client             8192   1400
 ws-reader             8192   2384
+# Not measured on the board yet: the first census of a run with the cluster enabled sets both.
+cluster_tx            8192   -1
+cluster_rx            8192   -1
 # These two walk registry contents and were measured on an empty registry: tighten from a populated run.
 replication           8192   3000
 rules-worker         12288   7928

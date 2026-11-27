@@ -68,6 +68,7 @@ pub struct DaliWorld {
     pub ws_clients: Vec<ws_client::WsTestClient>,
     pub kept_body: Vec<u8>,
     pub peer: Option<dali2rust_test_support::FakePeerController>,
+    pub cluster: Option<steps::cluster_steps::ClusterRig>,
     last_request_elapsed: Option<Duration>,
 }
 
@@ -111,6 +112,7 @@ impl DaliWorld {
             ws_clients: Vec::new(),
             kept_body: Vec::new(),
             peer: None,
+            cluster: None,
         };
         world.start_test_server();
         world
@@ -218,6 +220,7 @@ impl DaliWorld {
             network_link,
             poller_config: self.poller_config,
             display_panel: Some(display_panel),
+            cluster: self.cluster.as_ref().map(steps::cluster_steps::ClusterRig::composition),
         }
     }
 

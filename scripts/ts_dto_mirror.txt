@@ -101,6 +101,7 @@ SliceManifestEntry ConfigSliceRow
 SnifferTranslatorDto SnifferTranslatorCounters
 SourceDiagnosticsDto SourceDiagnostics
 StatsBusDto StatsBus
+StatsClusterDto StatsCluster
 StatsControllerDto StatsController
 StatsDaliDto StatsDali
 StatsHclDto StatsHcl

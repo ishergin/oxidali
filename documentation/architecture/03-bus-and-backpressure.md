@@ -73,6 +73,7 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 | Rules funnel | 128 |
 | OTA commands | 2 |
 | Redundancy: arbitration / replication / supervisor events | 16 / 8 / 4 |
+| Cluster funnel | 16 |
 
 - The two 128-deep event inboxes belong to the slowest consumers (per-event JSON
   projection, per-event rule evaluation), where a loss is visible to an operator.

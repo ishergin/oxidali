@@ -1,5 +1,6 @@
 use std::io::{self, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub const MAX_CLUSTER_DATAGRAM_BYTES: usize = 1472;
@@ -31,6 +32,31 @@ pub trait ClusterLink: Send + Sync {
         buffer: &mut ClusterReceiveBuffer,
         timeout: Duration,
     ) -> Result<Received, ClusterLinkError>;
+}
+
+pub trait ClusterLinkBinder: Send + Sync {
+    fn bind(&self, port: u16) -> Result<Arc<dyn ClusterLink>, ClusterLinkError>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UdpClusterBinder;
+
+impl ClusterLinkBinder for UdpClusterBinder {
+    fn bind(&self, port: u16) -> Result<Arc<dyn ClusterLink>, ClusterLinkError> {
+        match UdpClusterLink::broadcast(port) {
+            Ok(link) => Ok(Arc::new(link)),
+            Err(err) => Err(ClusterLinkError::Io(err.kind())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoClusterLink;
+
+impl ClusterLinkBinder for NoClusterLink {
+    fn bind(&self, _port: u16) -> Result<Arc<dyn ClusterLink>, ClusterLinkError> {
+        Err(ClusterLinkError::Io(ErrorKind::Unsupported))
+    }
 }
 
 pub struct UdpClusterLink {
@@ -200,6 +226,21 @@ mod tests {
     fn the_socket_may_send_to_the_broadcast_address() {
         let (sender, _) = loopback_pair();
         assert!(sender.socket.broadcast().expect("option"));
+    }
+
+    #[test]
+    fn the_udp_binder_hands_out_a_link_that_sends_and_a_taken_port_is_an_io_error() {
+        let holder = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).expect("bind");
+        let taken = holder.local_addr().expect("addr").port();
+        let refused = UdpClusterBinder.bind(taken).err();
+        assert!(matches!(refused, Some(ClusterLinkError::Io(_))));
+        assert!(UdpClusterBinder.bind(0).is_ok());
+    }
+
+    #[test]
+    fn a_stack_composed_without_a_cluster_link_cannot_bind() {
+        let refused = NoClusterLink.bind(47_810).err();
+        assert_eq!(refused, Some(ClusterLinkError::Io(ErrorKind::Unsupported)));
     }
 
     #[test]

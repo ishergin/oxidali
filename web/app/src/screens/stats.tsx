@@ -277,6 +277,10 @@ export function StatsScreen() {
           <RuleStatRows stats={data.rules.stats} deltas={deltas} />
         </Card>
 
+        <Card title="Cluster">
+          <CounterRows block={data.cluster} path="cluster" deltas={deltas} isFault={isFault} />
+        </Card>
+
         {data.network && (
           <Card title="Network">
             <CounterRows block={data.network} path="network" deltas={deltas} isFault={isFault} />

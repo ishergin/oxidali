@@ -15,11 +15,13 @@ reach state that the real path should produce.
 
 - **Drive through the product entry points only.** A scenario starts the stack through
   the same composition entry points as the host and firmware builds, with the mock DALI
-  transport and the mock MQTT client at the port boundaries, and drives it over HTTP —
-  or over the WebSocket or MQTT when that surface is the feature under test.
+  transport, the mock MQTT client and the cluster hub double at the port boundaries, and
+  drives it over HTTP — or over the WebSocket, MQTT or the cluster hub when that surface
+  is the feature under test. On the hub a scenario plays a neighbour node in frames of
+  the production codec.
 - **Assert only externally visible evidence:** HTTP responses and their DTOs, frames
-  recorded by `MockDaliTransport`, WebSocket and MQTT messages, and slice-store
-  effects.
+  recorded by `MockDaliTransport`, WebSocket and MQTT messages, the datagrams the stack
+  sent on the cluster hub, and slice-store effects.
 - **No harness internals.** Scenarios never call into `BusStackRuntime`, the registry
   store, counters or slot internals, and never seed state by writing records directly.
   State is created the way a client creates it.

@@ -50,6 +50,7 @@ use dali2rust_api::http::handlers::settings_dali::{
     DaliSettingsGetHandler, DaliSettingsPatchHandler,
 };
 use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterSettingsPatchHandler};
+use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
 use dali2rust_api::http::handlers::settings_display::{
     DisplaySettingsGetHandler, DisplaySettingsPatchHandler,
 };
@@ -92,6 +93,7 @@ pub(crate) struct ReadModelPorts {
     pub redundancy: Arc<dyn dali2rust_api::http::redundancy_state::RedundancyHttpState>,
     pub health: Arc<dyn dali2rust_api::http::health_state::HealthHttpState>,
     pub firmware: Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
+    pub cluster: Arc<dyn dali2rust_api::http::cluster_status_state::ClusterStatusHttpState>,
     pub uptime: Uptime,
 }
 
@@ -335,6 +337,7 @@ fn wire_read_models(
     bus: &HttpBusDispatch,
 ) -> AppBuilder {
     let builder = wire_firmware(builder, bus, &read_models.firmware);
+    let builder = wire_cluster_status(builder, bus, &read_models.cluster);
     builder
         .with_handler(
             RouteKey::Diagnostics,
@@ -866,6 +869,24 @@ fn wire_settings_display(
             RouteKey::SettingsDisplayPatch,
             mutation(bus, &ports.state, &ports.apply_watch, DisplaySettingsPatchHandler::new),
         )
+}
+
+#[inline(never)]
+fn wire_cluster_status(
+    builder: AppBuilder,
+    bus: &HttpBusDispatch,
+    status: &Arc<dyn dali2rust_api::http::cluster_status_state::ClusterStatusHttpState>,
+) -> AppBuilder {
+    let forget = ClusterNodeForgetHandler::new(
+        bus.publisher.clone(),
+        Arc::clone(&bus.slots),
+        Arc::clone(&bus.correlation),
+        bus.bus_id,
+        bus.confirmation_timeout_ms,
+    );
+    builder
+        .with_handler(RouteKey::ClusterStatusGet, read(status, ClusterStatusGetHandler::new))
+        .with_handler(RouteKey::ClusterNodeForget, Box::new(forget))
 }
 
 #[inline(never)]

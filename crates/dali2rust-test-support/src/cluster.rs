@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use dali2rust_platform::cluster_link::{
-    ClusterLink, ClusterLinkError, ClusterReceiveBuffer, Received, MAX_CLUSTER_DATAGRAM_BYTES,
+    ClusterLink, ClusterLinkBinder, ClusterLinkError, ClusterReceiveBuffer, Received,
+    MAX_CLUSTER_DATAGRAM_BYTES,
 };
 
 const HUB_SUBNET: [u8; 3] = [10, 0, 0];
@@ -53,12 +54,19 @@ impl ClusterHub {
     }
 
     pub fn attach(&self) -> HubEnd {
+        let source = {
+            let mut state = lock(&self.state);
+            let [a, b, c] = HUB_SUBNET;
+            let source = [a, b, c, state.next_host];
+            state.next_host = state.next_host.checked_add(1).expect("a hub holds at most 254 ends");
+            source
+        };
+        self.attach_at(source)
+    }
+
+    pub fn attach_at(&self, source: [u8; 4]) -> HubEnd {
         let (inbox_tx, inbox_rx) = mpsc::channel();
-        let mut state = lock(&self.state);
-        let [a, b, c] = HUB_SUBNET;
-        let source = [a, b, c, state.next_host];
-        state.next_host = state.next_host.checked_add(1).expect("a hub holds at most 254 ends");
-        state.ends.push(EndQueue { source, inbox: inbox_tx });
+        lock(&self.state).ends.push(EndQueue { source, inbox: inbox_tx });
         HubEnd { source, inbox: Mutex::new(inbox_rx), state: Arc::clone(&self.state) }
     }
 
@@ -106,6 +114,23 @@ impl ClusterLink for HubEnd {
         let kept = datagram.bytes.len().min(buffer.len());
         buffer[..kept].copy_from_slice(&datagram.bytes[..kept]);
         Ok(Received::of(datagram.bytes.len(), datagram.source))
+    }
+}
+
+pub struct ClusterHubBinder {
+    hub: Arc<ClusterHub>,
+    source: [u8; 4],
+}
+
+impl ClusterHubBinder {
+    pub fn new(hub: Arc<ClusterHub>, source: [u8; 4]) -> Self {
+        Self { hub, source }
+    }
+}
+
+impl ClusterLinkBinder for ClusterHubBinder {
+    fn bind(&self, _port: u16) -> Result<Arc<dyn ClusterLink>, ClusterLinkError> {
+        Ok(Arc::new(self.hub.attach_at(self.source)))
     }
 }
 
@@ -200,6 +225,18 @@ mod tests {
         let a = hub.attach();
         hub.inject(NEIGHBOUR, &[0; MAX_CLUSTER_DATAGRAM_BYTES * 2]);
         assert_eq!(receive(&a).0, Received::Oversize { source: NEIGHBOUR });
+    }
+
+    #[test]
+    fn a_binder_attaches_every_bind_at_the_address_it_was_given() {
+        let hub = Arc::new(ClusterHub::new());
+        let watcher = hub.attach();
+        let binder = ClusterHubBinder::new(Arc::clone(&hub), NEIGHBOUR);
+        let first = binder.bind(1).expect("bind");
+        drop(first);
+        let second = binder.bind(2).expect("bind");
+        second.send(PULSE).expect("send");
+        assert_eq!(receive(&watcher).0, Received::Datagram { len: PULSE.len(), source: NEIGHBOUR });
     }
 
     #[test]

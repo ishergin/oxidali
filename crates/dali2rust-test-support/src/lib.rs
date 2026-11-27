@@ -17,7 +17,7 @@ pub use bus::{
     PublishTally,
 };
 pub use clock::{AdvancingClock, SettableClock, StoppedClock};
-pub use cluster::{ClusterHub, HubDatagram, HubEnd};
+pub use cluster::{ClusterHub, ClusterHubBinder, HubDatagram, HubEnd};
 pub use fs::{temp_fs, InMemoryFileSystemHal, temp_slice_store, write_slice};
 pub use ingress_hold::{
     hold_the_events_ingress_full, hold_the_events_ingress_with_room, hold_the_router,

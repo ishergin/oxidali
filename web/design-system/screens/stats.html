@@ -428,6 +428,32 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
         <div class="attr sub"><span class="k">stat("hall_button")</span><span class="v">27</span><span class="delta live">+1</span></div>
       </div>
 
+      <!-- The cluster worker's datagrams, both ways. Received counts every
+           datagram the socket handed over; the next five say why one did not
+           reach the board table — our own echo, another cluster's tag, a
+           version this build cannot read, a frame the codec refused, a repeat
+           inside the sequence window. Gaps are sequence numbers a live board
+           skipped, withheld are pulses a standby board kept to itself, evicted
+           are boards pushed out of a full table. None is `fault`: what an
+           operator acts on — a port that will not bind, a split pair, a wire
+           named twice — is the state the cluster status resource reports. -->
+      <div class="card">
+        <header><h3>Cluster</h3></header>
+        <div class="attr"><span class="k">Datagrams sent total</span><span class="v">1 812</span><span class="delta live">+1</span></div>
+        <div class="attr"><span class="k">Send failures total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Bind failures total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Datagrams received total</span><span class="v">5 431</span><span class="delta live">+3</span></div>
+        <div class="attr"><span class="k">Receive failures total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Own frames dropped total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Other cluster frames total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Unknown version frames total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Rejected frames total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Duplicates total</span><span class="v">2</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Sequence gaps total</span><span class="v">1</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Withheld standby total</span><span class="v">0</span><span class="delta"></span></div>
+        <div class="attr"><span class="k">Boards evicted total</span><span class="v">0</span><span class="delta"></span></div>
+      </div>
+
       <!-- The Ethernet MAC's own count, absent on a build without a link.
            Ring overruns are frames the MAC discarded because every receive
            descriptor was still full, FIFO overflows the ones it could not

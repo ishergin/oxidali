@@ -87,10 +87,12 @@ Decided in [`ADR-004`](decisions/ADR-004-bdd-black-box-boundary.md).
   real client, and through the broker side of `MockMqttClient` when the MQTT surface is
   the feature under test. Foreign bus traffic enters through the transport's
   observed-frame seam (`MockDaliTransport::inject_observed_frame`), the same channel the
-  hardware transport feeds.
+  hardware transport feeds. A neighbour node enters through the cluster hub double
+  (`ClusterHub::inject`), in frames built by the production codec; the stack binds the
+  hub through the same `ClusterLinkBinder` port the UDP link fills on the board.
 - **Assert** only HTTP status and bodies, response DTOs, WebSocket frames, MQTT
-  messages, frames recorded by `MockDaliTransport`, and effects visible at a mocked port
-  such as the slice store.
+  messages, frames recorded by `MockDaliTransport`, the datagrams the stack sent on the
+  cluster hub, and effects visible at a mocked port such as the slice store.
 - **Never** call into `BusStackRuntime` (the World may hold it only as an inert
   keep-alive), bus channels or publishers, `RegistryStore` or read ports, confirmation
   slots, or worker counters.

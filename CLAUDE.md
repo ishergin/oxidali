@@ -69,8 +69,8 @@ Detail: [01](documentation/architecture/01-overview.md).
   source text and hands it to `dyn RuleCompiler`, never parses it.
 - `dali2rust-redundancy-runtime` — active/standby arbitration, config pull (ADR-018).
 - `dali2rust-ota-runtime` — firmware update over the network (ADR-024).
-- `dali2rust-cluster-runtime` — the cluster's datagram frames, their codec and the
-  duplicate window (ADR-035).
+- `dali2rust-cluster-runtime` — the cluster's datagram frames, their codec, the
+  duplicate window and the presence worker (ADR-035).
 - `dali2rust-bsp` — board support: spawner, stack classes, `PsramBox`, flash binding.
 - `dali2rust-test-support` — shared host test helpers and port doubles.
 - `dali2rust-firmware` — the binary and the only production composition root.
@@ -92,7 +92,8 @@ Composition:
 - One board: Waveshare ESP32-P4-ETH, wired Ethernet, no radio (ADR-011). The ESP32-S3,
   the ESP32-C6, the arbiter board, Wi-Fi, LittleFS and FlatBuffers are not part of
   the product; never describe them as live.
-- Cluster and adapter proxy are designed, not composed. Built:
+- The cluster composes its presence only; its commands, records and parts and the
+  adapter proxy are designed, not composed. Built:
   [`status.md`](documentation/product-design/status.md); open work:
   [`roadmap.md`](documentation/product-design/roadmap.md).
 

@@ -1,6 +1,6 @@
 [package]
 name = "dali2rust-cluster-runtime"
-description = "Cluster of installations over UDP: the datagram frame codec and the per-sender duplicate window (ADR-035)"
+description = "Cluster of installations over UDP: the datagram frame codec, the per-sender duplicate window and the presence worker (ADR-035)"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -8,9 +8,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+dali2rust-bsp = { path = "../dali2rust-bsp" }
+dali2rust-bus = { path = "../dali2rust-bus" }
 dali2rust-contracts = { path = "../dali2rust-contracts" }
 dali2rust-domain = { path = "../dali2rust-domain" }
 dali2rust-platform = { path = "../dali2rust-platform" }
+log = "0.4"
 postcard = "1.1"
 serde = { version = "1", features = ["derive"] }
 

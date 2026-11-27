@@ -13,6 +13,10 @@ use std::sync::{Arc, Mutex};
 use dali2rust_api::http::handlers::static_assets::StaticAsset;
 use dali2rust_api::http::router::Router;
 use dali2rust_bus::{BusConfig, BusId, BusPublisher};
+pub use dali2rust_cluster_runtime::{
+    fixed_boot_epoch, mixed_boot_epoch, wall_clock_now, ClusterComposition, EpochSource,
+};
+use dali2rust_cluster_runtime::{spawn_cluster_worker, ClusterSeams, ClusterWorkerPorts, ClusterWorkerThreads};
 use dali2rust_dali_runtime::DaliRuntimeConfig;
 pub use dali2rust_display_runtime::{DisplayView, HardwareDisplay};
 use dali2rust_platform::dali::DaliTransport;
@@ -53,6 +57,7 @@ pub struct StackOptions {
     pub poller_config: dali2rust_poller_runtime::PollerConfig,
     pub mqtt_client: Option<dali2rust_platform::mqtt::MqttClientBundle>,
     pub firmware_update: Option<crate::ota::FirmwareUpdatePorts>,
+    pub cluster: ClusterComposition,
 }
 
 impl Default for StackOptions {
@@ -71,6 +76,7 @@ impl Default for StackOptions {
             poller_config: dali2rust_poller_runtime::PollerConfig::default(),
             mqtt_client: None,
             firmware_update: None,
+            cluster: ClusterComposition::default(),
         }
     }
 }
@@ -80,12 +86,19 @@ struct PostBootOptions {
     gauges: http_bridges::PlatformGauges,
     web_assets: &'static [StaticAsset],
     firmware_update: Option<crate::ota::FirmwareUpdatePorts>,
+    cluster: ClusterComposition,
 }
 
 fn boot_from_options(
     version: &'static str,
     options: StackOptions,
 ) -> (Box<BootedStack>, PostBootOptions) {
+    let (args, rest) = split_options(version, options);
+    registry_init::log_internal_free("before workers");
+    (boot_stack(args), rest)
+}
+
+fn split_options(version: &'static str, options: StackOptions) -> (BootArgs, PostBootOptions) {
     let StackOptions {
         runtime_config,
         bus_config,
@@ -100,9 +113,9 @@ fn boot_from_options(
         poller_config,
         mqtt_client,
         firmware_update,
+        cluster,
     } = options;
-    registry_init::log_internal_free("before workers");
-    let booted = boot_stack(BootArgs {
+    let args = BootArgs {
         version,
         bus_config,
         bus_id,
@@ -113,19 +126,9 @@ fn boot_from_options(
         poller_config,
         controller_hardware_id: network_link.as_ref().and_then(|l| l.hardware_address()),
         mqtt_client,
-    });
-    (
-        booted,
-        PostBootOptions {
-            runtime_config,
-            gauges: http_bridges::PlatformGauges {
-                heap: heap_stats,
-                link: network_link,
-            },
-            web_assets,
-            firmware_update,
-        },
-    )
+    };
+    let gauges = http_bridges::PlatformGauges { heap: heap_stats, link: network_link };
+    (args, PostBootOptions { runtime_config, gauges, web_assets, firmware_update, cluster })
 }
 
 pub fn build_router_with_bus_and_transport<T: DaliTransport + Send + 'static>(
@@ -175,32 +178,52 @@ fn spawn_fleet<T: DaliTransport + Send + 'static>(
     rest: &PostBootOptions,
     clock: &Arc<dyn dali2rust_platform::clock::Clock>,
 ) -> (workers::SpawnedWorkers, ReadModelPorts) {
-    let WorkerChannels {
-        pipeline,
-        services,
-        ws_ev,
-    } = booted.bus.channels.take().expect("worker inboxes taken twice");
+    let WorkerChannels { pipeline, services, ws_ev, cluster } =
+        booted.bus.channels.take().expect("worker inboxes taken twice");
     let ws_ev = ws_ev.attach(&booted.bus.publisher);
     let inputs = worker_inputs(rest, booted, hardware_display, pipeline, services);
     let (mut workers, counter_handles) = spawn_bus_workers(transport, inputs);
+    let (cluster_seams, cluster_threads) = spawn_cluster_slice(booted, rest, cluster);
     registry_init::log_internal_free("after workers");
     let read_models = boot_read_models(
         version,
         booted,
         rest,
-        counter_handles,
+        (counter_handles, cluster_seams),
         clock,
         Arc::clone(&workers.arbitration_transitions),
     );
     workers.ws_worker = Some(spawn_websocket_worker(&booted.ws, ws_ev, &read_models));
+    workers.cluster = Some(cluster_threads);
     (workers, read_models)
+}
+
+fn spawn_cluster_slice(
+    booted: &BootedStack,
+    rest: &PostBootOptions,
+    inbox: dali2rust_bus::BusSubscriberRx,
+) -> (ClusterSeams, ClusterWorkerThreads) {
+    let seams = ClusterSeams::new(&rest.cluster);
+    let store = &booted.diagnostics_store;
+    let ports = ClusterWorkerPorts {
+        publisher: booted.bus.publisher.clone(),
+        bus_id: booted.bus_id,
+        settings: Arc::clone(store) as _,
+        home_assistant: Arc::clone(store) as _,
+        role: Arc::clone(store) as _,
+        network: rest.gauges.link.clone(),
+        binder: Arc::clone(&rest.cluster.binder),
+        presence: Arc::clone(&seams.presence),
+        counters: Arc::clone(&seams.counters),
+    };
+    (seams, spawn_cluster_worker(inbox, ports))
 }
 
 fn boot_read_models(
     version: &'static str,
     booted: &mut BootedStack,
     rest: &PostBootOptions,
-    counter_handles: RuntimeCounterHandles,
+    (counter_handles, cluster): (RuntimeCounterHandles, ClusterSeams),
     clock: &Arc<dyn dali2rust_platform::clock::Clock>,
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
 ) -> ReadModelPorts {
@@ -220,6 +243,7 @@ fn boot_read_models(
         transitions,
         ota: booted.ota.clone(),
         firmware_port: rest.firmware_update.as_ref().map(|p| Arc::clone(&p.port)),
+        cluster,
     })
 }
 
@@ -370,6 +394,7 @@ fn spawn_websocket_worker(
             stats: Arc::clone(&read_models.stats),
             diagnostics: Arc::clone(&read_models.diagnostics),
             health: Arc::clone(&read_models.health),
+            cluster: Arc::clone(&read_models.cluster),
         },
         Arc::new(dali2rust_platform::dali::wall_clock_millis),
     )
@@ -632,6 +657,7 @@ struct ReadModelArgs {
     transitions: dali2rust_redundancy_runtime::SharedTransitionLog,
     ota: OtaShared,
     firmware_port: Option<Arc<dyn dali2rust_platform::firmware::FirmwareUpdatePort>>,
+    cluster: ClusterSeams,
 }
 
 fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
@@ -654,9 +680,10 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             uptime.clone(),
             args.publisher,
             args.slots,
-            args.counters,
+            (args.counters, Arc::clone(&args.cluster.counters)),
             args.gauges,
         )),
+        cluster: Arc::new(http_bridges::ClusterStatusBridge::new(args.cluster.presence)),
         firmware: Arc::new(http_bridges::FirmwareBridge::new(
             args.ota.state,
             args.firmware_port,
@@ -675,6 +702,7 @@ pub struct HttpTestPorts {
     pub network_link: Option<Arc<dyn dali2rust_platform::net::NetworkLink>>,
     pub poller_config: dali2rust_poller_runtime::PollerConfig,
     pub display_panel: Option<Arc<Mutex<dyn dali2rust_display_runtime::DisplayPanel>>>,
+    pub cluster: Option<ClusterComposition>,
 }
 
 pub fn build_http_test_stack(
@@ -704,6 +732,7 @@ pub fn build_http_test_stack(
             mqtt_client: ports.mqtt_client,
             network_link: ports.network_link,
             firmware_update: Some(crate::ota::FirmwareUpdatePorts::host()),
+            cluster: ports.cluster.unwrap_or_default(),
             ..StackOptions::default()
         },
     )
@@ -742,6 +771,7 @@ mod tests {
             transitions: Arc::default(),
             ota: OtaShared::default(),
             firmware_port: None,
+            cluster: ClusterSeams::new(&ClusterComposition::default()),
         });
 
         clock.set(NOW_MS);
