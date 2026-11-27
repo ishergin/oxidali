@@ -58,6 +58,33 @@ export function isHome(rec: ClusterRecord): boolean {
   return rec.source === 'own'
 }
 
+export interface HomeName {
+  editable: boolean
+  text: string
+  openNode: number | null
+}
+
+export function homeName(kind: Kind, rec: ClusterRecord): HomeName {
+  const label = recordLabel(kind, rec.number)
+  const k = rec.home_node
+  if (isHome(rec)) return { editable: true, text: `kept on this node, the home of ${label}`, openNode: null }
+  if (rec.source === 'stale')
+    return { editable: false, text: `kept on node ${k} · cannot be renamed or deleted until node ${k} answers`, openNode: null }
+  return { editable: false, text: `kept on node ${k}, the home of ${label}: renamed and deleted there`, openNode: k }
+}
+
+export function homeCell(rec: ClusterRecord): string {
+  return isHome(rec) ? 'this node' : `node ${rec.home_node}`
+}
+
+export function deleteKey(kind: Kind, rec: Marked): string {
+  return `del:${recordKey(kind, rec)}`
+}
+
+export function finishKey(kind: Kind, part: ClusterPart): string {
+  return `fin:${kind}:${part.adapter}:${localOf(part)}`
+}
+
 export interface PartState {
   local: number | null
   send: boolean
@@ -161,7 +188,8 @@ function kindOfKey(key: string): Kind {
   return key.startsWith('scene:') ? 'scene' : 'channel'
 }
 
-export function draftOnRead(draft: Draft, records: Records, own: OwnParts): Draft {
+export function draftOnRead(draft: Draft, records: Records, own: OwnParts, readOnly = false): Draft {
+  if (readOnly) return EMPTY_DRAFT
   const byKey = recordByKey(records)
   const names = Object.entries(draft.names).filter(([key, edit]) => byKey.has(key) && byKey.get(key)?.name !== clipName(edit.name))
   const parts = Object.entries(draft.parts).filter(([key, state]) => {

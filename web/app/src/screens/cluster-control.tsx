@@ -9,8 +9,7 @@ import type {
   ClusterSettings,
   ClusterStatus,
 } from '../api/types'
-import type { WsEvent } from '../api/ws'
-import { useClusterStatus } from '../cluster-feed'
+import { statusOnly, useClusterStatus } from '../cluster-feed'
 import { Chip, SelChip, Switch, useConfirmTap } from '../components/ui'
 import { ADAPTER } from '../format'
 import { useLive } from '../hooks'
@@ -31,6 +30,10 @@ import {
   type PresetOutcome,
   type Records,
   blockText,
+  deleteKey,
+  finishKey,
+  homeName,
+  homeCell,
   draftAfter,
   draftItems,
   draftLine,
@@ -72,7 +75,7 @@ import { Select, StandbyBanner, refusalFrom, usePeerUrl } from './cluster-shared
 import { ageText, nodeHref, nodeLine } from './cluster-view'
 
 const SETTINGS_HREF = '#/settings/cluster'
-const SETTINGS_CAUSES = new Set(['cluster_off', 'cluster_no_address', 'cluster_not_running'])
+const SETTINGS_CAUSES = new Set(['cluster_no_address', 'cluster_not_running'])
 const TAB_HREF: Record<Kind, string> = { channel: '#/cluster', scene: '#/cluster/scenes' }
 const TAB_TITLE: Record<Kind, string> = { channel: 'Channels', scene: 'Scenes' }
 const CARD_TITLE: Record<Kind, string> = { channel: 'Channels', scene: 'Cluster scenes' }
@@ -117,10 +120,6 @@ async function readWorld(): Promise<World> {
   const mine = (p: ClusterNodePart) => p.node === me
   const own = { channel: allChannel.filter(mine), scene: allScene.filter(mine) }
   return { settings, info, records: { channel, scene }, own, all: { channel: allChannel, scene: allScene }, locals }
-}
-
-function statusOnly(event: WsEvent): boolean {
-  return event.type === 'ClusterStatus'
 }
 
 interface RowErr {
@@ -275,7 +274,7 @@ function RecordRow({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
         <span class="nm">{rec.name}</span>
         <NameChips ctx={ctx} rec={rec} />
       </td>
-      <td class="unit">{rec.source === 'own' ? 'this node' : `node ${rec.home_node}`}</td>
+      <td class="unit">{homeCell(rec)}</td>
       <NodesCell ctx={ctx} rec={rec} />
       <Controls ctx={ctx} rec={rec} />
     </tr>
@@ -319,55 +318,52 @@ function without<T>(map: Record<string, T>, key: string): Record<string, T> {
   return next
 }
 
-function HomeName({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
+function NameField({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   const key = recordKey(ctx.kind, rec)
-  const label = recordLabel(ctx.kind, rec.number)
   const err = ctx.errs[key]?.name
   const dirty = key in ctx.draft.names
-  const delKey = `del:${key}`
-  const sure = ctx.armed === delKey
   return (
-    <div class="mrow">
-      <span class="mnode">Name</span>
-      <input
-        class={err ? 'txt err' : dirty ? 'txt dirty' : 'txt'}
-        value={nameShown(ctx.draft, ctx.kind, rec)}
-        aria-label={`Name of ${label}`}
-        disabled={ctx.readOnly || ctx.busy}
-        onInput={(e) => {
-          const raw = e.currentTarget.value
-          ctx.edit((d) => editName(d, ctx.kind, rec, raw), key)
-        }}
-      />
-      <span class="unit">kept on this node, the home of {label}</span>
-      <span class="mgrow" />
-      <button
-        class={sure ? 'btn sm sure' : 'btn sm'}
-        disabled={ctx.readOnly || ctx.busy}
-        onClick={() => ctx.tap(delKey, () => deleteRecord(ctx, rec))}
-      >
-        {sure ? 'Sure?' : 'Delete'}
-      </button>
-      {err && <span class="fielderr">{err}</span>}
-    </div>
+    <input
+      class={err ? 'txt err' : dirty ? 'txt dirty' : 'txt'}
+      value={nameShown(ctx.draft, ctx.kind, rec)}
+      aria-label={`Name of ${recordLabel(ctx.kind, rec.number)}`}
+      disabled={ctx.readOnly || ctx.busy}
+      onInput={(e) => {
+        const raw = e.currentTarget.value
+        ctx.edit((d) => editName(d, ctx.kind, rec, raw), key)
+      }}
+    />
   )
 }
 
-function ForeignName({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
-  const label = recordLabel(ctx.kind, rec.number)
-  const k = rec.home_node
-  const silent = rec.source === 'stale'
+function DeleteButton({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
+  const tapKey = deleteKey(ctx.kind, rec)
+  const sure = ctx.armed === tapKey
+  return (
+    <button
+      class={sure ? 'btn sm sure' : 'btn sm'}
+      disabled={ctx.readOnly || ctx.busy}
+      onClick={() => ctx.tap(tapKey, () => deleteRecord(ctx, rec))}
+    >
+      {sure ? 'Sure?' : 'Delete'}
+    </button>
+  )
+}
+
+function NameRow({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
+  const home = homeName(ctx.kind, rec)
+  const err = ctx.errs[recordKey(ctx.kind, rec)]?.name
   return (
     <div class="mrow">
       <span class="mnode">Name</span>
-      <span class="nm">{rec.name}</span>
-      <span class="unit">
-        {silent
-          ? `kept on node ${k} · cannot be renamed or deleted until node ${k} answers`
-          : `kept on node ${k}, the home of ${label}: renamed and deleted there`}
-      </span>
+      {home.editable ? <NameField ctx={ctx} rec={rec} /> : <span class="nm">{rec.name}</span>}
+      <span class="unit">{home.text}</span>
       <span class="mgrow" />
-      {!silent && <OpenNode node={statusNode(ctx, k)} label={`Open node ${k}`} />}
+      {home.editable && <DeleteButton ctx={ctx} rec={rec} />}
+      {home.openNode !== null && (
+        <OpenNode node={statusNode(ctx, home.openNode)} label={`Open node ${home.openNode}`} />
+      )}
+      {err && <span class="fielderr">{err}</span>}
     </div>
   )
 }
@@ -458,23 +454,29 @@ function useRecordParts(ctx: Ctx, rec: ClusterRecord): ClusterNodePart[] {
   return parts ?? fallback
 }
 
-function OtherPart({ ctx, rec, node, part }: { ctx: Ctx; rec: ClusterRecord; node: number; part: ClusterNodePart | null }) {
+function NodeHead({ ctx, node }: { ctx: Ctx; node: number }) {
   const sn = statusNode(ctx, node)
-  const noun = ctx.kind === 'channel' ? 'channel' : 'scene'
-  const head = (
+  return (
     <span class="mnode">
       Node {node}
       {sn && ` · ${sn.board}`}
       {sn && <em>{nodeAge(sn)}</em>}
     </span>
   )
+}
+
+const NOT_IN: Record<Kind, string> = {
+  channel: 'Not in this channel. A node links one of its groups on its own page.',
+  scene: 'Not in this scene. A node chooses its scene on its own page.',
+}
+
+function OtherPart({ ctx, rec, node, part }: { ctx: Ctx; rec: ClusterRecord; node: number; part: ClusterNodePart | null }) {
+  const sn = statusNode(ctx, node)
   if (!part)
     return (
       <div class="mrow">
-        {head}
-        <span class="mnote">
-          Not in this {noun}. A node {ctx.kind === 'channel' ? 'links one of its groups' : 'chooses its scene'} on its own page.
-        </span>
+        <NodeHead ctx={ctx} node={node} />
+        <span class="mnote">{NOT_IN[ctx.kind]}</span>
         <span class="mgrow" />
         <OpenNode node={sn} />
       </div>
@@ -482,7 +484,7 @@ function OtherPart({ ctx, rec, node, part }: { ctx: Ctx; rec: ClusterRecord; nod
   return (
     <>
       <div class="mrow">
-        {head}
+        <NodeHead ctx={ctx} node={node} />
         <span class="mono">{localLabel(ctx.kind, localOf(part), part.adapter)}</span>
         <span class="flag">{part.send ? 'sends' : 'does not send'}</span>
         <span class="flag">{part.accept ? 'accepts' : 'does not accept'}</span>
@@ -520,7 +522,7 @@ function RecordDetail({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
       <td />
       <td colSpan={4}>
         <div class="members">
-          {rec.source === 'own' ? <HomeName ctx={ctx} rec={rec} /> : <ForeignName ctx={ctx} rec={rec} />}
+          <NameRow ctx={ctx} rec={rec} />
           <OwnPart ctx={ctx} rec={rec} />
           <OtherParts ctx={ctx} rec={rec} />
         </div>
@@ -542,7 +544,7 @@ function finishDelete(ctx: Ctx, part: ClusterNodePart) {
 
 function OrphanRow({ ctx, part }: { ctx: Ctx; part: ClusterNodePart }) {
   const local = localOf(part)
-  const key = `fin:${ctx.kind}:${part.adapter}:${local}`
+  const key = finishKey(ctx.kind, part)
   const sure = ctx.armed === key
   return (
     <tr>
@@ -756,6 +758,32 @@ function Presets({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
   )
 }
 
+function PlanActions({ run, busy, todo, onDo, onClose }: {
+  run: PresetRun | null
+  busy: boolean
+  todo: number
+  onDo: () => void
+  onClose: () => void
+}) {
+  return (
+    <div class="planrow">
+      <span />
+      <span />
+      <span class="mgrow" />
+      <span class="btns">
+        {!run && (
+          <button class="btn sm primary" disabled={busy || todo === 0} onClick={onDo}>
+            Do {todo}
+          </button>
+        )}
+        <button class="btn sm ghost" onClick={onClose}>
+          Close
+        </button>
+      </span>
+    </div>
+  )
+}
+
 function PlanBody(p: {
   kind: Kind
   rows: PlanRow[]
@@ -780,19 +808,7 @@ function PlanBody(p: {
         <PlanLine key={r.local} row={r} ticked={p.ticked(r)} outcome={outcomeOf(r)} disabled={p.busy || p.run !== null}
           onTick={() => p.tick(r.local)} />
       ))}
-      <div class="planrow">
-        <span />
-        <span />
-        <span class="mgrow" />
-        <span class="btns">
-          {!p.run && (
-            <button class="btn sm primary" disabled={p.busy || p.todo === 0} onClick={p.onDo}>
-              Do {p.todo}
-            </button>
-          )}
-          <button class="btn sm ghost" onClick={p.onClose}>Close</button>
-        </span>
-      </div>
+      <PlanActions run={p.run} busy={p.busy} todo={p.todo} onDo={p.onDo} onClose={p.onClose} />
     </div>
   )
 }
@@ -985,7 +1001,7 @@ function useRecordDraft(world: World | null, reload: () => void) {
   const [outcomes, setOutcomes] = useState<Outcome[] | null>(null)
   const [busy, setBusy] = useState(false)
   useEffect(() => {
-    if (world) setDraft((now) => (world.settings.read_only ? EMPTY_DRAFT : draftOnRead(now, world.records, world.own)))
+    if (world) setDraft((now) => draftOnRead(now, world.records, world.own, world.settings.read_only))
   }, [world])
   const edit = (fn: (d: Draft) => Draft, key: string) => {
     setDraft(fn)
@@ -1015,47 +1031,16 @@ function Page({ children }: { children: ComponentChildren }) {
   return <div>{children}</div>
 }
 
-export function ClusterControl({ tab, open }: { tab?: string; open?: string }) {
-  const kind: Kind = tab === 'scenes' ? 'scene' : 'channel'
-  const { data: world, error, reload } = useLive(readWorld, ['cluster'], { onEvent: statusOnly })
-  const { read } = useClusterStatus()
-  const status = read?.status ?? null
-  const peerUrl = usePeerUrl(world?.settings.read_only ?? false)
-  const rows = useOpened(kind, open)
-  const { rowErr, command } = useCommands()
-  const rd = useRecordDraft(world, () => void reload())
-  const [armed, tap] = useConfirmTap<string>()
-  if (!world)
-    return (
-      <Page>
-        <Head world={null} status={status} />
-        <div class="empty">{error ? `Cluster records cannot be read: ${error}` : 'Loading the cluster…'}</div>
-      </Page>
-    )
-  if (!world.settings.enabled && !hasAnything(world))
-    return (
-      <Page>
-        <Head world={world} status={status} />
-        <OffEmpty />
-      </Page>
-    )
-  const ctx: Ctx = {
-    world, kind, me: world.settings.node_number, readOnly: world.settings.read_only, busy: rd.busy, status,
-    draft: rd.draft, edit: rd.edit, errs: rd.errs, setErr: rd.setErr, rowErr,
-    command: (rec, title, send) => command(kind, rec, title, send),
-    armed, tap, reload: () => void reload(), ...rows,
-  }
+const SCENES_HINT =
+  "A cluster scene recalls, on each node, the scene chosen for it there. What a scene sets is edited in that node's scene editor."
+
+function Loaded({ ctx, rd, peerUrl }: { ctx: Ctx; rd: ReturnType<typeof useRecordDraft>; peerUrl: string | null }) {
   return (
     <Page>
-      <Head world={world} status={status} />
-      <Banners world={world} peerUrl={peerUrl} />
-      <Tabs kind={kind} world={world} />
-      {kind === 'scene' && (
-        <p class="hint">
-          A cluster scene recalls, on each node, the scene chosen for it there. What a scene sets is edited in that
-          node's scene editor.
-        </p>
-      )}
+      <Head world={ctx.world} status={ctx.status} />
+      <Banners world={ctx.world} peerUrl={peerUrl} />
+      <Tabs kind={ctx.kind} world={ctx.world} />
+      {ctx.kind === 'scene' && <p class="hint">{SCENES_HINT}</p>}
       <Outcomes outcomes={rd.outcomes} />
       <RecordsCard ctx={ctx} />
       {!ctx.readOnly && (
@@ -1063,4 +1048,37 @@ export function ClusterControl({ tab, open }: { tab?: string; open?: string }) {
       )}
     </Page>
   )
+}
+
+function Waiting({ world, status, error }: { world: World | null; status: ClusterStatus | null; error: string | null }) {
+  return (
+    <Page>
+      <Head world={world} status={status} />
+      {world ? (
+        <OffEmpty />
+      ) : (
+        <div class="empty">{error ? `Cluster records cannot be read: ${error}` : 'Loading the cluster…'}</div>
+      )}
+    </Page>
+  )
+}
+
+export function ClusterControl({ tab, open }: { tab?: string; open?: string }) {
+  const kind: Kind = tab === 'scenes' ? 'scene' : 'channel'
+  const { data: world, error, reload } = useLive(readWorld, ['cluster'], { onEvent: statusOnly })
+  const status = useClusterStatus().read?.status ?? null
+  const peerUrl = usePeerUrl(world?.settings.read_only ?? false)
+  const rows = useOpened(kind, open)
+  const { rowErr, command } = useCommands()
+  const rd = useRecordDraft(world, () => void reload())
+  const [armed, tap] = useConfirmTap<string>()
+  if (!world || (!world.settings.enabled && !hasAnything(world)))
+    return <Waiting world={world} status={status} error={error} />
+  const ctx: Ctx = {
+    world, kind, me: world.settings.node_number, readOnly: world.settings.read_only, busy: rd.busy, status,
+    draft: rd.draft, edit: rd.edit, errs: rd.errs, setErr: rd.setErr, rowErr,
+    command: (rec, title, send) => command(kind, rec, title, send),
+    armed, tap, reload: () => void reload(), ...rows,
+  }
+  return <Loaded ctx={ctx} rd={rd} peerUrl={peerUrl} />
 }

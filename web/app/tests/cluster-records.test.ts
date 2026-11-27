@@ -2,17 +2,24 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ClusterNodePart, ClusterRecord } from '../src/api/types.js'
+import { nextTap } from '../src/components/confirm-tap.js'
 import {
   EMPTY_DRAFT,
   type ApplyPorts,
   type OwnParts,
   type Records,
+  deleteKey,
+  draftAfter,
   draftItems,
   draftLine,
   draftOnRead,
   editName,
   editPart,
   editsOf,
+  fieldErrors,
+  finishKey,
+  homeCell,
+  homeName,
   holderOf,
   ignoringNodes,
   levelBody,
@@ -311,4 +318,72 @@ test('a record that keeps its group is not told the group is taken by a draft cl
     planApply(d, records, own).map((s) => s.op),
     ['refuse'],
   )
+})
+
+test('after Apply a success leaves the draft, a refusal stays at its field, a stale name is dropped', async () => {
+  const { records, own } = world([part(CH2, 3)])
+  let d = editName(EMPTY_DRAFT, 'channel', CH2, 'Corridor east')
+  d = editName(d, 'channel', CH5, 'Hall 2')
+  d = editPart(d, 'channel', CH5, own.channel, { local: 6 })
+  const out = await runApply(planApply(d, records, own), {
+    rename: async (_k, n) => {
+      if (n === 5) throw Object.assign(new Error('cluster_stale_revision'), { status: 409, code: 'conflict' })
+    },
+    unlink: async () => undefined,
+    link: async () => {
+      throw Object.assign(new Error('cluster_record_not_live'), { status: 409, code: 'conflict' })
+    },
+    refusal: (e) => `refused: ${(e as Error).message}`,
+  })
+  const after = draftAfter(d, out)
+  assert.deepEqual(Object.keys(after.names), [])
+  assert.deepEqual(Object.keys(after.parts), [recordKey('channel', CH5)])
+  assert.deepEqual(fieldErrors(out), {
+    [recordKey('channel', CH5)]: { name: 'refused: cluster_stale_revision', part: 'refused: cluster_record_not_live' },
+  })
+})
+
+test('an empty name is refused on the page and kept in the draft', () => {
+  const { records, own } = world()
+  const d = editName(EMPTY_DRAFT, 'channel', CH2, '   ')
+  const [step] = planApply(d, records, own)
+  assert.equal(step.op, 'refuse')
+  assert.equal(step.item, 'CH2 name')
+})
+
+test('Delete and Finish delete act only on a second press of the same button', () => {
+  const del = deleteKey('channel', CH2)
+  const fin = finishKey('channel', part(rec(0, { birth_mark: { generation: 1, nonce: 7 } }), 7, { link: 'orphan' }))
+  assert.equal(del, `del:${recordKey('channel', CH2)}`)
+  assert.equal(fin, 'fin:channel:0:7')
+  const first = nextTap<string>(null, del)
+  assert.deepEqual(first, { armed: del, act: false })
+  assert.deepEqual(nextTap<string>(first.armed, fin), { armed: fin, act: false })
+  assert.deepEqual(nextTap<string>(first.armed, del), { armed: null, act: true })
+  assert.notEqual(deleteKey('channel', CH2), deleteKey('scene', CS0))
+})
+
+test('a record is renamed and deleted only on its home node; elsewhere the row names that node', () => {
+  assert.deepEqual(homeName('channel', CH2), { editable: true, text: 'kept on this node, the home of CH2', openNode: null })
+  assert.equal(homeCell(CH2), 'this node')
+  const cached = rec(19, { source: 'cached', home_node: 1 })
+  assert.deepEqual(homeName('channel', cached), {
+    editable: false,
+    text: 'kept on node 1, the home of CH19: renamed and deleted there',
+    openNode: 1,
+  })
+  assert.equal(homeCell(cached), 'node 1')
+  const stale = rec(37, { source: 'stale', home_node: 2 })
+  assert.deepEqual(homeName('channel', stale), {
+    editable: false,
+    text: 'kept on node 2 · cannot be renamed or deleted until node 2 answers',
+    openNode: null,
+  })
+})
+
+test('on the standby a read empties the draft', () => {
+  const { records, own } = world([part(CH2, 3)])
+  const d = editName(EMPTY_DRAFT, 'channel', CH2, 'Corridor east')
+  assert.equal(draftOnRead(d, records, own, true), EMPTY_DRAFT)
+  assert.notEqual(draftOnRead(d, records, own, false), EMPTY_DRAFT)
 })

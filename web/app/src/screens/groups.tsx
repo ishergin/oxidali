@@ -1,9 +1,9 @@
 import { useState } from 'preact/hooks'
 import { api } from '../api/client'
 import type { GroupMembershipMatrix } from '../api/types'
-import type { WsEvent } from '../api/ws'
 import { Chip, EditableName, MatrixCell, Switch } from '../components/ui'
 import { ADAPTER, GROUP_COUNT, pad2 } from '../format'
+import { statusOnly } from '../cluster-feed'
 import { useLive } from '../hooks'
 import { errorMessage, mutate, notify, saveThenApply, trackOp } from '../toast'
 import { applyBar, boundLamps } from './apply-bar'
@@ -12,10 +12,6 @@ import { type GroupLock, gearDiffers, groupLocks, lockHint, lockHref, lockLabel 
 const MATRIX_POLL_MS = 10_000
 
 const editKey = (vl: number, g: number) => `${vl}:${g}`
-
-function statusOnly(event: WsEvent): boolean {
-  return event.type === 'ClusterStatus'
-}
 
 async function readLocks(): Promise<Map<number, GroupLock>> {
   try {
@@ -50,6 +46,26 @@ function LockedPop({ g, lock, ha, onHa }: { g: number; lock: GroupLock; ha: bool
         </span>
       </span>
     </span>
+  )
+}
+
+function LockedHead(p: {
+  g: number
+  lock: GroupLock
+  count: number
+  open: boolean
+  ha: boolean
+  onOpen: () => void
+  onHa: () => void
+}) {
+  return (
+    <th class="gname locked" title={`Linked to ${lockLabel(p.lock)}: click for the channel`} onClick={p.onOpen}>
+      G{p.g}
+      <span class="cnt">
+        CH{p.lock.channel} · {p.count}
+      </span>
+      {p.open && <LockedPop g={p.g} lock={p.lock} ha={p.ha} onHa={p.onHa} />}
+    </th>
   )
 }
 
@@ -212,25 +228,16 @@ export function Groups() {
               {matrix.groups.map((grp, g) => {
                 const lock = locks.get(g)
                 return lock ? (
-                <th
-                  key={g}
-                  class="gname locked"
-                  title={`Linked to ${lockLabel(lock)}: click for the channel`}
-                  onClick={() => setRenaming((cur) => (cur === g ? null : g))}
-                >
-                  G{g}
-                  <span class="cnt">
-                    CH{lock.channel} · {desiredCount(g)}
-                  </span>
-                  {renaming === g && (
-                    <LockedPop
-                      g={g}
-                      lock={lock}
-                      ha={haEnabled.get(g) !== false}
-                      onHa={() => void toggleGroupHa(g, haEnabled.get(g) === false)}
-                    />
-                  )}
-                </th>
+                  <LockedHead
+                    key={g}
+                    g={g}
+                    lock={lock}
+                    count={desiredCount(g)}
+                    open={renaming === g}
+                    ha={haEnabled.get(g) !== false}
+                    onOpen={() => setRenaming((cur) => (cur === g ? null : g))}
+                    onHa={() => void toggleGroupHa(g, haEnabled.get(g) === false)}
+                  />
                 ) : (
                 <th
                   key={g}

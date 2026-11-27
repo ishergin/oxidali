@@ -1,3 +1,5 @@
+import type { ClusterPart, ClusterRecord } from '../api/types.js'
+
 export interface MembershipRow {
   desired: boolean[]
   applied: boolean[]
@@ -7,25 +9,17 @@ export function gearDiffers(row: MembershipRow): boolean {
   return row.desired.some((wanted, group) => wanted !== row.applied[group])
 }
 
-export interface LockPart {
-  adapter: number
-  group?: number
-  record: { number: number; birth_mark: { generation: number; nonce: number } }
-}
-
-export interface LockRecord {
-  number: number
-  birth_mark: { generation: number; nonce: number }
-  name: string
-}
-
 export interface GroupLock {
   channel: number
   name: string
   leftOver: boolean
 }
 
-export function groupLocks(adapter: number, parts: LockPart[], records: LockRecord[]): Map<number, GroupLock> {
+export function groupLocks(
+  adapter: number,
+  parts: Pick<ClusterPart, 'adapter' | 'group' | 'record'>[],
+  records: Pick<ClusterRecord, 'number' | 'birth_mark' | 'name'>[],
+): Map<number, GroupLock> {
   const out = new Map<number, GroupLock>()
   for (const p of parts) {
     if (p.adapter !== adapter || p.group === undefined) continue
