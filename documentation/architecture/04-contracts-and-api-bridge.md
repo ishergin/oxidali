@@ -74,6 +74,17 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   decoder checks every element, then hands them out one at a time, borrowed from the
   datagram. Nothing holds a whole page as values. A record whose number lies outside the
   sender's block is the sender's copy of a record another node is home to.
+- A node's channel-and-scene info is one set of pages under one set number. The writer
+  emits it through `PageCursor`, one page per call, so the sender paces the pages and a
+  one-page and a many-page set take one route; an empty info is one empty last page. A
+  receiver shows a set only whole: page 0 opens it, the pages follow in order and the last
+  flag closes it. A gap or a newer set number abandons the open set, and the previous
+  whole set stays shown. Set numbers compare by wrapping arithmetic within one board and
+  boot epoch; another board or epoch always follows. A page feeds the cache only from the
+  board presence shows for its node, live, and only when the duplicate window takes it as
+  new. Records and parts are what a page carries now; a receiver counts and skips a record
+  outside the sender's block, a part's lamp maps and taken flag, group maps and names, and
+  never fails the set over them.
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
   it heard last with a new frame, each judged by its own window: sequence numbers compare
   by wrapping arithmetic, and a frame of any other epoch starts a window in place of the

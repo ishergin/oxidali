@@ -1,4 +1,6 @@
+use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
+use std::collections::hash_map::DefaultHasher;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -16,21 +18,23 @@ use dali2rust_contracts::bus::{
     build_confirmation_envelope, build_confirmation_envelope_with_product_error, event_envelope,
 };
 use dali2rust_contracts::msg::{
-    fixed_text_32, fixed_text_64, BusCommandPayload, ClusterForgetNodeCommand, ClusterStateChangedEvent,
+    fixed_text_32, fixed_text_64, BusCommandPayload, BusEventPayload, ClusterForgetNodeCommand, ClusterStateChangedEvent,
     ClusterSubject, DeliveryStatus, ErrorCode, FixedText32, FixedText64,
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
-    ClusterSettingsReadPort, ClusterSettingsView, ClusterWire, DaliSettingsReadPort,
-    HomeAssistantSettingsReadPort,
+    ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort, ClusterSettingsView, ClusterWire,
+    DaliSettingsReadPort, HomeAssistantSettingsReadPort,
 };
 use dali2rust_platform::cluster_link::{ClusterLink, ClusterLinkBinder, MAX_CLUSTER_DATAGRAM_BYTES};
 use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_platform::net::NetworkLink;
 
-use crate::frame::{cluster_tag, encode, DatagramBuffer, Frame, Header, Hello, Pulse};
+use crate::frame::{cluster_tag, encode, DatagramBuffer, Frame, Header, Hello, Pulse, NODE_COUNT};
+use crate::info::{ClusterInfo, ClusterInfoReadPort};
 use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 
+use super::announce::{reached, Announcer, OwnInfo, Turn};
 use super::counters::{bump, ClusterCounters};
 use super::receiver::{run_receiver, LinkHandoff};
 use super::shared::{ClusterPresence, Forgotten, Settled};
@@ -53,6 +57,9 @@ pub struct ClusterWorkerPorts {
     pub binder: Arc<dyn ClusterLinkBinder>,
     pub presence: Arc<ClusterPresence>,
     pub counters: Arc<ClusterCounters>,
+    pub records: Arc<dyn ClusterRecordReadPort>,
+    pub parts: Arc<dyn ClusterPartReadPort>,
+    pub info: Arc<ClusterInfo>,
 }
 
 pub struct ClusterWorkerThreads {
@@ -63,11 +70,12 @@ pub struct ClusterWorkerThreads {
 pub fn spawn_cluster_worker(inbox: BusSubscriberRx, ports: ClusterWorkerPorts) -> ClusterWorkerThreads {
     let (handoff_tx, handoff_rx) = mpsc::channel();
     let (presence, counters) = (Arc::clone(&ports.presence), Arc::clone(&ports.counters));
+    let info = Arc::clone(&ports.info);
     let receiver = spawn_named_stack_in(
         c"cluster_rx",
         std_thread_stack::EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        move || run_receiver(handoff_rx, presence, counters),
+        move || run_receiver(handoff_rx, (presence, info), counters),
     );
     let sender = spawn_named_stack_in(
         c"cluster_tx",
@@ -174,6 +182,8 @@ struct NodeSender<'a> {
     seq: u32,
     next_slot_ms: u32,
     digest: u64,
+    announcer: Announcer,
+    info_digest: u64,
 }
 
 impl<'a> NodeSender<'a> {
@@ -181,7 +191,18 @@ impl<'a> NodeSender<'a> {
         let now_ms = monotonic_ms();
         let digest = ports.presence.digest(now_ms);
         let buffer = datagram_buffer();
-        Self { ports, handoff, buffer, link: None, wants_link: false, seq: 0, next_slot_ms: now_ms, digest }
+        Self {
+            ports,
+            handoff,
+            buffer,
+            link: None,
+            wants_link: false,
+            seq: 0,
+            next_slot_ms: now_ms,
+            digest,
+            announcer: Announcer::new(),
+            info_digest: 0,
+        }
     }
 
     fn period_ms(&self) -> u32 {
@@ -197,8 +218,26 @@ impl<'a> NodeSender<'a> {
         if settled.entered_running || self.slot_due(now_ms) {
             self.on_slot(&reading, settled, now_ms);
         }
+        self.announce(&reading, settled.mode == OwnMode::Running, now_ms);
         self.ports.presence.prune(now_ms);
         self.publish_if_changed(now_ms);
+    }
+
+    fn announce(&mut self, reading: &Reading, running: bool, now_ms: u32) {
+        let hello = self.ports.presence.take_hello_heard() && running;
+        let timing = self.ports.presence.timing();
+        let turn = Turn { running, node: reading.settings.node_number, now_ms, hello, timing };
+        let own = OwnInfo { records: &*self.ports.records, parts: &*self.ports.parts };
+        self.announcer.plan(turn, own);
+        if !self.announcer.page_due(now_ms) {
+            return;
+        }
+        let header = self.next_header(reading);
+        let written = self.announcer.write_page(&mut self.buffer, &header, now_ms);
+        let closes_set = written.is_ok() && !self.announcer.paging();
+        if self.transmit(written.ok()) && closes_set {
+            bump(&self.ports.counters.info_sets_sent_total);
+        }
     }
 
     fn listened_ms(&mut self, reading: &Reading, now_ms: u32) -> u32 {
@@ -207,6 +246,9 @@ impl<'a> NodeSender<'a> {
         };
         let claim = reading.claim();
         if bound.claim != claim {
+            if bound.claim.1 != claim.1 {
+                self.ports.info.clear();
+            }
             bound.claim = claim;
             bound.listen = ListenWindow::opened_at(now_ms);
         }
@@ -232,8 +274,9 @@ impl<'a> NodeSender<'a> {
 
     fn wait(&self, now_ms: u32) -> Option<Duration> {
         self.wants_link.then(|| {
-            let left = self.next_slot_ms.wrapping_sub(now_ms);
-            Duration::from_millis(u64::from(if left < HALF_CLOCK_MS { left } else { 0 }))
+            let left = |at_ms: u32| if reached(now_ms, at_ms) { 0 } else { at_ms.wrapping_sub(now_ms) };
+            let info = self.announcer.deadline().map_or(u32::MAX, left);
+            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info)))
         })
     }
 
@@ -269,6 +312,7 @@ impl<'a> NodeSender<'a> {
         if self.link.take().is_some() {
             let _ = self.handoff.send(LinkHandoff::Unbound);
             self.ports.presence.clear();
+            self.ports.info.clear();
         }
     }
 
@@ -286,9 +330,15 @@ impl<'a> NodeSender<'a> {
     }
 
     fn send(&mut self, reading: &Reading, frame: &Frame<'_>) {
-        let Some(bound) = self.link.as_ref() else {
+        if self.link.is_none() {
             return;
-        };
+        }
+        let header = self.next_header(reading);
+        let written = encode(&header, frame, &mut self.buffer).ok();
+        self.transmit(written);
+    }
+
+    fn next_header(&mut self, reading: &Reading) -> Header {
         let header = Header {
             cluster_tag: cluster_tag(&reading.settings.cluster_name),
             sender_mac: reading.mac.unwrap_or_default(),
@@ -297,36 +347,61 @@ impl<'a> NodeSender<'a> {
             seq: self.seq,
         };
         self.seq = self.seq.wrapping_add(1);
-        let written = encode(&header, frame, &mut self.buffer).ok();
-        let sent = written.and_then(|len| self.buffer.get(..len)).map(|bytes| bound.link.send(bytes));
-        let counter = match sent {
-            Some(Ok(())) => &self.ports.counters.datagrams_sent_total,
-            _ => &self.ports.counters.send_failures_total,
-        };
+        header
+    }
+
+    fn transmit(&self, written: Option<usize>) -> bool {
+        let link = self.link.as_ref().map(|bound| &bound.link);
+        let bytes = written.and_then(|len| self.buffer.get(..len));
+        let sent = link.zip(bytes).is_some_and(|(link, bytes)| link.send(bytes).is_ok());
+        let counter = if sent { &self.ports.counters.datagrams_sent_total } else { &self.ports.counters.send_failures_total };
         bump(counter);
+        sent
     }
 
     fn publish_if_changed(&mut self, now_ms: u32) {
         let digest = self.ports.presence.digest(now_ms);
-        if digest == self.digest {
-            return;
-        }
-        let changed = ClusterStateChangedEvent { subject: ClusterSubject::Status };
-        let envelope = event_envelope(SOURCE_ID_UNSPECIFIED, CORRELATION_NONE, self.ports.bus_id.0, None, changed);
-        let frame = BusFrame::event(envelope);
-        if publish_or_drop(&self.ports.publisher, BusChannel::Events, frame, "cluster-state") == PublishResult::Queued {
+        if digest != self.digest && self.publish(ClusterSubject::Status) {
             self.digest = digest;
+        }
+        let info_digest = self.info_digest(now_ms);
+        if info_digest != self.info_digest && self.publish(ClusterSubject::Info) {
+            self.info_digest = info_digest;
         }
     }
 
+    fn info_digest(&self, now_ms: u32) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        (self.ports.info.changes(now_ms), self.announcer.announced()).hash(&mut hasher);
+        for node in 0..NODE_COUNT {
+            let held = self.ports.info.info_held(node).is_some();
+            (held && self.ports.presence.member_heard(node, now_ms)).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn publish(&self, subject: ClusterSubject) -> bool {
+        let changed = ClusterStateChangedEvent { subject };
+        let envelope = event_envelope(SOURCE_ID_UNSPECIFIED, CORRELATION_NONE, self.ports.bus_id.0, None, changed);
+        let frame = BusFrame::event(envelope);
+        publish_or_drop(&self.ports.publisher, BusChannel::Events, frame, "cluster-state") == PublishResult::Queued
+    }
+
     fn take(&mut self, frame: &BusFrame) {
-        if let BusFrame::Command(command) = frame {
-            dispatch_cluster_command(&command.payload, self, command.meta.correlation_id);
+        match frame {
+            BusFrame::Command(command) => dispatch_cluster_command(&command.payload, self, command.meta.correlation_id),
+            BusFrame::Event(event) if matches!(event.payload, BusEventPayload::ClusterSettingsChangedEvent(_)) => {
+                self.announcer.note_settings_changed();
+            }
+            _ => {}
         }
     }
 
     fn on_forget(&mut self, correlation_id: u64, forget: &ClusterForgetNodeCommand) {
         let outcome = self.ports.presence.forget(forget.node, monotonic_ms());
+        if outcome == Forgotten::Removed {
+            self.ports.info.forget(forget.node);
+        }
         let product_error = (outcome == Forgotten::StillHeard).then_some((ErrorCode::Conflict, NODE_HEARD));
         confirm(&self.ports.publisher, correlation_id, product_error);
     }

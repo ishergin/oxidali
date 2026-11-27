@@ -5,7 +5,7 @@ use dali2rust_contracts::msg::{fixed_text_32, fixed_text_64};
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 
 use super::*;
-use crate::frame::{cluster_tag, encode, DatagramBuffer, Header, NodeClaim, Pulse};
+use crate::frame::{cluster_tag, encode, DatagramBuffer, Header, InfoPageWriter, NodeClaim, Pulse};
 use crate::runtime::fixed_boot_epoch;
 
 const TIMING: PresenceTiming = PresenceTiming::every_ms(1_000);
@@ -41,6 +41,14 @@ fn pulse(cluster_name: &str, installation: &str, node: u8, seq: u32) -> Vec<u8> 
     buffer[..len].to_vec()
 }
 
+fn info_page(cluster_name: &str, node: u8, seq: u32) -> Vec<u8> {
+    let header =
+        Header { cluster_tag: cluster_tag(cluster_name), sender_mac: NEIGHBOUR_MAC, boot_epoch: 7, node_no: node, seq };
+    let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let len = InfoPageWriter::start(&mut buffer, &header, seq, 0).expect("a page starts").finish(true);
+    buffer[..len].to_vec()
+}
+
 fn present() -> (ClusterPresence, ClusterCounters) {
     let presence = ClusterPresence::new(TIMING, fixed_boot_epoch(1));
     presence.settle(identity(0), Some(OwnMode::Standby), 0, START_MS);
@@ -48,7 +56,7 @@ fn present() -> (ClusterPresence, ClusterCounters) {
 }
 
 fn deliver(presence: &ClusterPresence, counters: &ClusterCounters, bytes: &[u8], link: u32, now_ms: u32) {
-    presence.take_datagram(bytes, Delivery { source: SOURCE, link, now_ms }, counters);
+    presence.take_datagram(bytes, Delivery { source: SOURCE, link, now_ms }, counters, &ClusterInfo::new());
 }
 
 fn boards(presence: &ClusterPresence) -> usize {
@@ -123,4 +131,24 @@ fn the_boot_epoch_is_drawn_once_and_not_before_it_is_asked_for() {
     assert_eq!(presence.draw_boot_epoch(), DRAWN_EPOCH);
     assert_eq!(presence.own_status().boot_epoch, Some(DRAWN_EPOCH));
     assert_eq!(draws.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_late_page_of_a_member_is_stale_and_a_page_of_another_cluster_is_ignored() {
+    let (presence, counters) = present();
+    let info = ClusterInfo::new();
+    let take = |bytes: &[u8]| {
+        presence.take_datagram(bytes, Delivery { source: SOURCE, link: 0, now_ms: START_MS }, &counters, &info);
+    };
+    let read = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
+    take(&pulse(NAME, BARN, 1, 10));
+    take(&pulse(NAME, BARN, 1, 15));
+    take(&info_page(NAME, 1, 16));
+    assert_eq!(read(&counters.info_sets_taken_total), 1);
+    take(&info_page(NAME, 1, 12));
+    assert_eq!(read(&counters.info_pages_stale_total), 1);
+    assert_eq!(read(&counters.info_pages_ignored_total), 0);
+    take(&info_page("garage", 1, 17));
+    assert_eq!(read(&counters.info_pages_ignored_total), 1);
+    assert_eq!(read(&counters.info_sets_taken_total), 1);
 }

@@ -6,16 +6,17 @@ use std::time::{Duration, Instant};
 
 use crate::runtime::coalesce::BurstCoalescer;
 use dali2rust_api::ws::{
-    cluster_status_frame, diagnostics_snapshot_frame, event_channels, health_snapshot_frame,
+    cluster_info_frame, cluster_status_frame, diagnostics_snapshot_frame, event_channels, health_snapshot_frame,
     log_batch_frame, log_batch_prefix, project_event_where, sniffer_batch_frame,
     stats_snapshot_frame, Channel, SnifferDecoderState,
 };
+use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
 use dali2rust_api::http::cluster_status_state::ClusterStatusHttpState;
 use dali2rust_api::http::diagnostics_state::DiagnosticsHttpState;
 use dali2rust_api::http::health_state::HealthHttpState;
 use dali2rust_api::http::stats_state::StatsHttpState;
 use dali2rust_bus::{BusFrame, BusSubscriberRx, EventInboxProbe};
-use dali2rust_contracts::msg::BusEventPayload;
+use dali2rust_contracts::msg::{BusEventPayload, ClusterSubject};
 use dali2rust_bsp::log_ring::LogRing;
 use dali2rust_platform::dali::{SnifferRecord, SnifferTap};
 use dali2rust_platform::logs::{LogLevel, LogLine};
@@ -46,6 +47,22 @@ pub struct WsWorkerPorts {
     pub diagnostics: Arc<dyn DiagnosticsHttpState>,
     pub health: Arc<dyn HealthHttpState>,
     pub cluster: Arc<dyn ClusterStatusHttpState>,
+    pub cluster_info: Arc<dyn ClusterInfoHttpState>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ClusterMoved {
+    status: bool,
+    info: bool,
+}
+
+impl ClusterMoved {
+    const fn with(self, subject: ClusterSubject) -> Self {
+        match subject {
+            ClusterSubject::Status => Self { status: true, ..self },
+            ClusterSubject::Info => Self { info: true, ..self },
+        }
+    }
 }
 
 struct Timers {
@@ -143,7 +160,7 @@ fn run(
             continue;
         }
         match ev_rx.recv_timeout(timers.next_wait(Instant::now())) {
-            Ok(frame) => drain_events(&hub, &ev_rx, frame, &mut burst, (ports.cluster.as_ref(), clock_ms())),
+            Ok(frame) => drain_events(&hub, &ev_rx, frame, &mut burst, (&ports, clock_ms())),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -215,11 +232,11 @@ fn drain_events(
     ev_rx: &BusSubscriberRx,
     first: BusFrame,
     burst: &mut BurstCoalescer,
-    (cluster, now_ms): (&dyn ClusterStatusHttpState, u64),
+    (ports, now_ms): (&WsWorkerPorts, u64),
 ) {
-    let mut cluster_changed = push_event(burst, first);
+    let mut moved = push_event(burst, first, ClusterMoved::default());
     while let Ok(frame) = ev_rx.try_recv() {
-        cluster_changed |= push_event(burst, frame);
+        moved = push_event(burst, frame, moved);
     }
     WsCounters::bump(
         &hub.counters().events_coalesced_total,
@@ -229,20 +246,30 @@ fn drain_events(
         fan_out_envelope(hub, &envelope, now_ms);
     }
     burst.release_burst();
-    if cluster_changed && hub.any_subscriber(Channel::Cluster) {
-        hub.broadcast(Channel::Cluster, &cluster_status_frame(cluster, now_ms));
+    broadcast_cluster(hub, ports, moved, now_ms);
+}
+
+fn broadcast_cluster(hub: &WsHub, ports: &WsWorkerPorts, moved: ClusterMoved, now_ms: u64) {
+    if !hub.any_subscriber(Channel::Cluster) {
+        return;
+    }
+    if moved.status {
+        hub.broadcast(Channel::Cluster, &cluster_status_frame(ports.cluster.as_ref(), now_ms));
+    }
+    if moved.info {
+        hub.broadcast(Channel::Cluster, &cluster_info_frame(ports.cluster_info.as_ref(), now_ms));
     }
 }
 
-fn push_event(burst: &mut BurstCoalescer, frame: BusFrame) -> bool {
+fn push_event(burst: &mut BurstCoalescer, frame: BusFrame, moved: ClusterMoved) -> ClusterMoved {
     let BusFrame::Event(envelope) = frame else {
-        return false;
+        return moved;
     };
-    if matches!(envelope.payload, BusEventPayload::ClusterStateChangedEvent(_)) {
-        return true;
+    if let BusEventPayload::ClusterStateChangedEvent(changed) = &envelope.payload {
+        return moved.with(changed.subject);
     }
     crate::runtime::coalesce::push_envelope(burst, envelope);
-    false
+    moved
 }
 
 fn fan_out_envelope(hub: &WsHub, envelope: &dali2rust_contracts::msg::EventEnvelope, now_ms: u64) {

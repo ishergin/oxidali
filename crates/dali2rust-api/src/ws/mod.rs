@@ -15,7 +15,8 @@ pub use project::{
     WS_PROJECTED_EVENTS,
 };
 pub use cluster::{
-    cluster_status_frame, CLUSTER_STATUS_FRAME_CEILING_BYTES, WS_PORT_EVENTS, WS_SUBSCRIBED_EVENTS,
+    cluster_info_frame, cluster_status_frame, CLUSTER_INFO_FRAME_CEILING_BYTES,
+    CLUSTER_STATUS_FRAME_CEILING_BYTES, WS_PORT_EVENTS, WS_SUBSCRIBED_EVENTS,
 };
 pub use logs::{log_batch_frame, log_batch_prefix};
 pub use snapshot::{diagnostics_snapshot_frame, health_snapshot_frame, stats_snapshot_frame};

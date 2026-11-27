@@ -162,7 +162,7 @@ impl ClusterPartHandler {
     }
 }
 
-const fn list_key(kind: ClusterRecordKind) -> &'static str {
+pub(crate) const fn list_key(kind: ClusterRecordKind) -> &'static str {
     match kind {
         ClusterRecordKind::Channel => "channel_parts",
         ClusterRecordKind::Scene => "scene_parts",

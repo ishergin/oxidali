@@ -8,6 +8,7 @@ use dali2rust_platform::liveness::monotonic_ms;
 
 use super::counters::ClusterCounters;
 use super::shared::ClusterPresence;
+use crate::info::ClusterInfo;
 use crate::presence::PresenceTiming;
 
 pub type EpochSource = Arc<dyn Fn() -> u32 + Send + Sync>;
@@ -62,6 +63,7 @@ const fn folded(hashed: u64) -> u32 {
 pub struct ClusterSeams {
     pub presence: Arc<ClusterPresence>,
     pub counters: Arc<ClusterCounters>,
+    pub info: Arc<ClusterInfo>,
 }
 
 impl ClusterSeams {
@@ -69,6 +71,7 @@ impl ClusterSeams {
         Self {
             presence: Arc::new(ClusterPresence::new(composition.timing, Arc::clone(&composition.boot_epoch))),
             counters: Arc::new(ClusterCounters::default()),
+            info: Arc::new(ClusterInfo::new()),
         }
     }
 }

@@ -4,6 +4,7 @@ mod bus_host;
 pub use bus_host::NAMED_EVENT_SUBSCRIBERS;
 mod display_source;
 mod bus_stack;
+mod cluster_info_bridge;
 mod http_bridges;
 mod registry_init;
 mod workers;
@@ -215,6 +216,9 @@ fn spawn_cluster_slice(
         binder: Arc::clone(&rest.cluster.binder),
         presence: Arc::clone(&seams.presence),
         counters: Arc::clone(&seams.counters),
+        records: Arc::clone(store) as _,
+        parts: Arc::clone(store) as _,
+        info: Arc::clone(&seams.info),
     };
     (seams, spawn_cluster_worker(inbox, ports))
 }
@@ -395,6 +399,7 @@ fn spawn_websocket_worker(
             diagnostics: Arc::clone(&read_models.diagnostics),
             health: Arc::clone(&read_models.health),
             cluster: Arc::clone(&read_models.cluster),
+            cluster_info: Arc::clone(&read_models.cluster_info),
         },
         Arc::new(dali2rust_platform::dali::wall_clock_millis),
     )
@@ -662,6 +667,7 @@ struct ReadModelArgs {
 
 fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
     let uptime = dali2rust_platform::clock::Uptime::start(args.clock);
+    let cluster_info = cluster_info_bridge(&args.store, &args.cluster);
     ReadModelPorts {
         diagnostics: Arc::new(http_bridges::DiagnosticsBridge::new(
             uptime.clone(),
@@ -684,6 +690,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
             args.gauges,
         )),
         cluster: Arc::new(http_bridges::ClusterStatusBridge::new(args.cluster.presence)),
+        cluster_info,
         firmware: Arc::new(http_bridges::FirmwareBridge::new(
             args.ota.state,
             args.firmware_port,
@@ -694,6 +701,19 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
         )),
         uptime,
     }
+}
+
+fn cluster_info_bridge(
+    store: &Arc<RegistryStore>,
+    seams: &ClusterSeams,
+) -> Arc<dyn dali2rust_api::http::cluster_info_state::ClusterInfoHttpState> {
+    let registry = cluster_info_bridge::ClusterRegistryPorts {
+        settings: Arc::clone(store) as _,
+        records: Arc::clone(store) as _,
+        parts: Arc::clone(store) as _,
+    };
+    let (info, presence) = (Arc::clone(&seams.info) as _, Arc::clone(&seams.presence) as _);
+    Arc::new(cluster_info_bridge::ClusterInfoBridge::new(registry, info, presence))
 }
 
 #[derive(Default)]

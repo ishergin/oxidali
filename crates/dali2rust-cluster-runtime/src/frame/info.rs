@@ -196,23 +196,51 @@ impl<'b> InfoPageWriter<'b> {
     }
 }
 
-pub fn write_pages<'e>(
-    buffer: &mut DatagramBuffer,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageCursor {
     set: u32,
-    mut next_header: impl FnMut() -> Header,
-    elements: impl IntoIterator<Item = InfoElement<'e>>,
-    mut emit: impl FnMut(&[u8]),
-) -> Result<(), EncodeError> {
-    let mut elements = elements.into_iter().peekable();
-    let mut page: u8 = 0;
-    loop {
-        let len = write_page(buffer, &next_header(), set, page, &mut elements)?;
-        emit(&buffer[..len]);
-        if elements.peek().is_none() {
-            return Ok(());
-        }
-        page = page.checked_add(1).ok_or(EncodeError::TooManyPages)?;
+    page: u8,
+    taken: usize,
+    finished: bool,
+}
+
+impl PageCursor {
+    pub const fn new(set: u32) -> Self {
+        Self { set, page: 0, taken: 0, finished: false }
     }
+
+    pub const fn set(&self) -> u32 {
+        self.set
+    }
+
+    pub const fn finished(&self) -> bool {
+        self.finished
+    }
+
+    pub fn write_next<'e>(
+        &mut self,
+        buffer: &mut DatagramBuffer,
+        header: &Header,
+        elements: impl IntoIterator<Item = InfoElement<'e>>,
+    ) -> Result<Option<usize>, EncodeError> {
+        if self.finished {
+            return Ok(None);
+        }
+        let mut rest = elements.into_iter().skip(self.taken).peekable();
+        let written = write_page(buffer, header, self.set, self.page, &mut rest)?;
+        self.taken += written.elements;
+        self.finished = written.last;
+        if !written.last {
+            self.page = self.page.checked_add(1).ok_or(EncodeError::TooManyPages)?;
+        }
+        Ok(Some(written.len))
+    }
+}
+
+struct WrittenPage {
+    len: usize,
+    elements: usize,
+    last: bool,
 }
 
 fn write_page<'e, I: Iterator<Item = InfoElement<'e>>>(
@@ -221,17 +249,18 @@ fn write_page<'e, I: Iterator<Item = InfoElement<'e>>>(
     set: u32,
     page: u8,
     elements: &mut Peekable<I>,
-) -> Result<usize, EncodeError> {
+) -> Result<WrittenPage, EncodeError> {
     let mut writer = InfoPageWriter::start(buffer, header, set, page)?;
-    let mut pushed = false;
+    let mut pushed = 0;
     while let Some(element) = elements.peek() {
         match writer.push(element) {
-            Ok(()) => pushed = true,
-            Err(PushError::Full) if pushed => break,
+            Ok(()) => pushed += 1,
+            Err(PushError::Full) if pushed > 0 => break,
             Err(PushError::Full) => return Err(EncodeError::TooLarge),
             Err(PushError::OutOfRange) => return Err(EncodeError::OutOfRange),
         }
         elements.next();
     }
-    Ok(writer.finish(elements.peek().is_none()))
+    let last = elements.peek().is_none();
+    Ok(WrittenPage { len: writer.finish(last), elements: pushed, last })
 }

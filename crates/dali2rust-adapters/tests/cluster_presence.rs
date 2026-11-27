@@ -20,6 +20,7 @@ const CLUSTER_NAME: &str = "hall";
 const SETTINGS: &str = "/api/v1/cluster";
 const STATUS: &str = "/api/v1/cluster/status";
 const OK: u16 = 200;
+const CREATED: u16 = 201;
 const NO_CONTENT: u16 = 204;
 const CONFLICT: u16 = 409;
 const MOVED_PORT: u16 = 47_811;
@@ -95,6 +96,17 @@ impl Node {
 
     fn state(&self) -> String {
         self.status()["own"]["state"].as_str().unwrap_or_default().to_owned()
+    }
+
+    fn send(&self, method: &str, path: &str, body: &str) -> Value {
+        let response = self.router.dispatch(method, path, body.as_bytes());
+        assert!([OK, CREATED].contains(&response.status), "{method} {path} answered {}", response.status);
+        serde_json::from_slice(&response.into_body_bytes()).expect("the answer is JSON")
+    }
+
+    fn read(&self, path: &str) -> Value {
+        let response = self.router.dispatch("GET", path, &[]);
+        serde_json::from_slice(&response.into_body_bytes()).unwrap_or(Value::Null)
     }
 
     fn forget(&self, node: u8) -> u16 {
@@ -202,4 +214,28 @@ fn a_composition_that_wires_no_cluster_port_shows_bind_failed() {
     node.join(0);
     assert!(try_wait_until(|| node.state() == "bind_failed", SETTLE), "state {}", node.state());
     assert!(node.status()["own"]["boot_epoch"].is_null(), "{:?}", node.status());
+}
+
+#[test]
+fn two_nodes_learn_each_other_s_records_and_parts_and_a_rename_crosses_over() {
+    let hub = Arc::new(ClusterHub::new());
+    let (first, second) = (node_on(&hub, &FIRST), node_on(&hub, &SECOND));
+    first.join(0);
+    second.join(1);
+    let corridor = first.send("POST", "/api/v1/cluster/channels", r#"{"number":2,"name":"Corridor"}"#);
+    second.send("POST", "/api/v1/cluster/scenes", r#"{"number":17,"name":"Evening"}"#);
+    let named = serde_json::json!({ "number": 2, "birth_mark": corridor["birth_mark"] });
+    let part = serde_json::json!({ "record": named, "send": true, "accept": true }).to_string();
+    second.send("PUT", "/api/v1/cluster/channel-parts/0/3", &part);
+    let learnt = || {
+        let (channel, scene) = (second.read("/api/v1/cluster/channels/2"), first.read("/api/v1/cluster/scenes/17"));
+        let part = first.read("/api/v1/cluster/channels/2")["parts"][0].clone();
+        channel["name"] == "Corridor" && channel["source"] == "cached" && scene["name"] == "Evening"
+            && part["node"] == 1 && part["group"] == 3 && part["link"] == "live"
+    };
+    let (first_info, second_info) = (|| first.read("/api/v1/cluster/info"), || second.read("/api/v1/cluster/info"));
+    assert!(try_wait_until(learnt, SETTLE), "first {:?}, second {:?}", first_info(), second_info());
+    first.send("PATCH", "/api/v1/cluster/channels/2", r#"{"name":"Hall","revision":1}"#);
+    let renamed = || second.read("/api/v1/cluster/channels/2")["name"] == "Hall";
+    assert!(try_wait_until(renamed, SETTLE), "{:?}", second.read("/api/v1/cluster/channels/2"));
 }

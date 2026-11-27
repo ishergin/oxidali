@@ -20,6 +20,7 @@ pub(crate) mod resource_surface;
 pub mod scenes;
 pub mod settings_home_assistant;
 pub mod cluster;
+pub mod cluster_info;
 pub mod cluster_status;
 pub mod cluster_parts;
 pub mod cluster_records;

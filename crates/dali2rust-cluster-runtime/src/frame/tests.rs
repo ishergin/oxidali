@@ -262,15 +262,14 @@ fn unchecked(kind: FrameKind, body: &impl Serialize) -> Vec<u8> {
 fn written_pages(elements: &[InfoElement<'_>]) -> Vec<Vec<u8>> {
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let mut pages = Vec::new();
+    let mut cursor = PageCursor::new(INFO_SET);
     let mut seq = 0;
-    let next_header = || {
+    while !cursor.finished() {
         seq += 1;
-        Header { seq, ..widest_header() }
-    };
-    write_pages(&mut buffer, INFO_SET, next_header, elements.iter().copied(), |page| {
-        pages.push(page.to_vec());
-    })
-    .expect("pages");
+        let header = Header { seq, ..widest_header() };
+        let len = cursor.write_next(&mut buffer, &header, elements.iter().copied()).expect("page");
+        pages.push(buffer[..len.expect("a page while unfinished")].to_vec());
+    }
     pages
 }
 
@@ -486,10 +485,7 @@ fn a_node_s_whole_info_fills_every_page_but_the_last_and_reads_back_in_order() {
 
 #[test]
 fn a_set_with_nothing_in_it_is_one_empty_last_page() {
-    let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
-    let mut pages = Vec::new();
-    write_pages(&mut buffer, INFO_SET, header, [], |page| pages.push(page.to_vec()))
-        .expect("pages");
+    let pages = written_pages(&[]);
     assert_eq!(pages.len(), 1);
     let Frame::ChannelSceneInfo(page) = decode(&pages[0]).expect("decode").frame else {
         panic!("not a page")

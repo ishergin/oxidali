@@ -13,6 +13,7 @@ use dali2rust_platform::liveness::monotonic_ms;
 
 use super::counters::{bump, ClusterCounters};
 use super::shared::{ClusterPresence, Delivery};
+use crate::info::ClusterInfo;
 
 pub(crate) const RECEIVE_SLICE: Duration = Duration::from_millis(250);
 
@@ -46,16 +47,17 @@ enum Next {
 
 struct Intake {
     presence: Arc<ClusterPresence>,
+    info: Arc<ClusterInfo>,
     counters: Arc<ClusterCounters>,
     buffer: PsramBox<ClusterReceiveBuffer>,
 }
 
 pub(crate) fn run_receiver(
     handoff: Receiver<LinkHandoff>,
-    presence: Arc<ClusterPresence>,
+    (presence, info): (Arc<ClusterPresence>, Arc<ClusterInfo>),
     counters: Arc<ClusterCounters>,
 ) {
-    let mut intake = Intake { presence, counters, buffer: receive_buffer() };
+    let mut intake = Intake { presence, info, counters, buffer: receive_buffer() };
     let mut link: Option<HeldLink> = None;
     RECEIVER_STACK.note("start");
     loop {
@@ -93,7 +95,7 @@ impl Intake {
             Ok(Received::Datagram { len, source }) => {
                 bump(&counters.datagrams_received_total);
                 let delivery = Delivery { source, link: held.generation, now_ms: monotonic_ms() };
-                self.presence.take_datagram(self.buffer.get(..len).unwrap_or_default(), delivery, counters);
+                self.presence.take_datagram(self.buffer.get(..len).unwrap_or_default(), delivery, counters, &self.info);
                 RECEIVER_STACK.note("datagram");
             }
             Ok(Received::Oversize { .. }) => {

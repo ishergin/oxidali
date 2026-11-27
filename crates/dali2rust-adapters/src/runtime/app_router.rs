@@ -52,6 +52,8 @@ use dali2rust_api::http::handlers::settings_dali::{
 use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterSettingsPatchHandler};
 use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
 use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
+use dali2rust_api::http::handlers::cluster_info::{ClusterInfoGetHandler, ClusterNodePartsHandler};
 use dali2rust_api::http::handlers::cluster_parts::{ClusterPartDeps, ClusterPartHandler, ClusterPartRoute};
 use dali2rust_api::http::handlers::cluster_records::{
     ClusterRecordDeps, ClusterRecordHandler, ClusterRecordRoute,
@@ -99,6 +101,7 @@ pub(crate) struct ReadModelPorts {
     pub health: Arc<dyn dali2rust_api::http::health_state::HealthHttpState>,
     pub firmware: Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
     pub cluster: Arc<dyn dali2rust_api::http::cluster_status_state::ClusterStatusHttpState>,
+    pub cluster_info: Arc<dyn ClusterInfoHttpState>,
     pub uptime: Uptime,
 }
 
@@ -293,6 +296,7 @@ pub(super) fn build_app_router(
 ) -> Router {
     let (bus, registry, adapter_count) = (&parts.dispatch, &parts.registry_http, parts.adapter_count);
     let redundancy_read = Arc::clone(&parts.read_models.redundancy);
+    let cluster_info = Arc::clone(&parts.read_models.cluster_info);
     let uptime = parts.read_models.uptime.clone();
     let base = AppBuilder::new(Arc::clone(&parts.read_models.health))
         .with_role_port(Arc::clone(&registry.role_port));
@@ -308,6 +312,7 @@ pub(super) fn build_app_router(
     let builder = wire_input_devices(builder, bus, registry, &op_read);
     let builder = wire_rules(builder, bus, &parts.rules);
     let builder = wire_settings_and_lamps(builder, bus, registry, &redundancy_read);
+    let builder = wire_cluster_records(builder, bus, &registry.cluster, &cluster_info);
     let builder = wire_time(builder, parts.wall_clock, parts.persist_timezone);
     wire_web_ui(builder, parts.web_assets).build()
 }
@@ -343,6 +348,7 @@ fn wire_read_models(
 ) -> AppBuilder {
     let builder = wire_firmware(builder, bus, &read_models.firmware);
     let builder = wire_cluster_status(builder, bus, &read_models.cluster);
+    let builder = wire_cluster_info(builder, &read_models.cluster_info);
     builder
         .with_handler(
             RouteKey::Diagnostics,
@@ -903,7 +909,16 @@ fn wire_cluster(builder: AppBuilder, bus: &HttpBusDispatch, registry: &RegistryH
             RouteKey::ClusterSettingsPatch,
             mutation(bus, &ports.state, &ports.apply_watch, ClusterSettingsPatchHandler::new),
         );
-    wire_cluster_parts(wire_cluster_records(builder, bus, ports), bus, ports)
+    wire_cluster_parts(builder, bus, ports)
+}
+
+#[inline(never)]
+fn wire_cluster_info(builder: AppBuilder, info: &Arc<dyn ClusterInfoHttpState>) -> AppBuilder {
+    let parts = |kind| -> Box<dyn ApiHandler> { Box::new(ClusterNodePartsHandler::new(Arc::clone(info), kind)) };
+    builder
+        .with_handler(RouteKey::ClusterInfoGet, read(info, ClusterInfoGetHandler::new))
+        .with_handler(RouteKey::ClusterNodeChannelPartsList, parts(ClusterRecordKind::Channel))
+        .with_handler(RouteKey::ClusterNodeScenePartsList, parts(ClusterRecordKind::Scene))
 }
 
 const CLUSTER_RECORD_ROUTES: [(RouteKey, ClusterRecordKind, ClusterRecordRoute); 10] = [
@@ -919,12 +934,19 @@ const CLUSTER_RECORD_ROUTES: [(RouteKey, ClusterRecordKind, ClusterRecordRoute);
     (RouteKey::ClusterSceneDelete, ClusterRecordKind::Scene, ClusterRecordRoute::Delete),
 ];
 
-fn wire_cluster_records(builder: AppBuilder, bus: &HttpBusDispatch, ports: &ClusterHttpPorts) -> AppBuilder {
+#[inline(never)]
+fn wire_cluster_records(
+    builder: AppBuilder,
+    bus: &HttpBusDispatch,
+    ports: &ClusterHttpPorts,
+    cluster: &Arc<dyn ClusterInfoHttpState>,
+) -> AppBuilder {
     let deps = Arc::new(ClusterRecordDeps {
         publisher: bus.publisher.clone(),
         slots: Arc::clone(&bus.slots),
         correlation: Arc::clone(&bus.correlation),
         state: Arc::clone(&ports.records),
+        cluster: Arc::clone(cluster),
         apply_watch: Arc::clone(&ports.apply_watch),
         bus_id: bus.bus_id,
         timeout_ms: bus.confirmation_timeout_ms,
