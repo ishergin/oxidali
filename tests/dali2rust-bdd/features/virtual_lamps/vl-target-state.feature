@@ -42,3 +42,9 @@ Feature: Virtual lamp target state JSON validation
     Then the response status should be 200
     And the DALI mock transport should have sent forward frame 0x0106
     And the DALI mock transport should have received 1 forward frame
+
+  @id:VL-110 @stage-I6
+  Scenario: A lamp's target state takes no relative verb
+    When I PUT JSON {"dim":"up"} to "/api/v1/adapters/0/virtual-lamps/0/target-state"
+    Then the response status should be 422
+    And the JSON error should be "unsupported_field"
