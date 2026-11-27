@@ -200,3 +200,15 @@ export function useSnapshotFrames<T>(eventType: string) {
 
   return { latest: live ? latest : null, consume }
 }
+
+export function useTick(intervalMs: number, on = true): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return
+    const id = setInterval(() => {
+      if (!document.hidden) setNow(Date.now())
+    }, intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs, on])
+  return now
+}

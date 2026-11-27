@@ -5,6 +5,7 @@ import { ago, hex2, lampState, LEVEL_MAX } from '../format'
 import { useVerifying } from '../observation'
 import { draftAfterPoll, draftAfterRefusal, type SliderDraft } from '../slider-draft'
 import { type CctRange, cctSliderView } from './cct-view'
+import { nextTap } from './confirm-tap'
 import { blurCommits } from './text-commit'
 
 const IME_PROCESS_KEY_CODE = 229
@@ -27,13 +28,10 @@ export function useConfirmTap<K extends string>(): [K | null, (key: K, act: () =
   const tap = (key: K, act: () => void) => {
     if (timer.current != null) clearTimeout(timer.current)
     timer.current = null
-    if (armed !== key) {
-      setArmed(key)
-      timer.current = setTimeout(() => setArmed(null), CONFIRM_MS)
-      return
-    }
-    setArmed(null)
-    act()
+    const next = nextTap(armed, key)
+    setArmed(next.armed)
+    if (next.act) return act()
+    timer.current = setTimeout(() => setArmed(null), CONFIRM_MS)
   }
   return [armed, tap]
 }
@@ -96,6 +94,7 @@ export function EditableText({
   autoFocus,
   disabled,
   inputMode,
+  label,
   onCommit,
   onCancel,
 }: {
@@ -105,6 +104,7 @@ export function EditableText({
   autoFocus?: boolean
   disabled?: boolean
   inputMode?: 'numeric' | 'decimal' | 'text'
+  label?: string
   onCommit: (v: string) => void
   onCancel?: () => void
 }) {
@@ -120,6 +120,7 @@ export function EditableText({
       placeholder={placeholder}
       disabled={disabled}
       inputMode={inputMode}
+      aria-label={label}
       ref={(el) => {
         if (autoFocus && el && !didAutoFocus.current) {
           didAutoFocus.current = true
@@ -464,14 +465,16 @@ export function RgbInputs({
 export function SelChip({
   on,
   onClick,
+  disabled,
   children,
 }: {
   on: boolean
   onClick: () => void
+  disabled?: boolean
   children: string
 }) {
   return (
-    <button type="button" class={on ? 'selchip on' : 'selchip'} onClick={onClick}>
+    <button type="button" class={on ? 'selchip on' : 'selchip'} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   )
@@ -499,13 +502,14 @@ export function FieldRow({
   )
 }
 
-export function Switch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+export function Switch({ on, onToggle, disabled }: { on: boolean; onToggle: () => void; disabled?: boolean }) {
   return (
     <span
       class={`switch${on ? ' on' : ''}`}
       role="switch"
       aria-checked={on}
-      onClick={onToggle}
+      aria-disabled={disabled}
+      onClick={disabled ? undefined : onToggle}
     >
       <span class="knob" />
     </span>

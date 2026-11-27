@@ -63,6 +63,10 @@ import type {
   WriteAttributesRequest,
   RedundancySettings,
   RedundancyState,
+  ClusterInfo,
+  ClusterSettings,
+  ClusterSettingsPatch,
+  ClusterStatus,
   Policies,
   ConfigSliceRow,
 } from './types'
@@ -330,6 +334,12 @@ export const api = {
     patch<RedundancySettings>('/settings/redundancy', body),
   redundancy: () => get<RedundancyState>('/redundancy'),
   redundancySwitchover: () => post<RedundancyState>('/redundancy/switchover', {}),
+
+  clusterSettings: () => get<ClusterSettings>('/cluster'),
+  patchClusterSettings: (body: ClusterSettingsPatch) => patch<ClusterSettings>('/cluster', body),
+  clusterStatus: () => get<ClusterStatus>('/cluster/status'),
+  clusterInfo: () => get<ClusterInfo>('/cluster/info'),
+  forgetClusterNode: (node: number) => del<null>(`/cluster/nodes/${node}`),
 
   policies: () => get<Policies>('/policies'),
   patchPolicies: (body: Partial<Policies>) => patch<Policies>('/policies', body),

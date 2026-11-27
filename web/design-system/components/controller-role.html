@@ -1,4 +1,4 @@
-<!-- @dsCard group="Components" name="Controller role" subtitle="The standby badge in the sidebar brand, and why an active controller deliberately gets none" -->
+<!-- @dsCard group="Components" name="Controller role" subtitle="The standby badge and the cluster node line in the sidebar brand, and why an active controller and a lone node deliberately get none" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -107,6 +107,18 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 .oled-row.inv { background: #cfe3ff; color: #05070a; }
 .oled-role { font-weight: 600; }
 .mono { font-family: var(--mono); font-size: .95em; color: var(--text-muted); }
+
+/* The cluster node line sits under the brand, beside the role: the same
+   "which box am I looking at" answered for a cluster. The board name is
+   what the label on the box says; the node is what the cluster calls it.
+   Colour only for a fault, never the lamp amber. */
+.nodeline { display: flex; flex-direction: column; gap: 1px; margin: -6px 14px 12px; padding: 5px 10px;
+  border-radius: var(--radius-sm); text-decoration: none; color: var(--text-muted); }
+.nodeline:hover { background: var(--raised); }
+.nodeline .board { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.nodeline .node { font-size: 11.5px; }
+.nodeline.warn .node { color: var(--warn); }
+.nodeline.err .node { color: var(--err); }
 </style>
 </head>
 <body>
@@ -163,6 +175,58 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     fact no other surface carries. A standby also inverts the row: every other row of that
     screen reads as a broken controller (no gear driven, no HCL, no poller), and it is
     what makes one letter enough.
+  </p>
+
+  <div class="state-label"><span>Cluster node — under the brand, beside the role</span><span class="ln"></span></div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+    </div>
+    <a class="nodeline" href="#"><span class="board">dali-9b07e4</span><span class="node">Node 1 · 2 of 2 heard</span></a>
+    <div class="navitem active">Dashboard</div>
+  </div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+      <a class="rolechip" href="#">standby</a>
+    </div>
+    <a class="nodeline" href="#"><span class="board">dali-9b07e5</span><span class="node">Node 1 · listening</span></a>
+    <div class="navitem active">Dashboard</div>
+  </div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+    </div>
+    <a class="nodeline warn" href="#"><span class="board">dali-3fa2c1</span><span class="node">Node 0 · 0 of 2 heard</span></a>
+    <div class="navitem active">Dashboard</div>
+  </div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+    </div>
+    <a class="nodeline err" href="#"><span class="board">dali-0a11f3</span><span class="node">Node 1 is taken by dali-9b07e4</span></a>
+    <div class="navitem active">Dashboard</div>
+  </div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+    </div>
+    <a class="nodeline err" href="#"><span class="board">dali-9b07e4</span><span class="node">Pair split · see Redundancy</span></a>
+    <div class="navitem active">Dashboard</div>
+  </div>
+  <p class="note">
+    <b>Cluster off: nothing.</b> A controller that is not in a cluster shows no line at
+    all, for the same reason the active unit gets no badge. In a cluster the line counts
+    the other nodes this one has heard; a silent one turns it to warn. A number taken by
+    another board, a split pair, a port that would not bind are faults and read in err.
+    The line links to Settings → Cluster, or to Redundancy for a split pair. It reads the
+    cluster status, pushed on the <span class="mono">cluster</span> channel of the
+    WebSocket and polled while the socket is down.
   </p>
 
   <p class="note">
