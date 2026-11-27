@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,8 @@ const GROUP_5_DAPC_200: u16 = 0x8AC8;
 const BROADCAST_RECALL_SCENE_6: u16 = 0xFF16;
 const GROUP_5_DAPC_80: u16 = 0x8A50;
 const GROUP_5_DAPC_100: u16 = 0x8A64;
+const GROUP_5_STEP_UP: u16 = 0x8B03;
+const STEPS: usize = 3;
 const QUIET: Duration = Duration::from_secs(1);
 const SLIDER_LEVELS: [u8; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const SCENARIO_MIDNIGHT_UNIX_MS: u64 = 1_782_259_200_000;
@@ -223,4 +226,48 @@ fn with_hcl_forwarded_a_tick_on_one_node_reaches_the_other_as_an_hcl_tick() {
     assert!(try_wait_until(reached, SETTLE), "the second node's wire: {:04X?}", second.sent_frames());
     let sources: Vec<SourceClass> = commands_from(&hub, &FIRST, QUIET).iter().map(|command| command.source).collect();
     assert!(sources.contains(&SourceClass::Hcl), "the tick left as an HCL tick: {sources:?}");
+}
+
+fn step_up_group_5(node: &Node) {
+    node.send("PUT", "/api/v1/adapters/0/groups/5/target-state", r#"{"dim":"step_up"}"#);
+}
+
+#[test]
+fn three_steps_on_one_node_are_three_steps_on_the_other_and_nothing_comes_back() {
+    let (hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    for _ in 0..STEPS {
+        step_up_group_5(&first);
+    }
+    let reached = || second.sent_frames() == [GROUP_5_STEP_UP; STEPS];
+    assert!(try_wait_until(reached, SETTLE), "the second node's wire: {:04X?}", second.sent_frames());
+    let declined = || second.stat("forwards_skipped_cluster_origin_total") == 3;
+    assert!(try_wait_until(declined, SETTLE), "the second node saw its executed facts: {}", second.read("/api/v1/stats")["cluster"]);
+    assert_eq!(commands_from(&hub, &SECOND, QUIET), Vec::<Command>::new(), "the second node sends nothing back");
+    assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP; STEPS], "the first node ran each step once");
+    assert_eq!((first.stat("commands_sent_total"), first.stat("commands_superseded_total")), (3, 0));
+    assert_eq!(second.sent_frames(), [GROUP_5_STEP_UP; STEPS], "no step ran twice on the second node");
+}
+
+fn lose_the_first_command_from(hub: &ClusterHub, board: &Board) {
+    let (source, copies) = (board.address, Arc::new(AtomicUsize::new(0)));
+    hub.lose_sends(move |sent| {
+        let command = matches!(decode(&sent.bytes).map(|decoded| decoded.frame), Ok(Frame::Command(_)));
+        command && sent.source == source && copies.fetch_add(1, Ordering::Relaxed) < 2
+    });
+}
+
+#[test]
+fn a_lost_step_leaves_the_segments_apart_until_the_next_setpoint_brings_them_together() {
+    let (hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    lose_the_first_command_from(&hub, &FIRST);
+    step_up_group_5(&first);
+    assert!(try_wait_until(|| first.stat("commands_sent_total") == 1, SETTLE), "the step left the first node");
+    assert!(!try_wait_until(|| !second.sent_frames().is_empty(), QUIET), "the lost step ran: {:04X?}", second.sent_frames());
+    assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP], "the segments are apart: the first node stepped");
+    first.send("PUT", "/api/v1/adapters/0/groups/5/target-state", r#"{"power":"on","level":200}"#);
+    let together = || second.sent_frames() == [GROUP_5_DAPC_200];
+    assert!(try_wait_until(together, SETTLE), "the second node's wire: {:04X?}", second.sent_frames());
+    assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP, GROUP_5_DAPC_200], "both segments end on the setpoint");
 }

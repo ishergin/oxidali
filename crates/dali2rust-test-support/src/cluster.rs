@@ -22,11 +22,14 @@ struct EndQueue {
     inbox: Sender<HubDatagram>,
 }
 
+type Loss = Box<dyn FnMut(&HubDatagram) -> bool + Send>;
+
 struct HubState {
     ends: Vec<EndQueue>,
     sent: Sender<HubDatagram>,
     next_host: u8,
     refusing: bool,
+    loss: Option<Loss>,
 }
 
 impl HubState {
@@ -51,7 +54,7 @@ impl Default for ClusterHub {
 impl ClusterHub {
     pub fn new() -> Self {
         let (sent_tx, sent_rx) = mpsc::channel();
-        let state = HubState { ends: Vec::new(), sent: sent_tx, next_host: FIRST_HUB_HOST, refusing: false };
+        let state = HubState { ends: Vec::new(), sent: sent_tx, next_host: FIRST_HUB_HOST, refusing: false, loss: None };
         Self { state: Arc::new(Mutex::new(state)), sent: Mutex::new(sent_rx) }
     }
 
@@ -78,6 +81,10 @@ impl ClusterHub {
 
     pub fn refuse_sends(&self, refusing: bool) {
         lock(&self.state).refusing = refusing;
+    }
+
+    pub fn lose_sends(&self, lose: impl FnMut(&HubDatagram) -> bool + Send + 'static) {
+        lock(&self.state).loss = Some(Box::new(lose));
     }
 
     pub fn next_sent(&self, timeout: Duration) -> Option<HubDatagram> {
@@ -107,7 +114,10 @@ impl ClusterLink for HubEnd {
         if state.refusing {
             return Err(ClusterLinkError::Io(ErrorKind::ConnectionRefused));
         }
-        state.deliver(&datagram);
+        let lost = state.loss.as_mut().is_some_and(|lose| lose(&datagram));
+        if !lost {
+            state.deliver(&datagram);
+        }
         let _ = state.sent.send(datagram);
         Ok(())
     }
@@ -185,6 +195,18 @@ mod tests {
             assert_eq!(bytes, PULSE);
         }
         assert_silent(&a);
+    }
+
+    #[test]
+    fn a_lost_datagram_reaches_nobody_and_is_still_seen_as_sent() {
+        let hub = ClusterHub::new();
+        let (a, b) = (hub.attach(), hub.attach());
+        hub.lose_sends(|datagram| datagram.bytes == PULSE);
+        a.send(PULSE).expect("a lost datagram still leaves its sender");
+        a.send(HELLO).expect("send");
+        let (_, bytes) = receive(&b);
+        assert_eq!(bytes, HELLO, "the lost datagram never arrived");
+        assert_eq!(hub.next_sent(PATIENCE).map(|sent| sent.bytes), Some(PULSE.to_vec()));
     }
 
     #[test]
