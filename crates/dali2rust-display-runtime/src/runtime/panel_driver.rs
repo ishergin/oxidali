@@ -6,7 +6,8 @@ use dali2rust_domain::registry::DisplaySettingsView;
 
 use crate::panel::{DisplayPanel, PanelSetup};
 use crate::screen::{
-    holds_the_panel_awake, render_row, ScreenRow, ScreenState, SCREEN_ROWS, SPARK_COLS,
+    holds_the_panel_awake, render_row, shows_a_cluster_fault, ScreenRow, ScreenState, SCREEN_ROWS,
+    SPARK_COLS,
 };
 
 pub const PAGE_DWELL: Duration = Duration::from_secs(5);
@@ -51,6 +52,7 @@ pub(crate) struct PanelDriver {
     settings: Option<DisplaySettingsView>,
     activity_seen: u32,
     save_failures_seen: u32,
+    cluster_fault_seen: bool,
     active_at: Instant,
 }
 
@@ -67,6 +69,7 @@ impl PanelDriver {
             settings: None,
             activity_seen: 0,
             save_failures_seen: 0,
+            cluster_fault_seen: false,
             active_at: now,
         }
     }
@@ -129,9 +132,13 @@ impl PanelDriver {
 
     fn noticed(&mut self, state: &ScreenState, activity: u32) -> bool {
         let save_failures = state.sample.persistence_failed;
-        let news = activity != self.activity_seen || save_failures != self.save_failures_seen;
+        let cluster_fault = shows_a_cluster_fault(state);
+        let news = activity != self.activity_seen
+            || save_failures != self.save_failures_seen
+            || (cluster_fault && !self.cluster_fault_seen);
         self.activity_seen = activity;
         self.save_failures_seen = save_failures;
+        self.cluster_fault_seen = cluster_fault;
         news
     }
 
@@ -234,7 +241,7 @@ fn digest_row(line: &ScreenRow, spark: &[u8; SPARK_COLS]) -> u64 {
 mod tests {
     use super::*;
     use crate::panel::RecordingPanel;
-    use crate::source::DisplaySample;
+    use crate::source::{ClusterGlance, ClusterMode, DisplaySample};
 
     const TIMEOUT_S: u32 = 10;
 
@@ -305,6 +312,46 @@ mod tests {
         assert!(powered(&panel), "the first failed save is news");
         driver.drive(&hardware, &state, 0, at(u64::from(TIMEOUT_S) * 4));
         assert!(!powered(&panel), "the same count again is no news");
+    }
+
+    fn running_node(heard: u8, known: u8) -> ClusterGlance {
+        ClusterGlance { mode: ClusterMode::Running, node: 1, heard, known, pair_split: false }
+    }
+
+    #[test]
+    fn a_new_cluster_fault_wakes_the_panel_and_a_standing_one_does_not() {
+        let (panel, hardware) = recorder();
+        let mut state = quiet_state(saver(TIMEOUT_S));
+        state.sample.cluster = running_node(1, 2);
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        let mut driver = PanelDriver::new(start);
+        driver.drive(&hardware, &state, 0, at(0));
+        driver.drive(&hardware, &state, 0, at(u64::from(TIMEOUT_S)));
+        assert!(!powered(&panel), "a neighbour that is not heard does not hold the panel awake");
+        state.sample.cluster.mode = ClusterMode::Waiting;
+        driver.drive(&hardware, &state, 0, at(u64::from(TIMEOUT_S) * 2));
+        assert!(powered(&panel), "a number taken by another board is news");
+        driver.drive(&hardware, &state, 0, at(u64::from(TIMEOUT_S) * 4));
+        assert!(!powered(&panel), "and a standing fault lets the panel sleep again");
+    }
+
+    #[test]
+    fn a_steady_cluster_line_is_drawn_once_and_a_change_redraws_only_that_row() {
+        let address = DisplaySettingsView::default().i2c_address;
+        let (panel, hardware) = jumpered(address);
+        let mut state = quiet_state(saver(DisplaySettingsView::SCREENSAVER_OFF));
+        state.sample.cluster = running_node(1, 2);
+        let start = Instant::now();
+        let mut driver = PanelDriver::new(start);
+        let draws = |panel: &Arc<Mutex<JumperedPanel>>| panel.lock().expect("panel").count(("draw", address));
+        driver.drive(&hardware, &state, 0, start);
+        assert_eq!(draws(&panel), SCREEN_ROWS);
+        driver.drive(&hardware, &state, 0, start + Duration::from_secs(1));
+        assert_eq!(draws(&panel), SCREEN_ROWS, "nothing new, nothing drawn");
+        state.sample.cluster = running_node(2, 2);
+        driver.drive(&hardware, &state, 0, start + Duration::from_secs(2));
+        assert_eq!(draws(&panel), SCREEN_ROWS + 1, "only the cluster row changed");
     }
 
     #[test]

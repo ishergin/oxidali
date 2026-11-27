@@ -1,6 +1,27 @@
 use dali2rust_domain::registry::DisplaySettingsView;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ClusterMode {
+    #[default]
+    Off,
+    NoAddress,
+    BindFailed,
+    Standby,
+    Listening,
+    Waiting,
+    Running,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClusterGlance {
+    pub mode: ClusterMode,
+    pub node: u8,
+    pub heard: u8,
+    pub known: u8,
+    pub pair_split: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DisplaySample {
     pub adapter_id: u8,
     pub gear_known: u8,
@@ -26,6 +47,7 @@ pub struct DisplaySample {
     pub ws_clients: u32,
     pub persistence_failed: u32,
     pub display: DisplaySettingsView,
+    pub cluster: ClusterGlance,
 }
 
 pub trait DisplaySource: Send + Sync {

@@ -184,9 +184,12 @@ unless named.
 - The display worker's stack is 6 KiB, so it never holds a registry view; a fat view is
   not made safe by being read quickly. It reads a small `Copy` sample: the registry's
   counts, the poller's settings and the adapter gate come from `display_sample_parts`
-  under one read lock, so one screen shows one instant; everything else on the screen is
-  an atomic load, assembled in `dali2rust-adapters/src/runtime/display_source.rs`, so
-  the display crate depends on no other runtime.
+  under one read lock, so one screen shows one instant; the cluster node comes from
+  `ClusterPresenceReadPort` as its mode, number, split-pair fault and heard-of-known
+  counts: an off cluster costs one own-status read, and the heard nodes are read only
+  while the node runs; everything else on the screen is an atomic load, assembled in
+  `dali2rust-adapters/src/runtime/display_source.rs`, so the display crate depends on no
+  other runtime.
 
 ## Cores
 

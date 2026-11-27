@@ -17,7 +17,7 @@ pub(super) fn page_row(state: &ScreenState, row: usize) -> ScreenRow {
     }
 }
 
-fn alarm(text: RowText) -> ScreenRow {
+pub(super) fn alarm(text: RowText) -> ScreenRow {
     ScreenRow { text, invert: true, bar: None, spark: false }
 }
 

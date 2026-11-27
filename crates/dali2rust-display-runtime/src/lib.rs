@@ -11,4 +11,4 @@ pub use screen::{
     render, ScreenLines, ScreenRow, ScreenState, SCREEN_COLS, SCREEN_ROWS, SPARK_COLS, SPARK_H,
 };
 pub use panel::{DisplayPanel, PanelSetup, RecordingPanel};
-pub use source::{DisplaySample, DisplaySource, StaticDisplaySource};
+pub use source::{ClusterGlance, ClusterMode, DisplaySample, DisplaySource, StaticDisplaySource};

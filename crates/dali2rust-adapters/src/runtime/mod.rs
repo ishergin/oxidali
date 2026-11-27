@@ -181,9 +181,10 @@ fn spawn_fleet<T: DaliTransport + Send + 'static>(
     let WorkerChannels { pipeline, services, ws_ev, cluster } =
         booted.bus.channels.take().expect("worker inboxes taken twice");
     let ws_ev = ws_ev.attach(&booted.bus.publisher);
-    let inputs = worker_inputs(rest, booted, hardware_display, pipeline, services);
+    let cluster_seams = ClusterSeams::new(&rest.cluster);
+    let inputs = worker_inputs(rest, booted, hardware_display, (pipeline, services), &cluster_seams);
     let (mut workers, counter_handles) = spawn_bus_workers(transport, inputs);
-    let (cluster_seams, cluster_threads) = spawn_cluster_slice(booted, rest, cluster);
+    let cluster_threads = spawn_cluster_slice(booted, rest, &cluster_seams, cluster);
     registry_init::log_internal_free("after workers");
     let read_models = boot_read_models(
         version,
@@ -201,9 +202,9 @@ fn spawn_fleet<T: DaliTransport + Send + 'static>(
 fn spawn_cluster_slice(
     booted: &BootedStack,
     rest: &PostBootOptions,
+    seams: &ClusterSeams,
     inboxes: ClusterInboxes,
-) -> (ClusterSeams, ClusterWorkerThreads) {
-    let seams = ClusterSeams::new(&rest.cluster);
+) -> ClusterWorkerThreads {
     let store = &booted.diagnostics_store;
     let ports = ClusterWorkerPorts {
         publisher: booted.bus.publisher.clone(),
@@ -220,7 +221,7 @@ fn spawn_cluster_slice(
         adapters: Arc::clone(store) as _,
         info: Arc::clone(&seams.info),
     };
-    (seams, spawn_cluster_worker(inboxes, ports))
+    spawn_cluster_worker(inboxes, ports)
 }
 
 fn boot_read_models(
@@ -267,8 +268,8 @@ fn worker_inputs(
     rest: &PostBootOptions,
     booted: &BootedStack,
     hardware_display: HardwareDisplay,
-    pipeline_channels: workers::PipelineChannels,
-    service_channels: workers::ServiceChannels,
+    (pipeline_channels, service_channels): (workers::PipelineChannels, workers::ServiceChannels),
+    cluster: &ClusterSeams,
 ) -> WorkerSpawnInputs {
     WorkerSpawnInputs {
         runtime_config: rest.runtime_config,
@@ -289,6 +290,7 @@ fn worker_inputs(
         ota: ota_worker_deps(rest, booted),
         persisted: Arc::clone(&booted.persisted),
         bus_unit_identity: booted.bus_unit_identity,
+        cluster_presence: Arc::clone(&cluster.presence) as _,
     }
 }
 

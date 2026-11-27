@@ -42,7 +42,7 @@ fn panel_powered(world: &mut DaliWorld, state: String) {
     assert!(reached, "panel never powered {state}: {}", panel_state(world));
 }
 
-// SET-DISP-009, SET-DISP-011, SET-DISP-012, SET-DISP-013, SET-DALI-024
+// SET-DISP-009, SET-DISP-011, SET-DISP-012, SET-DISP-013, SET-DALI-024, CLU-027, CLU-121
 #[then(expr = "the display panel should eventually show a row starting with {string}")]
 fn panel_shows(world: &mut DaliWorld, prefix: String) {
     let reached = panel_reaches(world, |panel| panel.shows_row_starting_with(&prefix));
@@ -59,7 +59,7 @@ fn panel_shows_within(world: &mut DaliWorld, prefix: String, millis: u64) {
     assert!(reached, "panel did not show {prefix:?} in {millis} ms: {}", panel_state(world));
 }
 
-// SET-DALI-023
+// SET-DALI-023, CLU-120
 #[then(expr = "the display panel should eventually show a row ending with {string}")]
 fn panel_shows_tail(world: &mut DaliWorld, suffix: String) {
     let reached = panel_reaches(world, |panel| panel.shows_row_ending_with(&suffix));
