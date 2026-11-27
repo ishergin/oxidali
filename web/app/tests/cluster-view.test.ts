@@ -120,6 +120,41 @@ test('a refusal that names no field stays off the fields', () => {
   assert.equal(refusalOf(409, 'conflict', 'something_new').text, 'Refused: 409 conflict — something_new')
 })
 
+test('a refusal of a record or a part lands at its field, in words', () => {
+  const cases: [string, string, RegExp][] = [
+    ['cluster_stale_revision', 'record_name', /Renamed elsewhere/],
+    ['cluster_record_not_live', 'part', /deleted or created again/],
+    ['cluster_record_linked', 'part', /already has a part of this node/],
+    ['cluster_number_of_another_node', 'record_number', /block of another node/],
+    ['cluster_number_taken', 'record_number', /taken/],
+  ]
+  for (const [message, field, words] of cases) {
+    const r = refusalOf(409, 'conflict', message, 'records')
+    assert.equal(r.field, field, message)
+    assert.match(r.text, words, message)
+  }
+})
+
+test('a refused command names its cause in words and no field', () => {
+  const off = refusalOf(409, 'conflict', 'cluster_off', 'commands')
+  assert.equal(off.field, null)
+  assert.match(off.text, /cluster is off/)
+  assert.match(refusalOf(409, 'conflict', 'cluster_not_running', 'commands').text, /does not hold its number/)
+  assert.match(refusalOf(409, 'conflict', 'cluster_no_address', 'commands').text, /no network address/)
+})
+
+test('the standby and out-of-range texts follow the page that was refused', () => {
+  assert.match(refusalOf(409, 'controller_standby', '', 'settings').text, /change the settings on the active board/)
+  assert.match(refusalOf(409, 'controller_standby', '', 'records').text, /edit channels and scenes on the active board/)
+  assert.match(refusalOf(409, 'controller_standby', '', 'commands').text, /switch channels and recall scenes/)
+  assert.match(refusalOf(422, 'invalid_value', '', 'records').text, /number 0–127/)
+})
+
+test('a record no node knows any more is said in words outside the settings', () => {
+  assert.match(refusalOf(404, 'not_found', 'not_found', 'records').text, /No node knows this record/)
+  assert.equal(refusalOf(404, 'not_found', 'not_found').text, 'Refused: 404 not_found')
+})
+
 test('Forget acts only on the second press of the same node, and a press elsewhere re-arms', () => {
   const first = nextTap<string>(null, '2')
   assert.deepEqual(first, { armed: '2', act: false })

@@ -63,7 +63,15 @@ import type {
   WriteAttributesRequest,
   RedundancySettings,
   RedundancyState,
+  ClusterCommandSent,
   ClusterInfo,
+  ClusterNodePart,
+  ClusterPart,
+  ClusterPartWrite,
+  ClusterRecord,
+  ClusterRecordCreate,
+  ClusterRecordDetail,
+  ClusterRecordKind,
   ClusterSettings,
   ClusterSettingsPatch,
   ClusterStatus,
@@ -128,6 +136,14 @@ const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body 
 const put = <T>(path: string, body: unknown) => request<T>('PUT', path, body)
 const patch = <T>(path: string, body: unknown) => request<T>('PATCH', path, body)
 const del = <T>(path: string) => request<T>('DELETE', path)
+const delWith = <T>(path: string, body: unknown) => request<T>('DELETE', path, body)
+
+const RECORDS: Record<ClusterRecordKind, 'channels' | 'scenes'> = { channel: 'channels', scene: 'scenes' }
+const PARTS: Record<ClusterRecordKind, 'channel_parts' | 'scene_parts'> = {
+  channel: 'channel_parts',
+  scene: 'scene_parts',
+}
+const partsPath = (kind: ClusterRecordKind) => (kind === 'channel' ? 'channel-parts' : 'scene-parts')
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -340,6 +356,25 @@ export const api = {
   clusterStatus: () => get<ClusterStatus>('/cluster/status'),
   clusterInfo: () => get<ClusterInfo>('/cluster/info'),
   forgetClusterNode: (node: number) => del<null>(`/cluster/nodes/${node}`),
+  clusterRecords: async (kind: ClusterRecordKind) =>
+    (await get<Record<string, ClusterRecord[]>>(`/cluster/${RECORDS[kind]}`))[RECORDS[kind]],
+  clusterRecord: (kind: ClusterRecordKind, number: number) =>
+    get<ClusterRecordDetail>(`/cluster/${RECORDS[kind]}/${number}`),
+  createClusterRecord: (kind: ClusterRecordKind, body: ClusterRecordCreate) =>
+    post<ClusterRecord>(`/cluster/${RECORDS[kind]}`, body),
+  renameClusterRecord: (kind: ClusterRecordKind, number: number, name: string, revision: number) =>
+    patch<ClusterRecord>(`/cluster/${RECORDS[kind]}/${number}`, { name, revision }),
+  deleteClusterRecord: (kind: ClusterRecordKind, number: number, revision: number) =>
+    delWith<null>(`/cluster/${RECORDS[kind]}/${number}`, { revision }),
+  clusterNodeParts: async (kind: ClusterRecordKind, node: number) =>
+    (await get<Record<string, ClusterNodePart[]>>(`/cluster/nodes/${node}/${partsPath(kind)}`))[PARTS[kind]],
+  putClusterPart: (kind: ClusterRecordKind, adapter: number, local: number, body: ClusterPartWrite) =>
+    put<ClusterPart>(`/cluster/${partsPath(kind)}/${adapter}/${local}`, body),
+  deleteClusterPart: (kind: ClusterRecordKind, adapter: number, local: number) =>
+    del<null>(`/cluster/${partsPath(kind)}/${adapter}/${local}`),
+  clusterChannelTarget: (number: number, body: TargetStateRequest) =>
+    put<ClusterCommandSent>(`/cluster/channels/${number}/target-state`, body),
+  recallClusterScene: (number: number) => post<ClusterCommandSent>(`/cluster/scenes/${number}/recall`, {}),
 
   policies: () => get<Policies>('/policies'),
   patchPolicies: (body: Partial<Policies>) => patch<Policies>('/policies', body),

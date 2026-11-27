@@ -539,14 +539,16 @@ export function MatrixCell({
   desired,
   applied,
   disabled,
+  locked,
   onToggle,
 }: {
   desired: boolean
   applied: boolean
   disabled?: boolean
+  locked?: boolean
   onToggle?: () => void
 }) {
-  if (disabled) return <span class="cell dis" />
+  if (disabled && !locked) return <span class="cell dis" />
   let cls = ''
   let mark: ComponentChildren = null
   if (desired && applied) {
@@ -559,6 +561,7 @@ export function MatrixCell({
     cls = 'rm'
     mark = <span class="x">✓</span>
   }
+  if (locked) return <span class={`cell lock ${cls}`}>{mark}</span>
   return (
     <span class={`cell ${cls}`} onClick={onToggle}>
       {mark}

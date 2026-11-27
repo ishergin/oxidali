@@ -6,11 +6,11 @@ import { type StatusRead, useClusterInfo, useClusterStatus } from '../cluster-fe
 import { Card, Chip, EditableText, FieldRow, SelChip, Switch, useConfirmTap } from '../components/ui'
 import { useSettingsDraft, useTick } from '../hooks'
 import { errorMessage, notify } from '../toast'
+import { Select, StandbyBanner, refusalFrom, usePeerUrl } from './cluster-shared'
 import {
   type ClusterField,
   type Draft,
   NO_DRAFT,
-  type Option,
   type Refusal,
   type Tone,
   type Verdict,
@@ -30,7 +30,6 @@ import {
   ownVerdict,
   parsePort,
   pinReason,
-  refusalOf,
   settingsShown,
   showsHomeAssistant,
   unsavedLine,
@@ -46,52 +45,12 @@ function VerdictChip({ v }: { v: Verdict }) {
   return <Chip cls={CHIP[v.tone]}>{v.text}</Chip>
 }
 
-function refusalFrom(e: unknown): Refusal {
-  if (e instanceof ApiError) return refusalOf(e.status, e.code, e.message)
-  return { field: null, text: errorMessage(e) }
-}
-
 function FieldError({ refusal, field }: { refusal: Refusal | null; field: ClusterField }) {
   if (refusal?.field !== field) return null
   return (
     <span class="fielderr">
       {refusal.text}
     </span>
-  )
-}
-
-function Select({
-  value,
-  options,
-  disabled,
-  bad,
-  label,
-  onPick,
-}: {
-  value: number | null
-  options: Option[]
-  disabled: boolean
-  bad: boolean
-  label: string
-  onPick: (value: number | null) => void
-}) {
-  return (
-    <select
-      class={bad ? 'sel err' : 'sel'}
-      aria-label={label}
-      disabled={disabled}
-      value={value === null ? '' : String(value)}
-      onChange={(e) => {
-        const raw = e.currentTarget.value
-        onPick(raw === '' ? null : Number(raw))
-      }}
-    >
-      {options.map((o) => (
-        <option key={o.label} value={o.value === null ? '' : String(o.value)}>
-          {o.label}
-        </option>
-      ))}
-    </select>
   )
 }
 
@@ -486,35 +445,6 @@ function ApplyBar({
   )
 }
 
-function StandbyBanner({ peerUrl }: { peerUrl: string | null }) {
-  return (
-    <p class="req">
-      This board is the standby of its pair: the settings come from the active board and are
-      replaced every 30 s.{' '}
-      {peerUrl ? (
-        <a href={peerUrl} target="_blank" rel="noopener noreferrer">
-          Open the active board
-        </a>
-      ) : (
-        'Open the active board'
-      )}{' '}
-      to change them.
-    </p>
-  )
-}
-
-function usePeerUrl(readOnly: boolean): string | null {
-  const [peer, setPeer] = useState<string | null>(null)
-  useEffect(() => {
-    if (!readOnly) return
-    api
-      .redundancySettings()
-      .then((r) => setPeer(r.peer_url || null))
-      .catch(() => setPeer(null))
-  }, [readOnly])
-  return peer
-}
-
 interface ClusterDraft {
   draft: Draft
   edit: Edit
@@ -560,6 +490,9 @@ function ClusterHead() {
   )
 }
 
+const STANDBY_TEXT =
+  'This board is the standby of its pair: the settings come from the active board and are replaced every 30 s.'
+
 export function SettingsCluster() {
   const { data, busy, save } = useSettingsDraft(() => api.clusterSettings())
   const { read, reload } = useClusterStatus()
@@ -576,7 +509,7 @@ export function SettingsCluster() {
   return (
     <div>
       <ClusterHead />
-      {readOnly && <StandbyBanner peerUrl={peerUrl} />}
+      {readOnly && <StandbyBanner peerUrl={peerUrl}>{STANDBY_TEXT}</StandbyBanner>}
       {refusal && (
         <p class="errbar" role="alert">
           Not applied: {refusal.text}

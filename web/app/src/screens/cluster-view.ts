@@ -44,8 +44,12 @@ export function unsavedLine(patch: Partial<ClusterSettings>): string {
   return `${names.length} ${noun} · ${names.join(', ')}`
 }
 
+export type RefusalField = ClusterField | 'record_name' | 'record_number' | 'part'
+
+export type RefusalScope = 'settings' | 'records' | 'commands'
+
 export interface Refusal {
-  field: ClusterField | null
+  field: RefusalField | null
   text: string
 }
 
@@ -66,16 +70,67 @@ const CONFLICTS: Record<string, Refusal> = {
     field: 'node_number',
     text: 'The node number is fixed while this node is the home of channels or scenes.',
   },
+  cluster_number_of_another_node: {
+    field: 'record_number',
+    text: 'That number is in the block of another node: create it on that node.',
+  },
+  cluster_number_taken: { field: 'record_number', text: 'That number is taken.' },
+  cluster_block_full: { field: 'record_number', text: 'All 16 numbers of this node’s block are taken.' },
+  cluster_nonce_taken: {
+    field: 'record_number',
+    text: 'The new record’s random mark met a live one twice; create it again.',
+  },
+  cluster_stale_revision: {
+    field: 'record_name',
+    text: 'Renamed elsewhere since this page read it; the current name is shown.',
+  },
+  cluster_record_not_live: {
+    field: 'part',
+    text: 'The record was deleted or created again since this page read it; nothing was linked.',
+  },
+  cluster_record_linked: {
+    field: 'part',
+    text: 'The record already has a part of this node on this adapter; the row reads again.',
+  },
+  cluster_off: { field: null, text: 'The cluster is off. Turn it on in Cluster settings.' },
+  cluster_no_address: { field: null, text: 'This node has no network address yet, so nothing can be sent.' },
+  cluster_not_running: {
+    field: null,
+    text: 'This node does not hold its number yet — its port is not bound, or it is still listening or waiting.',
+  },
+  cluster_busy: { field: null, text: 'Too many commands are waiting to go out; try again in a moment.' },
 }
 
-export function refusalOf(status: number | undefined, code: string, message: string): Refusal {
+const STANDBY: Record<RefusalScope, string> = {
+  settings: 'This board is the standby: change the settings on the active board.',
+  records: 'This board is the standby: edit channels and scenes on the active board.',
+  commands: 'This board is the standby: switch channels and recall scenes on the active board.',
+}
+
+const OUT_OF_RANGE: Record<RefusalScope, string> = {
+  settings: 'A value is out of range: node 0–7, port 1–65535, name up to 64 bytes.',
+  records: 'A value is out of range: number 0–127, name up to 64 bytes.',
+  commands: 'A value is out of range: level 0–254.',
+}
+
+const BY_CODE: Record<string, Refusal> = {
+  superseded: { field: null, text: 'Replaced by a later command to the same target.' },
+  execution_failed: { field: null, text: 'The frame did not leave this node: the network send failed.' },
+}
+
+const GONE = 'No node knows this record any more; the list reads again.'
+
+export function refusalOf(
+  status: number | undefined,
+  code: string,
+  message: string,
+  scope: RefusalScope = 'settings',
+): Refusal {
   if (status === 409 && code === 'conflict' && message in CONFLICTS) return CONFLICTS[message]
-  if (code === 'controller_standby') {
-    return { field: null, text: 'This board is the standby: change the settings on the active board.' }
-  }
-  if (status === 422 && code === 'invalid_value') {
-    return { field: null, text: 'A value is out of range: node 0–7, port 1–65535, name up to 64 bytes.' }
-  }
+  if (code === 'controller_standby') return { field: null, text: STANDBY[scope] }
+  if (status === 422 && code === 'invalid_value') return { field: null, text: OUT_OF_RANGE[scope] }
+  if (code in BY_CODE) return BY_CODE[code]
+  if (status === 404 && code === 'not_found' && scope !== 'settings') return { field: null, text: GONE }
   const detail = message && message !== code ? ` — ${message}` : ''
   const head = status === undefined ? code : `${status} ${code}`
   return { field: null, text: `Refused: ${head}${detail}` }

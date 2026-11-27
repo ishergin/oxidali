@@ -25,6 +25,7 @@ import { SettingsDali } from './screens/settings-dali'
 import { SettingsTime } from './screens/settings-time'
 import { SettingsRedundancy } from './screens/settings-redundancy'
 import { SettingsCluster } from './screens/settings-cluster'
+import { ClusterControl } from './screens/cluster-control'
 import { useClusterStatus } from './cluster-feed'
 import { nodeLine, toneClass } from './screens/cluster-view'
 import { SettingsPoller } from './screens/settings-poller'
@@ -54,6 +55,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: '#/scenes', icon: '✦', label: 'Scenes', match: ['scenes', 'scene'] },
       { href: '#/hcl', icon: '◐', label: 'HCL schedules', match: ['hcl', 'hcl-schedule'] },
       { href: '#/rules', icon: '∴', label: 'Rules', match: ['rules'] },
+      { href: '#/cluster', icon: '⁂', label: 'Cluster', match: ['cluster'] },
     ],
   },
   {
@@ -197,6 +199,8 @@ function Screen() {
       return <HclScheduleEditor key={r.params.id} id={r.params.id} />
     case 'rules':
       return <RulesScreen />
+    case 'cluster':
+      return <ClusterControl tab={r.params.tab} open={r.params.open} />
     case 'operations':
       return <Operations />
     case 'operation':

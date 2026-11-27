@@ -15,6 +15,7 @@ ClusterNodePartDto ClusterNodePart
 ClusterOwnDto ClusterOwn
 ClusterPartDto ClusterPart
 ClusterPartRecordDto ClusterPartRecord
+ClusterRecordDto ClusterRecord
 ClusterSettingsDto ClusterSettings
 ClusterWireOwnerDto ClusterWireOwner
 ColorTemperatureRangeDto ColorTemperatureRange

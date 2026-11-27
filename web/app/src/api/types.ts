@@ -456,6 +456,37 @@ export interface ClusterInfo {
   nodes: ClusterInfoNode[]
 }
 
+export type ClusterRecordKind = 'channel' | 'scene'
+
+export interface ClusterRecord {
+  number: number
+  home_node: number
+  birth_mark: ClusterBirthMark
+  name: string
+  revision: number
+  source: ClusterInfoSource
+}
+
+export interface ClusterRecordDetail extends ClusterRecord {
+  parts: ClusterNodePart[]
+}
+
+export interface ClusterRecordCreate {
+  number?: number
+  name?: string
+}
+
+export interface ClusterPartWrite {
+  record: ClusterPartRecord
+  send: boolean
+  accept: boolean
+}
+
+export interface ClusterCommandSent {
+  correlation_id: number
+  status: string
+}
+
 export interface RedundancyTransition {
   now_active: boolean
   reason: string

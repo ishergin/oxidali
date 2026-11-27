@@ -44,7 +44,7 @@ export function useClusterStatus(intervalMs: number = DEFAULT_POLL_MS): {
   return { read: clusterStatus.value, reload }
 }
 
-function statusOnly(event: WsEvent): boolean {
+export function statusOnly(event: WsEvent): boolean {
   return event.type === 'ClusterStatus'
 }
 
