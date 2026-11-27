@@ -4,7 +4,7 @@ use dali2rust_bus::{BusFrame, BusSubscriberRx};
 use dali2rust_domain::registry::ClusterSettingsReadPort;
 
 use super::counters::{bump, ClusterCounters};
-use super::execute::{ClusterExecution, Gate};
+use super::execute::{ClusterExecution, Gate, Stamp};
 use super::shared::{CommandAdmission, HeardCommand};
 
 pub(crate) struct CommandIntake {
@@ -33,7 +33,7 @@ impl CommandIntake {
                 return bump(&counters.commands_dropped_not_wire_owner_total);
             }
         }
-        self.execution.execute(&command.action, command.hold_hcl, Gate::Accepting).count_drop(counters);
+        self.execution.execute(&command.action, Stamp::of(command), Gate::Accepting).count_drop(counters);
     }
 
     pub(crate) fn drain_confirmations(&self) {

@@ -39,6 +39,7 @@ pub enum Origin {
     #[default]
     Internal = 8,
     Rules = 9,
+    ClusterHcl = 10,
 }
 
 impl Origin {
@@ -373,6 +374,7 @@ pub enum RuntimeSource {
     AdapterProxy = 6,
     Rules = 7,
     Readback = 8,
+    ClusterHcl = 9,
 }
 
 impl RuntimeSource {
@@ -386,12 +388,27 @@ impl RuntimeSource {
             Origin::Sniffer => Some(Self::Sniffer),
             Origin::Poller => Some(Self::Poller),
             Origin::Rules => Some(Self::Rules),
+            Origin::ClusterHcl => Some(Self::ClusterHcl),
             Origin::Registry | Origin::Internal => None,
         }
     }
 
     pub const fn reads_the_gear(self) -> bool {
         matches!(self, Self::Poller | Self::Readback)
+    }
+
+    pub const fn is_hcl(self) -> bool {
+        match self {
+            Self::Hcl | Self::ClusterHcl => true,
+            Self::Poller
+            | Self::Sniffer
+            | Self::Api
+            | Self::Mqtt
+            | Self::Cluster
+            | Self::AdapterProxy
+            | Self::Rules
+            | Self::Readback => false,
+        }
     }
 
     pub const fn rest_name(self) -> &'static str {
@@ -405,6 +422,7 @@ impl RuntimeSource {
             Self::AdapterProxy => "adapter_proxy",
             Self::Rules => "rules",
             Self::Readback => "api",
+            Self::ClusterHcl => "cluster_hcl",
         }
     }
 }

@@ -457,6 +457,7 @@ fn source_label(source: RuntimeSource) -> &'static str {
         RuntimeSource::AdapterProxy => "PRX",
         RuntimeSource::Rules => "RUL",
         RuntimeSource::Readback => "RD",
+        RuntimeSource::ClusterHcl => "CLH",
     }
 }
 

@@ -1716,6 +1716,10 @@ impl DaliSetTargetStateCommand {
             ..Self::for_short(registry_adapter_id, 0, setpoint)
         }
     }
+
+    pub fn broadcast(registry_adapter_id: u8, setpoint: &LightSetpoint) -> Self {
+        Self { scope: DaliTargetScope::Broadcast, ..Self::for_short(registry_adapter_id, 0, setpoint) }
+    }
 }
 
 impl RegistryRuntimeUpdateCommand {

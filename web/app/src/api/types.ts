@@ -1332,6 +1332,10 @@ export type StatsCluster = {
   commands_dropped_accept_off_total: number
   commands_dropped_not_wire_owner_total: number
   commands_dropped_executed_on_wire_total: number
+  commands_forwarded_total: number
+  forwards_skipped_cluster_origin_total: number
+  forwards_skipped_source_off_total: number
+  forwards_skipped_not_sent_total: number
 }
 
 export type InputDeviceSummary = {

@@ -35,7 +35,7 @@ PDFs and the DiiA(SW)098bp digest are kept locally, outside the repository.
 - The class follows purpose: switching, dimming, identification, feedback drive, the
   Part 303 occupancy-sensor instructions and every commissioning kind (discovery, addressing, replacement, handover, the Part 103 scan and
   commissioning) open at priority 2, which §9.13.1 also allows for commissioning;
-  configuration writes and group and scene programming at 3; an HCL setpoint at 4;
+  configuration writes and group and scene programming at 3; an HCL tick, a neighbour's too, at 4;
   attribute and memory-bank reads and both probes at 5 (the arbitration probe by DiiA 351
   §7).
 - `WirePriority` says who is waiting: `Interactive` (a caller holds the HTTP task),

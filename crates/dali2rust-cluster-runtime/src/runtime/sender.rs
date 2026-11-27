@@ -24,7 +24,7 @@ use dali2rust_contracts::msg::{
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
     ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort, ClusterSettingsView, ClusterWire,
-    DaliSettingsReadPort, HomeAssistantSettingsReadPort,
+    AdapterReadPort, DaliSettingsReadPort, HomeAssistantSettingsReadPort,
 };
 use dali2rust_platform::cluster_link::{ClusterLink, ClusterLinkBinder, MAX_CLUSTER_DATAGRAM_BYTES};
 use dali2rust_platform::liveness::monotonic_ms;
@@ -36,13 +36,14 @@ use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 
 use super::announce::{reached, Announcer, OwnInfo, Turn};
 use super::counters::{bump, ClusterCounters};
-use super::execute::ClusterExecution;
+use super::execute::{ClusterExecution, ExecutionReads};
 use super::incoming::CommandIntake;
 use super::outgoing::{placed_outgoing, Outgoing};
 use super::receiver::{run_receiver, LinkHandoff};
 use super::shared::{ClusterPresence, Forgotten, Settled};
 
 mod command;
+mod forward;
 
 pub use command::{
     CLUSTER_BUSY, CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING, CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED,
@@ -51,8 +52,14 @@ pub use command::{
 
 pub const NODE_HEARD: &str = "node_heard";
 
-pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] =
-    &["ClusterSettingsChangedEvent", "IpAddressAssignedEvent", "DaliSettingsChangedEvent"];
+pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] = &[
+    "ClusterSettingsChangedEvent",
+    "IpAddressAssignedEvent",
+    "DaliSettingsChangedEvent",
+    "DaliTargetStateAppliedEvent",
+    "DaliLevelTransitionAppliedEvent",
+    "DaliSceneRecalledEvent",
+];
 
 
 static SENDER_STACK: StackLowWater = StackLowWater::new("cluster_tx", std_thread_stack::EVENT_WORKER_STACK);
@@ -69,6 +76,7 @@ pub struct ClusterWorkerPorts {
     pub counters: Arc<ClusterCounters>,
     pub records: Arc<dyn ClusterRecordReadPort>,
     pub parts: Arc<dyn ClusterPartReadPort>,
+    pub adapters: Arc<dyn AdapterReadPort>,
     pub info: Arc<ClusterInfo>,
 }
 
@@ -86,8 +94,7 @@ pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) 
     let (handoff_tx, handoff_rx) = mpsc::channel();
     let (presence, counters) = (Arc::clone(&ports.presence), Arc::clone(&ports.counters));
     let info = Arc::clone(&ports.info);
-    let bus = (ports.publisher.clone(), ports.bus_id);
-    let execution = Arc::new(ClusterExecution::new(bus, Arc::clone(&ports.parts), Arc::clone(&ports.counters)));
+    let execution = execution(&ports);
     let settings = Arc::clone(&ports.settings);
     let intake = CommandIntake { execution: Arc::clone(&execution), settings, confirmations: inboxes.confirmations };
     let receiver = spawn_named_stack_in(
@@ -104,6 +111,16 @@ pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) 
         move || run_sender(inbox, &ports, (handoff_tx, execution)),
     );
     ClusterWorkerThreads { sender, receiver }
+}
+
+fn execution(ports: &ClusterWorkerPorts) -> Arc<ClusterExecution> {
+    let reads = ExecutionReads {
+        parts: Arc::clone(&ports.parts),
+        settings: Arc::clone(&ports.settings),
+        adapters: Arc::clone(&ports.adapters),
+    };
+    let bus = (ports.publisher.clone(), ports.bus_id);
+    Arc::new(ClusterExecution::new(bus, reads, Arc::clone(&ports.counters)))
 }
 
 dali2rust_contracts::dispatch_bus_commands! {
@@ -421,9 +438,10 @@ impl<'a> NodeSender<'a> {
     fn take(&mut self, frame: &BusFrame) {
         match frame {
             BusFrame::Command(command) => dispatch_cluster_command(&command.payload, self, command.meta.correlation_id),
-            BusFrame::Event(event) if matches!(event.payload, BusEventPayload::ClusterSettingsChangedEvent(_)) => {
-                self.announcer.note_settings_changed();
-            }
+            BusFrame::Event(event) => match &event.payload {
+                BusEventPayload::ClusterSettingsChangedEvent(_) => self.announcer.note_settings_changed(),
+                fact => self.forward(fact),
+            },
             _ => {}
         }
     }

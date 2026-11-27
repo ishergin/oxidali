@@ -1,4 +1,5 @@
-use dali2rust_contracts::msg::{ClusterCommandCommand, LightSetpoint, PowerState};
+use dali2rust_contracts::msg::{ClusterCommandCommand, ColorMode, ColorValue, LevelTransition, LightSetpoint, PowerState};
+use dali2rust_contracts::CORRELATION_NONE;
 
 use super::*;
 use crate::frame::{BirthMark, LightVerb, RecordRef, SourceClass};
@@ -17,7 +18,7 @@ fn setpoint(number: u8, level: u8) -> ClusterCommandCommand {
 }
 
 fn queued(correlation_id: u64, request: ClusterCommandCommand) -> Queued {
-    Queued { correlation_id, request }
+    Queued { correlation_id, request, forwarded: false }
 }
 
 fn repeat_of(request: &ClusterCommandCommand, seq: u32) -> Repeat {
@@ -160,4 +161,81 @@ fn the_placed_table_starts_empty() {
     let placed = placed_outgoing();
     assert_eq!(placed.deadline(), None);
     assert!(placed.slots.iter().all(Option::is_none));
+}
+
+#[test]
+fn a_forwarded_setpoint_and_a_command_given_here_keep_their_own_flag_through_the_wait() {
+    let mut outgoing = Outgoing::new();
+    send(&mut outgoing, 1, setpoint(3, 100), START_MS);
+    let inside = START_MS + COPY_GAP_MS;
+    let forwarded = Queued { correlation_id: CORRELATION_NONE, request: setpoint(3, 150), forwarded: true };
+    assert_eq!(outgoing.admit(forwarded.clone(), inside), Admission::Later { superseded: None });
+    let given_here = queued(4, setpoint(3, 200));
+    assert_eq!(outgoing.admit(given_here.clone(), inside + 1), Admission::Later { superseded: Some(forwarded) });
+    assert!(matches!(outgoing.take_due(inside), Some(Due::Repeat(_))));
+    let last = outgoing.take_due(START_MS + TARGET_SPACING_MS);
+    assert_eq!(last, Some(Due::Waiting(given_here)), "the command given here still runs this node's own part");
+}
+
+fn on_channel(number: u8, setpoint: LightSetpoint, source: SourceClass) -> ClusterCommandCommand {
+    let action = Action::Light { target: Target::Channel(channel(number)), verb: LightVerb::Setpoint(setpoint) };
+    ClusterCommandCommand { action, source, hold_hcl: true }
+}
+
+fn warm_white() -> Option<ColorValue> {
+    Some(ColorValue { mode: ColorMode::Cct, color_temperature_kelvin: 2700, ..ColorValue::default() })
+}
+
+fn forwarded(request: ClusterCommandCommand) -> Queued {
+    Queued { correlation_id: CORRELATION_NONE, request, forwarded: true }
+}
+
+fn waiting_after(earlier: Queued, later: Queued) -> Option<Due> {
+    let mut outgoing = Outgoing::new();
+    send(&mut outgoing, 1, setpoint(3, 100), START_MS);
+    assert_eq!(outgoing.admit(earlier, START_MS + 1), Admission::Later { superseded: None });
+    assert!(matches!(outgoing.admit(later, START_MS + 2), Admission::Later { superseded: Some(_) }));
+    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
+    outgoing.take_due(START_MS + TARGET_SPACING_MS)
+}
+
+#[test]
+fn a_forwarded_setpoint_inside_the_spacing_keeps_the_fields_of_the_waiting_one_of_its_class() {
+    let colour_only = LightSetpoint { power: PowerState::Unknown, level: None, color: warm_white() };
+    let on = LightSetpoint { power: PowerState::On, level: None, color: None };
+    let earlier = forwarded(on_channel(3, colour_only, SourceClass::Hcl));
+    let due = waiting_after(earlier, forwarded(on_channel(3, on, SourceClass::Hcl)));
+    let both = LightSetpoint { power: PowerState::On, level: None, color: warm_white() };
+    let folded = forwarded(on_channel(3, both, SourceClass::Hcl));
+    assert_eq!(due, Some(Due::Waiting(folded)), "the colour of the waiting tick is not lost");
+}
+
+#[test]
+fn a_setpoint_of_another_class_hold_or_requester_replaces_the_waiting_one_whole() {
+    let off = LightSetpoint { power: PowerState::Off, level: None, color: None };
+    let colour_only = LightSetpoint { power: PowerState::Unknown, level: None, color: warm_white() };
+    let tick = forwarded(on_channel(3, colour_only.clone(), SourceClass::Hcl));
+    let released = ClusterCommandCommand { hold_hcl: false, ..on_channel(3, off.clone(), SourceClass::Hcl) };
+    let pairs = [
+        (forwarded(on_channel(3, off.clone(), SourceClass::Operator)), tick.clone()),
+        (forwarded(released), tick.clone()),
+        (queued(2, on_channel(3, off.clone(), SourceClass::Hcl)), tick),
+        (forwarded(on_channel(3, off, SourceClass::Hcl)), queued(3, on_channel(3, colour_only, SourceClass::Hcl))),
+    ];
+    for (earlier, later) in pairs {
+        let due = waiting_after(earlier.clone(), later.clone());
+        assert_eq!(due, Some(Due::Waiting(later)), "not merged over {earlier:?}");
+    }
+}
+
+#[test]
+fn a_recall_inside_the_spacing_replaces_a_waiting_setpoint_whole() {
+    let mut outgoing = Outgoing::new();
+    send(&mut outgoing, 1, setpoint(3, 100), START_MS);
+    assert_eq!(outgoing.admit(queued(2, setpoint(3, 150)), START_MS + 1), Admission::Later { superseded: None });
+    let action = Action::Light { target: Target::Channel(channel(3)), verb: LightVerb::Transition(LevelTransition::RecallMaxLevel) };
+    let recall = queued(3, ClusterCommandCommand { action, source: SourceClass::Operator, hold_hcl: true });
+    assert!(matches!(outgoing.admit(recall.clone(), START_MS + 2), Admission::Later { superseded: Some(_) }));
+    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
+    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS), Some(Due::Waiting(recall)));
 }

@@ -124,7 +124,7 @@ impl Facts {
 }
 
 fn wakes_the_screen(source: RuntimeSource) -> bool {
-    !matches!(source, RuntimeSource::Hcl | RuntimeSource::Poller | RuntimeSource::Readback)
+    !source.is_hcl() && !source.reads_the_gear()
 }
 
 dali2rust_contracts::dispatch_bus_events! {
@@ -311,7 +311,7 @@ fn apply_applied(facts: &mut Facts, adapter: u8, body: &DaliTargetStateAppliedEv
     if !speaks_for(adapter, body.registry_adapter_id) {
         return;
     }
-    if body.source == RuntimeSource::Hcl {
+    if body.source.is_hcl() {
         if let Some(color) = body.setpoint.color.as_ref() {
             if color.color_temperature_kelvin > 0 {
                 facts.hcl_kelvin = Some(color.color_temperature_kelvin);

@@ -205,7 +205,8 @@ Volatile runtime-состояние меняют только `RegistryRuntimeUp
   `CORRELATION_NONE` — факт, которого никто не ждёт.
 - `origin` — кто попросил: `Api`, `Mqtt`, `Hcl`, `Rules`, `Poller`, `Sniffer`,
   `Registry`, `Internal`, `Cluster` — команда, которую узел исполняет по кадру кластера,
-  — а также зарезервированный `AdapterProxy`.
+  `ClusterHcl` — такая же команда, отправленная соседом как тик HCL, — а также
+  зарезервированный `AdapterProxy`.
   Происхождение отображается в `RuntimeSource` провенанса и уточняет приоритет
   провода для нескольких видов (см. [`semantic-dali-commands.md`](semantic-dali-commands.md)).
 - `target_adapter_id` — адаптер-адресат, его фильтрует потребитель. `bus_id`,

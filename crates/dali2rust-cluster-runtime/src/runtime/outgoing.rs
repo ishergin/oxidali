@@ -3,9 +3,9 @@ use core::ptr;
 
 use dali2rust_bsp::psram::PsramBox;
 
-use dali2rust_contracts::msg::ClusterCommandCommand;
+use dali2rust_contracts::msg::{ClusterCommandCommand, LightSetpoint};
 
-use crate::frame::{Action, Command, Header, RecallScope, Target};
+use crate::frame::{Action, Command, Header, LightVerb, RecallScope, Target};
 use crate::presence::HALF_CLOCK_MS;
 
 #[cfg(test)]
@@ -41,6 +41,41 @@ impl TargetKey {
 pub(crate) struct Queued {
     pub(crate) correlation_id: u64,
     pub(crate) request: ClusterCommandCommand,
+    pub(crate) forwarded: bool,
+}
+
+impl Queued {
+    fn folded_over(mut self, earlier: Option<&Self>) -> Self {
+        let Some(earlier) = earlier.filter(|earlier| self.folds_over(earlier)) else {
+            return self;
+        };
+        let setpoints = (setpoint_mut(&mut self.request.action), setpoint_of(&earlier.request.action));
+        if let (Some(later), Some(base)) = setpoints {
+            let mut merged = base.clone();
+            merged.merge_from(later);
+            *later = merged;
+        }
+        self
+    }
+
+    fn folds_over(&self, earlier: &Self) -> bool {
+        let same_source = self.request.source == earlier.request.source;
+        self.forwarded && earlier.forwarded && same_source && self.request.hold_hcl == earlier.request.hold_hcl
+    }
+}
+
+const fn setpoint_of(action: &Action) -> Option<&LightSetpoint> {
+    match action {
+        Action::Light { verb: LightVerb::Setpoint(setpoint), .. } => Some(setpoint),
+        Action::Light { .. } | Action::RecallScene { .. } => None,
+    }
+}
+
+fn setpoint_mut(action: &mut Action) -> Option<&mut LightSetpoint> {
+    match action {
+        Action::Light { verb: LightVerb::Setpoint(setpoint), .. } => Some(setpoint),
+        Action::Light { .. } | Action::RecallScene { .. } => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +149,7 @@ impl Outgoing {
         let key = TargetKey::of(&queued.request.action);
         if let Some(slot) = self.slot_mut(key) {
             if slot.waiting.is_some() || !slot.spaced(now_ms) {
+                let queued = queued.folded_over(slot.waiting.as_ref());
                 return Admission::Later { superseded: slot.waiting.replace(queued) };
             }
             if !copying {

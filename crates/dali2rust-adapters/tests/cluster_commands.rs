@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::MockDaliTransport;
 use dali2rust_adapters::{
@@ -7,6 +7,7 @@ use dali2rust_adapters::{
 };
 use dali2rust_api::http::router::Router;
 use dali2rust_bus::BusConfig;
+use dali2rust_cluster_runtime::frame::{decode, Command, Frame, SourceClass};
 use dali2rust_cluster_runtime::presence::PresenceTiming;
 use dali2rust_test_support::{try_wait_until, ClusterHub, ClusterHubBinder, MockNetworkLink};
 use serde_json::{json, Value};
@@ -16,9 +17,15 @@ const SETTLE: Duration = Duration::from_secs(10);
 const OK: u16 = 200;
 const UNAVAILABLE: u16 = 503;
 const CREATED: u16 = 201;
+const ACCEPTED: u16 = 202;
 const GROUP_5_DAPC_200: u16 = 0x8AC8;
-const GROUP_5_DAPC_100: u16 = 0x8A64;
 const BROADCAST_RECALL_SCENE_6: u16 = 0xFF16;
+const GROUP_5_DAPC_80: u16 = 0x8A50;
+const GROUP_5_DAPC_100: u16 = 0x8A64;
+const QUIET: Duration = Duration::from_secs(1);
+const SLIDER_LEVELS: [u8; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+const SCENARIO_MIDNIGHT_UNIX_MS: u64 = 1_782_259_200_000;
+const TEN_O_CLOCK_MS: u64 = 600 * 60_000;
 
 struct Node {
     router: Router,
@@ -60,7 +67,7 @@ impl Node {
         let response = self.router.dispatch(method, path, body.as_bytes());
         let status = response.status;
         let answer = serde_json::from_slice(&response.into_body_bytes()).unwrap_or(Value::Null);
-        assert!([OK, CREATED].contains(&status), "{method} {path} answered {status}: {answer}");
+        assert!([OK, CREATED, ACCEPTED].contains(&status), "{method} {path} answered {status}: {answer}");
         answer
     }
 
@@ -87,6 +94,30 @@ impl Node {
     fn sent_frames(&self) -> Vec<u16> {
         self.wire.lock().expect("the mock transport").sent_frames()
     }
+
+    fn stat(&self, counter: &str) -> u64 {
+        self.read("/api/v1/stats")["cluster"][counter].as_u64().unwrap_or(u64::MAX)
+    }
+}
+
+fn commands_from(hub: &ClusterHub, board: &Board, window: Duration) -> Vec<Command> {
+    let deadline = Instant::now() + window;
+    let mut commands = Vec::new();
+    while let Some(sent) = hub.next_sent(deadline.saturating_duration_since(Instant::now())) {
+        let frame = decode(&sent.bytes).map(|decoded| decoded.frame);
+        if let (true, Ok(Frame::Command(command))) = (sent.source == board.address, frame) {
+            commands.push(command);
+        }
+    }
+    commands
+}
+
+fn both_send_and_accept_group_5(first: &Node, second: &Node) {
+    let channel = first.send("POST", "/api/v1/cluster/channels", r#"{"number":2,"name":"Corridor"}"#);
+    let reference = json!({ "number": channel["number"], "birth_mark": channel["birth_mark"] });
+    let part = json!({ "record": reference, "send": true, "accept": true }).to_string();
+    first.send("PUT", "/api/v1/cluster/channel-parts/0/5", &part);
+    second.link("/api/v1/cluster/channel-parts/0/5", "/api/v1/cluster/channels/2");
 }
 
 fn running_pair() -> (Arc<ClusterHub>, Node, Node) {
@@ -139,4 +170,57 @@ fn a_node_whose_command_cannot_leave_does_not_execute_its_own_part() {
     node.send("PUT", "/api/v1/cluster/channels/2/target-state", r#"{"power":"on","level":100}"#);
     assert!(try_wait_until(|| !node.sent_frames().is_empty(), SETTLE), "the own part executes once the frame leaves");
     assert_eq!(node.sent_frames(), [GROUP_5_DAPC_100], "the refused command never reached the wire");
+}
+
+#[test]
+fn a_group_command_on_one_node_runs_on_the_other_and_nothing_comes_back() {
+    let (hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    first.send("PUT", "/api/v1/adapters/0/groups/5/target-state", r#"{"power":"on","level":200}"#);
+    let reached = || second.sent_frames() == [GROUP_5_DAPC_200];
+    assert!(try_wait_until(reached, SETTLE), "the second node's wire: {:04X?}", second.sent_frames());
+    let declined = || second.stat("forwards_skipped_cluster_origin_total") == 1;
+    assert!(try_wait_until(declined, SETTLE), "the second node saw its executed fact: {}", second.read("/api/v1/stats")["cluster"]);
+    assert_eq!(commands_from(&hub, &SECOND, QUIET), Vec::<Command>::new(), "the second node sends nothing back");
+    assert_eq!(first.sent_frames(), [GROUP_5_DAPC_200], "the first node ran its group once");
+    assert_eq!(first.stat("commands_forwarded_total"), 1);
+    assert_eq!(first.stat("commands_received_total"), 0);
+    assert_eq!(second.sent_frames(), [GROUP_5_DAPC_200], "the second node ran the channel once");
+}
+
+#[test]
+fn a_slider_on_one_node_reaches_the_other_as_its_last_setpoint_and_not_as_a_burst() {
+    let (_hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    for level in SLIDER_LEVELS {
+        first.send("PUT", "/api/v1/adapters/0/groups/5/target-state", &json!({ "power": "on", "level": level }).to_string());
+    }
+    let settled = || {
+        let ran_here = u64::try_from(first.sent_frames().len()).unwrap_or(0);
+        second.sent_frames().last() == Some(&GROUP_5_DAPC_100) && first.stat("commands_forwarded_total") == ran_here
+    };
+    assert!(try_wait_until(settled, SETTLE), "{:04X?} {}", second.sent_frames(), first.read("/api/v1/stats")["cluster"]);
+    let forwarded = first.stat("commands_forwarded_total");
+    let (sent, superseded) = (first.stat("commands_sent_total"), first.stat("commands_superseded_total"));
+    assert!(superseded > 0, "setpoints inside the spacing were superseded: sent {sent}, superseded {superseded}");
+    assert_eq!(sent + superseded, forwarded, "every forwarded setpoint was sent or superseded, none dropped");
+    assert!(second.sent_frames().len() <= usize::try_from(sent).unwrap_or(0), "the second node ran no more than was sent");
+}
+
+#[test]
+fn with_hcl_forwarded_a_tick_on_one_node_reaches_the_other_as_an_hcl_tick() {
+    let (hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    first.send("PATCH", "/api/v1/cluster", r#"{"forward_hcl":true}"#);
+    let clock = json!({ "unix_ms": SCENARIO_MIDNIGHT_UNIX_MS + TEN_O_CLOCK_MS, "timezone": "UTC0" });
+    first.send("PUT", "/api/v1/time", &clock.to_string());
+    let schedule = json!({ "schedule_id": "house", "enabled": true, "algorithm": "stepped",
+        "active_days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "location": null,
+        "targets": [{ "adapter_id": 0, "scope": "group", "group_ids": [5] }],
+        "points": [{ "time_ref": "absolute", "offset_minutes": 540, "level_mode": "absolute", "level": 80, "color_temperature_kelvin": null }] });
+    first.send("POST", "/api/v1/hcl-schedules", &schedule.to_string());
+    let reached = || second.sent_frames().contains(&GROUP_5_DAPC_80);
+    assert!(try_wait_until(reached, SETTLE), "the second node's wire: {:04X?}", second.sent_frames());
+    let sources: Vec<SourceClass> = commands_from(&hub, &FIRST, QUIET).iter().map(|command| command.source).collect();
+    assert!(sources.contains(&SourceClass::Hcl), "the tick left as an HCL tick: {sources:?}");
 }

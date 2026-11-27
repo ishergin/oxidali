@@ -152,6 +152,16 @@ mod tests {
     }
 
     #[test]
+    fn the_hcl_tick_that_came_over_the_cluster_is_appended_to_both_origin_tables() {
+        let origin = postcard::to_allocvec(&crate::msg::Origin::ClusterHcl).expect("encodes");
+        let source = postcard::to_allocvec(&crate::msg::RuntimeSource::ClusterHcl).expect("encodes");
+        assert_eq!((origin, source), (vec![10], vec![9]));
+        let provenance = crate::msg::RuntimeSource::from_origin(crate::msg::Origin::ClusterHcl);
+        assert_eq!(provenance, Some(crate::msg::RuntimeSource::ClusterHcl));
+        assert!(crate::msg::RuntimeSource::ClusterHcl.is_hcl());
+    }
+
+    #[test]
     fn the_forwarding_fields_keep_their_wire_order() {
         let only_hcl = ClusterForwarding { hcl: true, ..ClusterForwarding::default() };
         assert_eq!(postcard::to_allocvec(&only_hcl).expect("encodes"), [0, 0, 1, 0]);

@@ -36,6 +36,7 @@ Feature: Cluster — commands to channels and cluster scenes between nodes
     And virtual lamp 1 on adapter 0 should eventually report level 200 from value_source "cluster"
     And the JSON pointer "/cluster/commands_received_total" at "/api/v1/stats" should eventually be "2"
     And the JSON pointer "/cluster/commands_executed_total" at "/api/v1/stats" should eventually be "1"
+    And the JSON pointer "/cluster/forwards_skipped_cluster_origin_total" at "/api/v1/stats" should eventually be "1"
     And the cluster hub should carry no command from this controller within 1000 ms
 
   @id:CLU-077
