@@ -129,7 +129,7 @@ impl Taken {
         }
     }
 
-    const fn applies(self) -> bool {
+    pub const fn applies(self) -> bool {
         matches!(self, Self::Fresh { .. } | Self::Restarted)
     }
 }

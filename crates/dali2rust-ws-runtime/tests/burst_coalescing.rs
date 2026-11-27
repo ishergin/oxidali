@@ -1,6 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use dali2rust_api::http::cluster_info_state::{ClusterInfoHttpState, ClusterInfoNodeDto};
+use dali2rust_api::http::cluster_parts_state::ClusterPartDto;
+use dali2rust_api::http::cluster_records_state::ClusterRecordDto;
+use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_domain::registry::{ClusterPartKeys, ClusterRecordNumbers};
 use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState,
 };
@@ -53,6 +58,29 @@ impl HealthHttpState for NullHealth {
 }
 
 struct NullCluster;
+
+impl ClusterInfoHttpState for NullCluster {
+    fn node_info(&self, _node: u8) -> Option<ClusterInfoNodeDto> {
+        None
+    }
+
+    fn record(&self, _node: u8, _kind: ClusterRecordKind, _number: u8) -> Option<ClusterRecordDto> {
+        None
+    }
+
+    fn record_numbers(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterRecordNumbers {
+        ClusterRecordNumbers::default()
+    }
+
+    fn part(&self, _node: u8, _kind: ClusterRecordKind, _adapter: u8, _local: u8) -> Option<ClusterPartDto> {
+        None
+    }
+
+    fn part_keys(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterPartKeys {
+        ClusterPartKeys::default()
+    }
+}
+
 impl ClusterStatusHttpState for NullCluster {
     fn own(&self) -> ClusterOwnDto {
         ClusterOwnDto {
@@ -133,6 +161,7 @@ fn spawn_harness() -> Harness {
             diagnostics: Arc::new(NullDiagnostics),
             health: Arc::new(NullHealth),
             cluster: Arc::new(NullCluster),
+            cluster_info: Arc::new(NullCluster),
         },
         Arc::new(|| 0),
     );

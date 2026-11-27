@@ -17,10 +17,11 @@ registry locking → [06](06-registry-and-persistence.md).
   optional: absent when composition wires no client or the build cannot update itself.
   The WebSocket fan-out always runs, spawned last because it samples the read models.
 - The cluster worker always runs, as two threads: `cluster_tx` waits on the bus inbox
-  with `recv_timeout` until the next pulse slot, binds and unbinds the link and sends;
-  `cluster_rx` blocks in `ClusterLink::receive` with a timeout, takes the link from
-  `cluster_tx` over a channel and learns from that channel closing that the stack is
-  gone. Off, without an address or on a standby board it sends nothing
+  with `recv_timeout` until the next pulse slot or info page is due, binds and unbinds the
+  link and sends, one info page per turn with a gap between pages; `cluster_rx` blocks in
+  `ClusterLink::receive` with a timeout, takes the link from `cluster_tx` over a channel,
+  learns from that channel closing that the stack is gone, and feeds the info cache under
+  its own short lock. Off, without an address or on a standby board it sends nothing
   ([ADR-035](decisions/ADR-035-cluster-of-installations-over-udp.md)).
 - Beside the workers: the bus routing task, the transport's `dali-sniff` drain, the one
   `httpd` task, the UART log writer, the census thread, the IP and SNTP watchers, the

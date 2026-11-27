@@ -1,10 +1,15 @@
+use std::io;
+
+use crate::http::cluster_info_state::{write_cluster_info, ClusterInfoHttpState};
 use crate::http::cluster_status_state::{write_cluster_status, ClusterStatusHttpState};
 use crate::ws::project::WS_PROJECTED_EVENTS;
 use crate::ws::protocol::{event_frame_with_payload, Channel};
 
 pub const CLUSTER_STATUS_FRAME_CEILING_BYTES: usize = 16_384;
 
-const CLUSTER_STATUS_FIRST_RESERVE_BYTES: usize = 1_024;
+pub const CLUSTER_INFO_FRAME_CEILING_BYTES: usize = 2_048;
+
+const CLUSTER_FRAME_FIRST_RESERVE_BYTES: usize = 1_024;
 
 pub const WS_PORT_EVENTS: &[&str] = &["ClusterStateChangedEvent"];
 
@@ -27,14 +32,27 @@ const fn joined<const N: usize>(head: &[&'static str], tail: &[&'static str]) ->
 }
 
 pub fn cluster_status_frame(state: &dyn ClusterStatusHttpState, ts_ms: u64) -> String {
-    let mut payload = Vec::with_capacity(CLUSTER_STATUS_FIRST_RESERVE_BYTES);
-    let written = write_cluster_status(state, &mut payload).ok().and_then(|()| String::from_utf8(payload).ok());
-    event_frame_with_payload("ClusterStatus", Channel::Cluster, ts_ms, written.as_deref().unwrap_or("null"))
+    cluster_frame("ClusterStatus", ts_ms, |payload| write_cluster_status(state, payload))
+}
+
+pub fn cluster_info_frame(state: &dyn ClusterInfoHttpState, ts_ms: u64) -> String {
+    cluster_frame("ClusterInfo", ts_ms, |payload| write_cluster_info(state, payload))
+}
+
+fn cluster_frame(event: &str, ts_ms: u64, write: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> String {
+    let mut payload = Vec::with_capacity(CLUSTER_FRAME_FIRST_RESERVE_BYTES);
+    let written = write(&mut payload).ok().and_then(|()| String::from_utf8(payload).ok());
+    event_frame_with_payload(event, Channel::Cluster, ts_ms, written.as_deref().unwrap_or("null"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http::cluster_info_state::{ClusterInfoNodeDto, ClusterInfoSource};
+    use crate::http::cluster_parts_state::ClusterPartDto;
+    use crate::http::cluster_records_state::ClusterRecordDto;
+    use dali2rust_contracts::msg::ClusterRecordKind;
+    use dali2rust_domain::registry::{ClusterPartKeys, ClusterRecordNumbers, CLUSTER_NODE_COUNT};
     use crate::http::cluster_status_state::{
         ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterWireOwnerDto, MAX_CLUSTER_STATUS_IGNORED,
         MAX_CLUSTER_STATUS_NODES,
@@ -109,6 +127,50 @@ mod tests {
         assert_eq!(payload["nodes"].as_array().map(Vec::len), Some(usize::from(MAX_CLUSTER_STATUS_NODES)));
         assert_eq!(payload["ignored"].as_array().map(Vec::len), Some(MAX_CLUSTER_STATUS_IGNORED));
         assert_eq!(parsed["channel"], "cluster");
+    }
+
+    struct WorstInfo;
+
+    impl ClusterInfoHttpState for WorstInfo {
+        fn node_info(&self, node: u8) -> Option<ClusterInfoNodeDto> {
+            Some(ClusterInfoNodeDto {
+                node,
+                source: ClusterInfoSource::Cached,
+                set: Some(u32::MAX),
+                age_ms: Some(u32::MAX),
+                channels: u8::MAX,
+                scenes: u8::MAX,
+                channel_parts: u8::MAX,
+                scene_parts: u8::MAX,
+                skipped: u16::MAX,
+            })
+        }
+
+        fn record(&self, _node: u8, _kind: ClusterRecordKind, _number: u8) -> Option<ClusterRecordDto> {
+            None
+        }
+
+        fn record_numbers(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterRecordNumbers {
+            ClusterRecordNumbers::default()
+        }
+
+        fn part(&self, _node: u8, _kind: ClusterRecordKind, _adapter: u8, _local: u8) -> Option<ClusterPartDto> {
+            None
+        }
+
+        fn part_keys(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterPartKeys {
+            ClusterPartKeys::default()
+        }
+    }
+
+    #[test]
+    fn the_cluster_info_frame_worst_case_is_measured_and_frozen() {
+        let frame = cluster_info_frame(&WorstInfo, u64::MAX);
+        eprintln!("worst-case ClusterInfo: {} B of {} B ceiling", frame.len(), CLUSTER_INFO_FRAME_CEILING_BYTES);
+        assert!(frame.len() <= CLUSTER_INFO_FRAME_CEILING_BYTES);
+        let parsed: serde_json::Value = serde_json::from_str(&frame).expect("one JSON frame");
+        assert_eq!(parsed["payload"]["nodes"].as_array().map(Vec::len), Some(usize::from(CLUSTER_NODE_COUNT)));
+        assert_eq!((parsed["type"].as_str(), parsed["channel"].as_str()), (Some("ClusterInfo"), Some("cluster")));
     }
 
     #[test]

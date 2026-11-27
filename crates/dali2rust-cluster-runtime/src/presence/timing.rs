@@ -6,6 +6,10 @@ const LIVENESS_HALF_PERIODS: u32 = 7;
 
 const HALVES: u32 = 2;
 
+const COALESCE_PER_PERIOD: u32 = 8;
+
+const REFRESH_PERIODS: u32 = 30;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PresenceTiming {
     pulse_period_ms: u32,
@@ -28,6 +32,14 @@ impl PresenceTiming {
 
     pub const fn liveness_ms(self) -> u32 {
         self.pulse_period_ms.saturating_mul(LIVENESS_HALF_PERIODS) / HALVES
+    }
+
+    pub const fn info_coalesce_ms(self) -> u32 {
+        self.pulse_period_ms / COALESCE_PER_PERIOD
+    }
+
+    pub const fn info_refresh_ms(self) -> u32 {
+        self.pulse_period_ms.saturating_mul(REFRESH_PERIODS)
     }
 }
 

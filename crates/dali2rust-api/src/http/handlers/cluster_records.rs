@@ -11,6 +11,7 @@ use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
 use dali2rust_domain::registry::{CLUSTER_RECORD_NUMBER_COUNT, MAX_CLUSTER_RECORD_NAME_BYTES};
 
 use crate::confirmation_bridge::PendingConfirmationSlots;
+use crate::http::cluster_info_state::{write_object_then, ClusterInfoHttpState, ClusterView};
 use crate::http::cluster_records_state::{record_nonce, ClusterRecordDto, ClusterRecordsHttpState};
 use crate::http::cluster_settings_state::ClusterSettingsApplyWatch;
 use crate::http::dispatcher::{publish_batch_and_wait_for_success, CorrelationIdAllocator};
@@ -60,6 +61,7 @@ pub struct ClusterRecordDeps {
     pub slots: Arc<PendingConfirmationSlots>,
     pub correlation: Arc<CorrelationIdAllocator>,
     pub state: Arc<dyn ClusterRecordsHttpState>,
+    pub cluster: Arc<dyn ClusterInfoHttpState>,
     pub apply_watch: Arc<dyn ClusterSettingsApplyWatch>,
     pub bus_id: BusId,
     pub timeout_ms: u64,
@@ -101,20 +103,29 @@ impl ApiHandler for ClusterRecordHandler {
 
 impl ClusterRecordHandler {
     fn list(&self) -> HttpResponse {
-        let (kind, state) = (self.kind, Arc::clone(&self.deps.state));
+        let (kind, cluster) = (self.kind, Arc::clone(&self.deps.cluster));
         HttpResponse::json_stream(
             200,
             Box::new(move |w: &mut dyn Write| {
                 write!(w, "{{\"{}\":[", list_key(kind))?;
-                let numbers = state.cluster_record_numbers(kind).iter();
-                write_json_array_items(w, numbers.filter_map(|number| state.cluster_record_dto(kind, number)))?;
+                write_json_array_items(w, ClusterView::read(cluster.as_ref()).records(kind))?;
                 w.write_all(b"]}")
             }),
         )
     }
 
     fn get(&self, params: &HashMap<String, String>) -> Answer {
-        Ok(json_stream_dto(self.held(path_number(params)?)?))
+        let (kind, number, cluster) = (self.kind, path_number(params)?, Arc::clone(&self.deps.cluster));
+        let record = ClusterView::read(cluster.as_ref()).record(kind, number).ok_or_else(|| json_err(404, "not_found"))?;
+        Ok(HttpResponse::json_stream(
+            200,
+            Box::new(move |w: &mut dyn Write| {
+                write_object_then(w, &record, "parts")?;
+                w.write_all(b"[")?;
+                write_json_array_items(w, ClusterView::read(cluster.as_ref()).parts_of(kind, &record))?;
+                w.write_all(b"]}")
+            }),
+        ))
     }
 
     fn create(&self, body: &[u8]) -> Answer {

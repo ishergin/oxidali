@@ -5,7 +5,9 @@ use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_domain::registry::{ClusterRecordNumbers, ClusterRecordReadPort, ClusterRecordView};
 use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+use crate::http::cluster_info_state::ClusterInfoSource;
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 pub struct ClusterBirthMarkDto {
     pub generation: u32,
     pub nonce: u32,
@@ -18,6 +20,7 @@ pub struct ClusterRecordDto {
     pub birth_mark: ClusterBirthMarkDto,
     pub name: String,
     pub revision: u32,
+    pub source: ClusterInfoSource,
 }
 
 pub trait ClusterRecordsHttpState: Send + Sync {
@@ -46,13 +49,14 @@ impl ClusterRecordsHttpState for ClusterRecordsHttpStateBridge {
     }
 }
 
-pub(crate) fn cluster_record_view_to_dto(view: ClusterRecordView) -> ClusterRecordDto {
+pub fn cluster_record_view_to_dto(view: ClusterRecordView) -> ClusterRecordDto {
     ClusterRecordDto {
         number: view.number,
         home_node: view.home_node,
         birth_mark: ClusterBirthMarkDto { generation: view.mark.generation, nonce: view.mark.nonce },
         name: view.name,
         revision: view.revision,
+        source: ClusterInfoSource::Own,
     }
 }
 

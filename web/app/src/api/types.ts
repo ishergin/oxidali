@@ -1183,6 +1183,12 @@ export type StatsCluster = {
   sequence_gaps_total: number
   withheld_standby_total: number
   boards_evicted_total: number
+  info_sets_sent_total: number
+  info_sets_taken_total: number
+  info_sets_abandoned_total: number
+  info_pages_ignored_total: number
+  info_pages_stale_total: number
+  info_elements_skipped_total: number
 }
 
 export type InputDeviceSummary = {

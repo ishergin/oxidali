@@ -18,8 +18,8 @@ pub use command::{
 };
 pub use header::{cluster_tag, Header};
 pub use info::{
-    write_pages, ChannelPart, GroupMap, InfoElement, InfoElements, InfoPage, InfoPageWriter,
-    LocalName, PageMeta, PartFlags, PushError, Record, ScenePart,
+    ChannelPart, GroupMap, InfoElement, InfoElements, InfoPage, InfoPageWriter, LocalName, PageCursor,
+    PageMeta, PartFlags, PushError, Record, ScenePart,
 };
 pub use limits::{
     ADAPTER_COUNT, MAX_CLUSTER_NAME_BYTES, MAX_INSTALLATION_BYTES, MAX_NAME_BYTES, NODE_COUNT,

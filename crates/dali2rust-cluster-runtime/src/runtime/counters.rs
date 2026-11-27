@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use crate::frame::Rejection;
+use crate::info::PageTally;
 use crate::presence::Taken;
 
 #[derive(Debug, Default)]
@@ -19,6 +20,12 @@ pub struct ClusterCounters {
     pub sequence_gaps_total: AtomicU32,
     pub withheld_standby_total: AtomicU32,
     pub boards_evicted_total: AtomicU32,
+    pub info_sets_sent_total: AtomicU32,
+    pub info_sets_taken_total: AtomicU32,
+    pub info_sets_abandoned_total: AtomicU32,
+    pub info_pages_ignored_total: AtomicU32,
+    pub info_pages_stale_total: AtomicU32,
+    pub info_elements_skipped_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {
@@ -33,6 +40,29 @@ impl ClusterCounters {
             | Rejection::UnknownKind(_)
             | Rejection::TooLarge
             | Rejection::Malformed => bump(&self.rejected_frames_total),
+        }
+    }
+
+    pub(crate) fn count_page(&self, tally: PageTally) {
+        let flags = [
+            (tally.stale, &self.info_pages_stale_total),
+            (tally.abandoned, &self.info_sets_abandoned_total),
+            (tally.taken, &self.info_sets_taken_total),
+        ];
+        for (_, counter) in flags.into_iter().filter(|(raised, _)| *raised) {
+            bump(counter);
+        }
+        self.info_elements_skipped_total.fetch_add(u32::from(tally.skipped), Relaxed);
+    }
+
+    pub(crate) fn count_unfed_page(&self, member: bool, taken: Option<Taken>) {
+        if taken.is_none() {
+            return;
+        }
+        if !member {
+            bump(&self.info_pages_ignored_total);
+        } else if taken == Some(Taken::Late) {
+            bump(&self.info_pages_stale_total);
         }
     }
 

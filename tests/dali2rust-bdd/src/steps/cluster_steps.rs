@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -45,7 +45,7 @@ impl ClusterRig {
         }
     }
 
-    fn sent_by_us(&self, window: Duration) -> Option<HubDatagram> {
+    pub(crate) fn sent_by_us(&self, window: Duration) -> Option<HubDatagram> {
         let deadline = Instant::now() + window;
         loop {
             let left = deadline.checked_duration_since(Instant::now())?;
@@ -58,14 +58,55 @@ impl ClusterRig {
 
     fn start(&mut self, pulser: Pulser) {
         let (stop, stopped) = mpsc::channel();
-        let mac = pulser.mac;
+        let speaker = pulser.speaker.clone();
         let thread = thread::spawn(move || pulser.run(&stopped));
-        self.neighbours.push(Neighbour { mac, stop: Some(stop), thread: Some(thread) });
+        self.neighbours.push(Neighbour { speaker, stop: Some(stop), thread: Some(thread) });
+    }
+
+    pub(crate) fn speaker(&self, mac: [u8; 6]) -> &Speaker {
+        let neighbour = self.neighbours.iter().find(|neighbour| neighbour.speaker.mac == mac);
+        &neighbour.expect("the board pulses").speaker
+    }
+
+    pub(crate) const fn mac(&self) -> [u8; 6] {
+        self.mac
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Speaker {
+    hub: Arc<ClusterHub>,
+    source: [u8; 4],
+    mac: [u8; 6],
+    node: u8,
+    cluster_name: String,
+    seq: Arc<Mutex<u32>>,
+}
+
+impl Speaker {
+    pub(crate) fn speak(&self, write: impl FnOnce(&Header) -> Vec<u8>) {
+        let mut seq = self.seq.lock().unwrap_or_else(PoisonError::into_inner);
+        let header = Header {
+            cluster_tag: cluster_tag(&self.cluster_name),
+            sender_mac: self.mac,
+            boot_epoch: NEIGHBOUR_BOOT_EPOCH,
+            node_no: self.node,
+            seq: *seq,
+        };
+        *seq = seq.wrapping_add(1);
+        self.hub.inject(self.source, &write(&header));
+    }
+
+    pub(crate) fn say(&self, buffer: &mut DatagramBuffer, frame: &Frame<'_>) {
+        self.speak(|header| {
+            let len = encode(header, frame, buffer).expect("the frame fits one datagram");
+            buffer.get(..len).expect("the encoded length").to_vec()
+        });
     }
 }
 
 struct Neighbour {
-    mac: [u8; 6],
+    speaker: Speaker,
     stop: Option<Sender<()>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -80,54 +121,47 @@ impl Drop for Neighbour {
 }
 
 struct Pulser {
-    hub: Arc<ClusterHub>,
-    source: [u8; 4],
-    mac: [u8; 6],
-    node: u8,
+    speaker: Speaker,
     wire: u8,
-    cluster_name: String,
     installation: String,
 }
 
 impl Pulser {
+    fn new(hub: &Arc<ClusterHub>, (source, mac, node): ([u8; 4], [u8; 6], u8), wire: u8, names: [String; 2]) -> Self {
+        let [cluster_name, installation] = names;
+        let seq = Arc::new(Mutex::new(0));
+        let speaker = Speaker { hub: Arc::clone(hub), source, mac, node, cluster_name, seq };
+        Self { speaker, wire, installation }
+    }
+
     fn run(self, stop: &Receiver<()>) {
         let mut buffer: Box<DatagramBuffer> = Box::new([0; MAX_CLUSTER_DATAGRAM_BYTES]);
         let period = Duration::from_millis(u64::from(PULSE_PERIOD_MS));
-        let mut seq = 0_u32;
         loop {
-            self.send(&mut buffer, seq);
-            seq = seq.wrapping_add(1);
+            self.send(&mut buffer);
             if stop.recv_timeout(period) != Err(RecvTimeoutError::Timeout) {
                 return;
             }
         }
     }
 
-    fn send(&self, buffer: &mut DatagramBuffer, seq: u32) {
-        let header = Header {
-            cluster_tag: cluster_tag(&self.cluster_name),
-            sender_mac: self.mac,
-            boot_epoch: NEIGHBOUR_BOOT_EPOCH,
-            node_no: self.node,
-            seq,
-        };
+    fn send(&self, buffer: &mut DatagramBuffer) {
         let pulse = Pulse {
-            cluster_name: &self.cluster_name,
+            cluster_name: &self.speaker.cluster_name,
             installation: &self.installation,
             claim: NodeClaim::Holding,
             wire: self.wire,
             wire_protection: true,
         };
-        let len = encode(&header, &Frame::Pulse(pulse), buffer).expect("a pulse fits one datagram");
-        self.hub.inject(self.source, buffer.get(..len).expect("the encoded length"));
+        self.speaker.say(buffer, &Frame::Pulse(pulse));
     }
 }
 
-fn rig(world: &mut DaliWorld) -> &mut ClusterRig {
+pub(crate) fn rig(world: &mut DaliWorld) -> &mut ClusterRig {
     world.cluster.as_mut().expect("the controller runs on a cluster hub")
 }
 
-fn hardware_address(text: &str) -> [u8; 6] {
+pub(crate) fn hardware_address(text: &str) -> [u8; 6] {
     let bytes: Vec<u8> = text.split(':').map(|part| u8::from_str_radix(part, 16).expect("hex")).collect();
     bytes.try_into().expect("six octets")
 }
@@ -147,7 +181,7 @@ fn holds_node(datagram: &HubDatagram, mac: [u8; 6], node: u8, cluster_name: &str
         && pulse.cluster_name == cluster_name)
 }
 
-// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027
+// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075
 #[given(regex = r#"^the controller runs on a cluster hub as board "([0-9a-f:]{17})" at "([0-9.]+)"$"#)]
 async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     let (mac, address) = (hardware_address(&mac), ipv4(&address));
@@ -155,13 +189,13 @@ async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     world.run_on_network_link(mac, Some(address), node_name(mac));
 }
 
-// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027
+// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075
 #[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) of cluster "([^"]*)" for installation "([^"]*)"$"#)]
 async fn board_pulses(world: &mut DaliWorld, mac: String, source: String, node: u8, name: String, site: String) {
     let rig = rig(world);
-    let hub = Arc::clone(&rig.hub);
     let (mac, source) = (hardware_address(&mac), ipv4(&source));
-    rig.start(Pulser { hub, source, mac, node, wire: node, cluster_name: name, installation: site });
+    let pulser = Pulser::new(&rig.hub, (source, mac, node), node, [name, site]);
+    rig.start(pulser);
 }
 
 // CLU-026
@@ -176,44 +210,45 @@ async fn board_pulses_on_a_wire(
     site: String,
 ) {
     let rig = rig(world);
-    let hub = Arc::clone(&rig.hub);
     let (mac, source) = (hardware_address(&mac), ipv4(&source));
-    rig.start(Pulser { hub, source, mac, node, wire, cluster_name: name, installation: site });
+    let pulser = Pulser::new(&rig.hub, (source, mac, node), wire, [name, site]);
+    rig.start(pulser);
 }
 
 // CLU-019
 #[when(regex = r#"^a board at "([0-9.]+)" pulses this controller's hardware address as node (\d) of cluster "([^"]*)"$"#)]
 async fn board_pulses_our_address(world: &mut DaliWorld, source: String, node: u8, name: String) {
     let rig = rig(world);
-    let (hub, mac, source) = (Arc::clone(&rig.hub), rig.mac, ipv4(&source));
-    rig.start(Pulser { hub, source, mac, node, wire: node, cluster_name: name, installation: String::new() });
+    let (mac, source) = (rig.mac, ipv4(&source));
+    let pulser = Pulser::new(&rig.hub, (source, mac, node), node, [name, String::new()]);
+    rig.start(pulser);
 }
 
-// CLU-020
+// CLU-020 CLU-071
 #[when(regex = r#"^the board "([0-9a-f:]{17})" stops pulsing$"#)]
 async fn board_stops(world: &mut DaliWorld, mac: String) {
     let mac = hardware_address(&mac);
     let rig = rig(world);
     let before = rig.neighbours.len();
-    rig.neighbours.retain(|neighbour| neighbour.mac != mac);
+    rig.neighbours.retain(|neighbour| neighbour.speaker.mac != mac);
     assert!(rig.neighbours.len() < before, "no board {mac:02x?} was pulsing");
 }
 
-// CLU-023
+// CLU-023 CLU-066 CLU-068 CLU-070
 #[when("the cluster hub sets aside what this controller has sent so far")]
 async fn hub_sets_aside(world: &mut DaliWorld) {
     let hub = &rig(world).hub;
     while hub.next_sent(Duration::ZERO).is_some() {}
 }
 
-// CLU-015 CLU-023
+// CLU-015 CLU-023 CLU-067
 #[then(regex = r"^the cluster hub should carry no datagram from this controller within (\d+) ms$")]
 async fn hub_silent(world: &mut DaliWorld, window_ms: u64) {
     let sent = rig(world).sent_by_us(Duration::from_millis(window_ms));
     assert!(sent.is_none(), "this controller sent {sent:?}");
 }
 
-// CLU-015 CLU-023 CLU-024 CLU-027
+// CLU-015 CLU-023 CLU-024 CLU-027 CLU-065
 #[then(regex = r#"^the cluster hub should carry a pulse from this controller holding node (\d) of cluster "([^"]*)"$"#)]
 async fn hub_carries_holding_pulse(world: &mut DaliWorld, node: u8, name: String) {
     let rig = rig(world);
@@ -256,7 +291,7 @@ async fn ws_cluster_status(world: &mut DaliWorld, node: u64, board: String) {
     assert!(frame.is_some(), "no ClusterStatus frame showed node {node} heard from {board}");
 }
 
-// CLU-046 CLU-052
+// CLU-046 CLU-052 CLU-065
 #[when(regex = r#"^I link "([^"]+)" to the cluster record "([^"]+)" with send (true|false) and accept (true|false)$"#)]
 async fn link_part_to_record(world: &mut DaliWorld, part: String, record: String, send: String, accept: String) {
     world.send_http_request("GET", &record, None, "");

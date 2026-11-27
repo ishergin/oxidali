@@ -58,6 +58,7 @@ pub enum ClusterRecordAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClusterSubject {
     Status,
+    Info,
 }
 
 #[cfg(test)]

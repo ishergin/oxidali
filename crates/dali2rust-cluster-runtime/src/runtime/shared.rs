@@ -1,13 +1,15 @@
 use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::collections::hash_map::DefaultHasher;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
 
-use crate::frame::{decode, Decoded, Frame, NODE_COUNT};
+use crate::frame::{decode, Decoded, Frame, Header, NODE_COUNT};
+use crate::info::{Arrival, ClusterInfo};
 use crate::presence::{
     claim_mode, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
     PresenceTiming, Roster, Taken, WireOwner, MAX_HEARD_BOARDS,
@@ -92,16 +94,36 @@ pub(crate) enum Forgotten {
     StillHeard,
 }
 
+struct Admitted {
+    taken: Option<Taken>,
+    member: bool,
+}
+
+impl Admitted {
+    const NOTHING: Self = Self { taken: None, member: false };
+
+    fn feeds_info(&self) -> bool {
+        self.member && self.taken.is_some_and(Taken::applies)
+    }
+}
+
 pub struct ClusterPresence {
     state: Mutex<PsramBox<PresenceState>>,
     timing: PresenceTiming,
     epoch_source: EpochSource,
     boot_epoch: OnceLock<u32>,
+    hello_heard: AtomicBool,
 }
 
 impl ClusterPresence {
     pub fn new(timing: PresenceTiming, epoch_source: EpochSource) -> Self {
-        Self { state: Mutex::new(placed_state()), timing, epoch_source, boot_epoch: OnceLock::new() }
+        Self {
+            state: Mutex::new(placed_state()),
+            timing,
+            epoch_source,
+            boot_epoch: OnceLock::new(),
+            hello_heard: AtomicBool::new(false),
+        }
     }
 
     pub const fn timing(&self) -> PresenceTiming {
@@ -124,7 +146,13 @@ impl ClusterPresence {
         self.lock().link
     }
 
-    pub(crate) fn take_datagram(&self, bytes: &[u8], delivery: Delivery, counters: &ClusterCounters) {
+    pub(crate) fn take_datagram(
+        &self,
+        bytes: &[u8],
+        delivery: Delivery,
+        counters: &ClusterCounters,
+        info: &ClusterInfo,
+    ) {
         let decoded = match decode(bytes) {
             Ok(decoded) => decoded,
             Err(rejection) => return counters.count_rejection(rejection),
@@ -134,11 +162,35 @@ impl ClusterPresence {
             drop(state);
             return bump(&counters.stale_link_frames_total);
         }
-        let taken = state.take(&decoded, delivery, self.timing, counters);
+        let admitted = state.take(&decoded, delivery, self.timing, counters);
+        let era = info.era();
         drop(state);
-        if let Some(taken) = taken {
+        if let Some(taken) = admitted.taken {
             counters.count_taken(taken);
         }
+        if admitted.feeds_info() {
+            self.hear_member(&decoded, (delivery.now_ms, era), counters, info);
+        } else if matches!(decoded.frame, Frame::ChannelSceneInfo(_)) {
+            counters.count_unfed_page(admitted.member, admitted.taken);
+        }
+    }
+
+    fn hear_member(&self, decoded: &Decoded<'_>, at: (u32, u32), counters: &ClusterCounters, info: &ClusterInfo) {
+        match &decoded.frame {
+            Frame::Hello(_) => self.hello_heard.store(true, Relaxed),
+            Frame::ChannelSceneInfo(page) => feed_info(info, &decoded.header, page, at, counters),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn take_hello_heard(&self) -> bool {
+        self.hello_heard.swap(false, Relaxed)
+    }
+
+    pub(crate) fn member_heard(&self, node: u8, now_ms: u32) -> bool {
+        let state = self.lock();
+        let roster = state.roster(now_ms, self.timing);
+        roster.displayed(node).is_some_and(|board| roster.live(board))
     }
 
     pub(crate) fn settle(&self, identity: OwnFacts, base: Option<OwnMode>, listened_ms: u32, now_ms: u32) -> Settled {
@@ -211,20 +263,33 @@ impl PresenceState {
         delivery: Delivery,
         timing: PresenceTiming,
         counters: &ClusterCounters,
-    ) -> Option<Taken> {
+    ) -> Admitted {
         let header = &decoded.header;
         if self.mac_known && header.sender_mac == self.own.mac {
             bump(&counters.own_frames_dropped_total);
-            return None;
+            return Admitted::NOTHING;
         }
         if header.cluster_tag != self.own.cluster_tag {
             bump(&counters.other_cluster_frames_total);
         }
         let at = Arriving { header, source: delivery.source, now_ms: delivery.now_ms, timing };
-        Some(match &decoded.frame {
+        let taken = match &decoded.frame {
             Frame::Pulse(pulse) => self.table.take_pulse(at, pulse),
             Frame::Hello(hello) => self.table.take_hello(header, hello),
             Frame::Command(_) | Frame::ChannelSceneInfo(_) => self.table.take_other(header),
+        };
+        let speaks = matches!(decoded.frame, Frame::Hello(_) | Frame::ChannelSceneInfo(_))
+            && self.speaks_for_its_node(header, delivery.now_ms, timing);
+        Admitted { taken: Some(taken), member: speaks }
+    }
+
+    fn speaks_for_its_node(&self, header: &Header, now_ms: u32, timing: PresenceTiming) -> bool {
+        if header.node_no == self.own.node_no || header.cluster_tag != self.own.cluster_tag {
+            return false;
+        }
+        let roster = self.roster(now_ms, timing);
+        roster.displayed(header.node_no).is_some_and(|board| {
+            board.mac == header.sender_mac && board.node_no == header.node_no && roster.live(board)
         })
     }
 
@@ -290,6 +355,17 @@ fn ignored_view(roster: &Roster<'_>, board: &HeardBoard, reason: IgnoredReason) 
         reason,
         age_ms: board.age_ms(roster.now_ms),
     }
+}
+
+fn feed_info(
+    info: &ClusterInfo,
+    header: &Header,
+    page: &crate::frame::InfoPage<'_>,
+    (now_ms, era): (u32, u32),
+    counters: &ClusterCounters,
+) {
+    let at = Arrival { node: header.node_no, mac: header.sender_mac, epoch: header.boot_epoch, now_ms };
+    counters.count_page(info.take_page(at, page, era));
 }
 
 fn placed_state() -> PsramBox<PresenceState> {

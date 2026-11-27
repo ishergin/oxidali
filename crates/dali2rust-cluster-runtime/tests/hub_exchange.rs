@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use dali2rust_cluster_runtime::frame::{
-    cluster_tag, decode, encode, write_pages, Action, BirthMark, Command, DatagramBuffer,
-    Decoded, Frame, Header, Hello, InfoElement, LightVerb, NodeClaim, Pulse, Record, RecordRef,
+    cluster_tag, decode, encode, Action, BirthMark, Command, DatagramBuffer, Decoded, Frame,
+    Header, Hello, InfoElement, LightVerb, NodeClaim, PageCursor, Pulse, Record, RecordRef,
     SourceClass, Target,
 };
 use dali2rust_cluster_runtime::{Arrival, SequenceWindow};
@@ -107,9 +107,10 @@ fn a_node_s_info_pages_reach_its_peer_and_the_test_sees_them_leave() {
     let (node_0, node_1) = (hub.attach(), hub.attach());
     let record = InfoElement::ChannelRecord(Record { id: CHANNEL_3, name: "Hall", revision: 1 });
     let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
-    let next_header = || header(NODE_0_MAC, 0, 2);
-    write_pages(&mut buffer, 1, next_header, [record], |page| node_0.send(page).expect("send"))
-        .expect("pages");
+    let mut cursor = PageCursor::new(1);
+    let len = cursor.write_next(&mut buffer, &header(NODE_0_MAC, 0, 2), [record]).expect("page");
+    node_0.send(&buffer[..len.expect("one page")]).expect("send");
+    assert!(cursor.finished());
     let sent = hub.next_sent(PATIENCE).expect("the page left node 0");
     assert_eq!(sent.source, node_0.source());
     let mut inbox = [0; CLUSTER_RECEIVE_BUFFER_BYTES];

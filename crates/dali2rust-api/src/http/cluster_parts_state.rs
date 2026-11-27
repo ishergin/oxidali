@@ -51,7 +51,7 @@ impl ClusterPartsHttpState for ClusterPartsHttpStateBridge {
     }
 }
 
-pub(crate) fn cluster_part_view_to_dto(view: ClusterPartView) -> ClusterPartDto {
+pub fn cluster_part_view_to_dto(view: ClusterPartView) -> ClusterPartDto {
     let (group, scene) = match view.kind {
         ClusterRecordKind::Channel => (Some(view.local), None),
         ClusterRecordKind::Scene => (None, Some(view.local)),
