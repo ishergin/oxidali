@@ -125,7 +125,9 @@ fn record_bit(key: SliceKey) -> Option<u8> {
         SliceKey::Policies => Some(POLICIES),
         SliceKey::HomeAssistantSettings => Some(HOME_ASSISTANT_SETTINGS),
         SliceKey::DisplaySettings => Some(DISPLAY_SETTINGS),
-        SliceKey::ClusterSettings => Some(CLUSTER_SETTINGS),
+        SliceKey::ClusterSettings | SliceKey::ClusterChannelParts | SliceKey::ClusterSceneParts => {
+            Some(CLUSTER_SETTINGS)
+        }
         _ => None,
     }
 }
@@ -744,6 +746,8 @@ mod tests {
             SliceKey::HomeAssistantSettings,
             SliceKey::DisplaySettings,
             SliceKey::ClusterSettings,
+            SliceKey::ClusterChannelParts,
+            SliceKey::ClusterSceneParts,
         ];
         let mut named = 0;
         for key in keys {

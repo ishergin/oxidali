@@ -75,6 +75,8 @@ pub(crate) struct DirtyFlags {
     pub redundancy_settings: AtomicBool,
     pub display_settings: AtomicBool,
     pub cluster_settings: AtomicBool,
+    pub cluster_channel_parts: AtomicBool,
+    pub cluster_scene_parts: AtomicBool,
     pub policies: AtomicBool,
     pub home_assistant_settings: AtomicBool,
     pub input_devices: AtomicBool,
@@ -99,6 +101,8 @@ impl DirtyFlags {
             redundancy_settings: AtomicBool::new(false),
             display_settings: AtomicBool::new(false),
             cluster_settings: AtomicBool::new(false),
+            cluster_channel_parts: AtomicBool::new(false),
+            cluster_scene_parts: AtomicBool::new(false),
             policies: AtomicBool::new(false),
             home_assistant_settings: AtomicBool::new(false),
             input_devices: AtomicBool::new(false),
@@ -123,6 +127,8 @@ impl DirtyFlags {
             (&self.redundancy_settings, withheld::REDUNDANCY_SETTINGS),
             (&self.display_settings, withheld::DISPLAY_SETTINGS),
             (&self.cluster_settings, withheld::CLUSTER_SETTINGS),
+            (&self.cluster_channel_parts, withheld::CLUSTER_CHANNEL_PARTS),
+            (&self.cluster_scene_parts, withheld::CLUSTER_SCENE_PARTS),
             (&self.policies, withheld::POLICIES),
             (&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS),
             (&self.input_devices, withheld::INPUT_DEVICES),
@@ -246,6 +252,18 @@ impl DirtyFlags {
         take_cluster_settings_dirty,
         cluster_settings,
         withheld::CLUSTER_SETTINGS
+    );
+    global_dirty_flag!(
+        mark_cluster_channel_parts_dirty,
+        take_cluster_channel_parts_dirty,
+        cluster_channel_parts,
+        withheld::CLUSTER_CHANNEL_PARTS
+    );
+    global_dirty_flag!(
+        mark_cluster_scene_parts_dirty,
+        take_cluster_scene_parts_dirty,
+        cluster_scene_parts,
+        withheld::CLUSTER_SCENE_PARTS
     );
     global_dirty_flag!(mark_policies_dirty, take_policies_dirty, policies, withheld::POLICIES);
     global_dirty_flag!(
@@ -378,6 +396,7 @@ pub(crate) struct Inner {
     pub(crate) cluster_settings: super::cluster_settings::ClusterSettingsRecord,
     pub(crate) cluster_stage: Option<super::cluster_settings::ClusterStage>,
     pub(crate) cluster_records: super::cluster_records::ClusterRecords,
+    pub(crate) cluster_parts: super::cluster_parts::ClusterParts,
     pub(crate) policies: super::policies::PoliciesRecord,
     pub(crate) home_assistant_settings:
         super::home_assistant_settings::HomeAssistantSettingsRecord,
@@ -419,6 +438,7 @@ impl Inner {
             hcl_schedule_refused: HashMap::with_capacity(psram_capacity::SCHEDULES),
             input_devices: HashMap::with_capacity(psram_capacity::SMALL_ROWS),
             cluster_records: super::cluster_records::ClusterRecords::preallocated(),
+            cluster_parts: super::cluster_parts::ClusterParts::preallocated(),
             config_write_stage: HashMap::with_capacity(
                 super::config_write_stage::MAX_CONFIG_WRITE_STAGES,
             ),

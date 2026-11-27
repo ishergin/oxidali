@@ -43,6 +43,8 @@ pub enum ClusterRecordConflict {
     StaleRevision,
     NodeNumberPinned,
     NonceTaken,
+    RecordNotLive,
+    RecordLinked,
 }
 
 impl ClusterRecordConflict {
@@ -55,6 +57,8 @@ impl ClusterRecordConflict {
             Self::StaleRevision => "cluster_stale_revision",
             Self::NodeNumberPinned => "cluster_node_number_pinned",
             Self::NonceTaken => "cluster_nonce_taken",
+            Self::RecordNotLive => "cluster_record_not_live",
+            Self::RecordLinked => "cluster_record_linked",
         }
     }
 }

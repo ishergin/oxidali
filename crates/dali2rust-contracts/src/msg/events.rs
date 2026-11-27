@@ -20,7 +20,7 @@ use super::state::{
 };
 use super::wire::DaliEventPayload;
 
-pub const MAX_PERSISTENCE_SLICES: usize = 153;
+pub const MAX_PERSISTENCE_SLICES: usize = 155;
 pub const MAX_PERSISTENCE_ERRORS: usize = 150;
 
 pub const MQTT_RULE_PAYLOAD_BYTES: usize = 48;
@@ -45,6 +45,8 @@ pub enum PersistenceSliceKind {
     PhysicalDeviceBank { adapter_id: u8, bank: u8 },
     DisplaySettings,
     ClusterSettings,
+    ClusterChannelParts,
+    ClusterSceneParts,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

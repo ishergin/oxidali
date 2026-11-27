@@ -1,5 +1,5 @@
 use dali2rust_contracts::msg::{
-    ClusterRecordUpdateCommand, ClusterSettingsCommitCommand, ClusterSettingsUpdateCommand,
+    ClusterPartUpdateCommand, ClusterRecordUpdateCommand, ClusterSettingsCommitCommand, ClusterSettingsUpdateCommand,
     ClusterTextUpdateCommand,
 };
 
@@ -18,6 +18,10 @@ pub(super) fn handle_cluster_text_update(ctx: &CommandCtx<'_>, body: &ClusterTex
 
 pub(super) fn handle_cluster_record_update(ctx: &CommandCtx<'_>, body: &ClusterRecordUpdateCommand) {
     stage(ctx, body.series, ClusterPatch::Record(body.clone()));
+}
+
+pub(super) fn handle_cluster_part_update(ctx: &CommandCtx<'_>, body: &ClusterPartUpdateCommand) {
+    stage(ctx, body.series, ClusterPatch::Part(body.clone()));
 }
 
 pub(super) fn handle_cluster_settings_commit(ctx: &CommandCtx<'_>, body: &ClusterSettingsCommitCommand) {

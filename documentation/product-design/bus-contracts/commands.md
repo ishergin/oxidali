@@ -39,7 +39,7 @@
 |---|---|---|---|---|
 | Конфигурация реестра | адаптер; виртуальная лампа (метаданные, bind/rebind/unbind, удаление записи); физическое устройство (override, notes, удаление); устройство ввода (метаданные, notes); метаданные группы и сцены | registry worker | HTTP | подтверждение + apply-watch |
 | Настройки контроллера | поллер, DALI, Home Assistant (настройки, пароль брокера, префиксы топиков, `controller_id` + `HomeAssistantSettingsCommitCommand`), отказоустойчивость, политики, дисплей | registry worker | HTTP; флип `applicationActive` — ещё воркер арбитража и `DaliWorker` после передачи шины | подтверждение + apply-watch; флип от воркеров — внутренний факт |
-| Настройки и записи узла кластера | `ClusterSettingsUpdateCommand`, `ClusterRecordUpdateCommand` (создание, переименование, удаление записи канала или сцены), `ClusterTextUpdateCommand` (имя кластера, имя записи) + `ClusterSettingsCommitCommand` | registry worker | HTTP | подтверждение + apply-watch |
+| Настройки и записи узла кластера | `ClusterSettingsUpdateCommand`, `ClusterRecordUpdateCommand` (создание, переименование, удаление записи канала или сцены), `ClusterTextUpdateCommand` (имя кластера, имя записи), `ClusterPartUpdateCommand` (связь группы или сцены адаптера с записью или её снятие) + `ClusterSettingsCommitCommand` | registry worker | HTTP | подтверждение + apply-watch |
 | Забыть узел кластера | `ClusterForgetNodeCommand` | воркер кластера | HTTP | подтверждение запроса (`204`; слышимый узел — `409 node_heard`) |
 | Чанковые записи | матрица групп и матрица сцены (patch/replace) + `ConfigWriteCommitCommand`; `HclScheduleUpsertCommand` | registry worker | HTTP | `202` + операция `config_write` |
 | Удаление расписания HCL | `HclScheduleDeleteCommand` | registry worker | HTTP | подтверждение запроса (`204`) |
@@ -94,6 +94,8 @@
   Запись канала или сцены едет той же серией: одна `ClusterRecordUpdateCommand` и
   не больше одного имени записи. Номер, поколение и ревизию выдаёт реестр при коммите;
   `nonce` метки рождения берёт обработчик, и по нему же он находит созданную запись.
+  Часть едет своей серией: одна `ClusterPartUpdateCommand` и коммит; ревизию выдаёт
+  реестр, а живость записи своего блока он проверяет при коммите.
 - `HomeAssistantControllerIdUpdateCommand` маски не имеет — публикация и есть patch;
   пустой `controller_id` отвергается на REST. Что мост делает при смене префиксов и
   `controller_id` — [`../runtime-modules/mqtt-home-assistant/README.md`](../runtime-modules/mqtt-home-assistant/README.md).

@@ -17,7 +17,8 @@ pub use bounded::{
     FixedText32, FixedText48, FixedText60, FixedText64, FixedText96,
 };
 pub use cluster::{
-    ClusterBirthMark, ClusterForwarding, ClusterRecordAction, ClusterRecordKind, ClusterSubject, ClusterTextField,
+    ClusterBirthMark, ClusterForwarding, ClusterPartLink, ClusterRecordAction, ClusterRecordKind, ClusterRecordRef,
+    ClusterSubject, ClusterTextField,
 };
 pub use commands::{
     MAX_RULES_SOURCE_BYTES, RULE_SOURCE_CHUNK_BYTES,operation_ttl_ms, BusCommandPayload, COMMAND_VARIANT_NAMES};
@@ -118,7 +119,8 @@ pub use commands::{
 pub use commands::PollerSettingsUpdateCommand;
 pub use commands::DisplaySettingsUpdateCommand;
 pub use commands::{
-    ClusterForgetNodeCommand, ClusterRecordUpdateCommand, ClusterSettingsCommitCommand, ClusterSettingsField,
+    ClusterForgetNodeCommand, ClusterPartUpdateCommand, ClusterRecordUpdateCommand, ClusterSettingsCommitCommand,
+    ClusterSettingsField,
     ClusterSettingsUpdateCommand, ClusterTextUpdateCommand,
 };
 pub use events::{ClusterSettingsChangedEvent, ClusterStateChangedEvent};

@@ -29,6 +29,19 @@ pub struct ClusterBirthMark {
     pub nonce: u32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClusterRecordRef {
+    pub number: u8,
+    pub mark: ClusterBirthMark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClusterPartLink {
+    pub record: ClusterRecordRef,
+    pub send: bool,
+    pub accept: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ClusterRecordKind {
     Channel,
@@ -71,6 +84,13 @@ mod tests {
     fn the_birth_mark_is_the_generation_then_the_nonce() {
         let mark = ClusterBirthMark { generation: 1, nonce: 2 };
         assert_eq!(postcard::to_allocvec(&mark).expect("encodes"), [1, 2]);
+    }
+
+    #[test]
+    fn a_part_link_is_the_record_then_send_then_accept() {
+        let record = ClusterRecordRef { number: 20, mark: ClusterBirthMark { generation: 1, nonce: 2 } };
+        let link = ClusterPartLink { record, send: true, accept: false };
+        assert_eq!(postcard::to_allocvec(&link).expect("encodes"), [20, 1, 2, 1, 0]);
     }
 
     mod erased {

@@ -236,6 +236,15 @@ filtered: they address one device.
   block; a record whose generation was never issued, whose index repeats or leaves the
   block, or whose revision is `0` breaks the slice. A reset also erases the records and
   the generation memory: a record another node's part names is gone for it.
+- The node's parts — a group or a scene of one adapter linked to a channel or
+  cluster-scene record — live in two slices of their own, `cluster_channel_parts` and
+  `cluster_scene_parts`, so a part is not a reason to bump the settings slice. A part
+  names its record by number and birth mark and is not removed with the record: a
+  record deleted under it leaves an orphan that names a mark no live record carries. A
+  part out of range, out of order, with generation or revision `0`, or a record linked
+  twice on one adapter breaks its slice; a reset erases that kind's parts and nothing
+  else. Liveness is checked when a part is written, not kept: after a node-number change
+  a stored part may name a number of the new block with a mark no live record carries.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

@@ -83,6 +83,14 @@ pub enum RouteKey {
     ClusterSceneGet,
     ClusterSceneRename,
     ClusterSceneDelete,
+    ClusterChannelPartsList,
+    ClusterChannelPartGet,
+    ClusterChannelPartPut,
+    ClusterChannelPartDelete,
+    ClusterScenePartsList,
+    ClusterScenePartGet,
+    ClusterScenePartPut,
+    ClusterScenePartDelete,
     SettingsDaliGet,
     SettingsDaliPatch,
     SettingsRedundancyGet,
@@ -392,6 +400,38 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
     (RouteKey::ClusterSceneGet, HttpMethod::Get, "/api/v1/cluster/scenes/{number}"),
     (RouteKey::ClusterSceneRename, HttpMethod::Patch, "/api/v1/cluster/scenes/{number}"),
     (RouteKey::ClusterSceneDelete, HttpMethod::Delete, "/api/v1/cluster/scenes/{number}"),
+    (RouteKey::ClusterChannelPartsList, HttpMethod::Get, "/api/v1/cluster/channel-parts"),
+    (
+        RouteKey::ClusterChannelPartGet,
+        HttpMethod::Get,
+        "/api/v1/cluster/channel-parts/{adapter_id}/{group_id}",
+    ),
+    (
+        RouteKey::ClusterChannelPartPut,
+        HttpMethod::Put,
+        "/api/v1/cluster/channel-parts/{adapter_id}/{group_id}",
+    ),
+    (
+        RouteKey::ClusterChannelPartDelete,
+        HttpMethod::Delete,
+        "/api/v1/cluster/channel-parts/{adapter_id}/{group_id}",
+    ),
+    (RouteKey::ClusterScenePartsList, HttpMethod::Get, "/api/v1/cluster/scene-parts"),
+    (
+        RouteKey::ClusterScenePartGet,
+        HttpMethod::Get,
+        "/api/v1/cluster/scene-parts/{adapter_id}/{scene_id}",
+    ),
+    (
+        RouteKey::ClusterScenePartPut,
+        HttpMethod::Put,
+        "/api/v1/cluster/scene-parts/{adapter_id}/{scene_id}",
+    ),
+    (
+        RouteKey::ClusterScenePartDelete,
+        HttpMethod::Delete,
+        "/api/v1/cluster/scene-parts/{adapter_id}/{scene_id}",
+    ),
     (
         RouteKey::SettingsDaliGet,
         HttpMethod::Get,
@@ -606,7 +646,7 @@ mod route_table_tests {
 
     #[test]
     fn route_table_is_complete_and_unique() {
-        assert_eq!(ROUTE_TABLE.len(), 110, "route table row count");
+        assert_eq!(ROUTE_TABLE.len(), 118, "route table row count");
         let mut keys = HashSet::new();
         let mut routes = HashSet::new();
         for (key, method, path) in ROUTE_TABLE {
