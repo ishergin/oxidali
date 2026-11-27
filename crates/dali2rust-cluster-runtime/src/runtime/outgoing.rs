@@ -146,6 +146,14 @@ impl Line {
         self.entries.iter().flatten().filter(|queued| queued.relative()).count()
     }
 
+    const fn has_room(&self) -> bool {
+        self.len < LINE
+    }
+
+    fn tail_order(&self) -> Option<u32> {
+        self.orders.get(self.len.checked_sub(1)?).copied()
+    }
+
     fn push(&mut self, queued: Queued, order: u32) {
         if let (Some(place), Some(stamp)) = (self.entries.get_mut(self.len), self.orders.get_mut(self.len)) {
             *place = Some(queued);
@@ -167,7 +175,7 @@ impl Line {
         Some((self.entries.get_mut(last)?.as_mut()?, self.orders.get_mut(last)?))
     }
 
-    fn join(&mut self, queued: Queued, order: u32) -> Admission {
+    fn join(&mut self, queued: Queued, order: u32, crossed: bool) -> Admission {
         if queued.relative() {
             if self.relatives() >= RELATIVE_LINE {
                 return Admission::Dropped(queued);
@@ -175,7 +183,8 @@ impl Line {
             self.push(queued, order);
             return Admission::Later { superseded: None };
         }
-        if let Some((tail, stamp)) = self.tail_mut().filter(|(tail, _)| !tail.relative()) {
+        let replaceable = !crossed || !self.has_room();
+        if let Some((tail, stamp)) = self.tail_mut().filter(|(tail, _)| replaceable && !tail.relative()) {
             let folded = queued.folded_over(Some(&*tail));
             *stamp = order;
             return Admission::Later { superseded: Some(mem::replace(tail, folded)) };
@@ -280,10 +289,11 @@ impl Outgoing {
     pub(crate) fn admit(&mut self, queued: Queued, now_ms: u32) -> Admission {
         self.prune(now_ms);
         let key = TargetKey::of(&queued.request.action);
-        let (copying, behind, order) = (self.copying(), self.behind_another(key), self.stamp());
+        let (copying, behind, crossed) = (self.copying(), self.behind_another(key), self.crossed_since_tail(key));
+        let order = self.stamp();
         if let Some(slot) = self.slot_mut(key) {
             if behind || !slot.line.is_empty() || !slot.spaced(queued.spacing_ms(), now_ms) {
-                return slot.line.join(queued, order);
+                return slot.line.join(queued, order, crossed);
             }
             if !copying {
                 return Admission::Now(queued);
@@ -318,6 +328,14 @@ impl Outgoing {
 
     fn behind_another(&self, key: TargetKey) -> bool {
         self.held().any(|slot| slot.key.is_some_and(|other| other != key && other.overlaps(key)) && !slot.line.is_empty())
+    }
+
+    fn crossed_since_tail(&self, key: TargetKey) -> bool {
+        let Some(tail) = self.held().find(|slot| slot.key == Some(key)).and_then(|slot| slot.line.tail_order()) else {
+            return false;
+        };
+        let overlapping = self.held().filter(|other| other.key.is_some_and(|other| other != key && other.overlaps(key)));
+        overlapping.filter_map(|other| other.line.tail_order()).any(|later| earlier(tail, later))
     }
 
     fn first_in_order(&self, slot: &Slot) -> bool {

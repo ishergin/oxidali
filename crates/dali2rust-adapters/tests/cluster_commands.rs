@@ -294,3 +294,15 @@ fn a_step_still_waiting_when_the_cluster_goes_off_is_counted_and_never_sent_late
     assert!((sent..=sent * 2).contains(&carried), "{carried} datagrams for {sent} sent: nothing went out after the cluster went off");
     assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP; HELD_STEPS], "every step ran here once");
 }
+
+#[test]
+fn a_step_that_cannot_leave_is_counted_as_dropped() {
+    let (hub, first, second) = running_pair();
+    both_send_and_accept_group_5(&first, &second);
+    hub.refuse_sends(true);
+    step_up_group_5(&first);
+    let counted = || first.stat("relative_verbs_dropped_total") == 1;
+    assert!(try_wait_until(counted, SETTLE), "the unsent step is counted: {}", first.read("/api/v1/stats")["cluster"]);
+    assert_eq!(first.stat("commands_sent_total"), 0, "nothing left the first node");
+    assert_eq!(first.sent_frames(), [GROUP_5_STEP_UP], "the first node stepped its own group");
+}

@@ -6,7 +6,7 @@ use crate::presence::OwnMode;
 
 use super::super::counters::bump;
 use super::super::execute::{is_supported, Gate, Stamp};
-use super::super::outgoing::{Admission, Due, Queued, Repeat, TargetKey};
+use super::super::outgoing::{is_relative, Admission, Due, Queued, Repeat, TargetKey};
 use super::{confirm, ClusterWorkerPorts, NodeSender, Reading};
 
 pub const CONTROLLER_PASSIVE: &str = "controller_passive";
@@ -96,6 +96,9 @@ impl NodeSender<'_> {
         let header = self.next_header(reading);
         let key = TargetKey::of(&command.action);
         if !self.transmit_command(&header, &command) {
+            if is_relative(&command.action) {
+                bump(&self.ports.counters.relative_verbs_dropped_total);
+            }
             return self.refuse(correlation_id, ErrorCode::ExecutionFailed, CLUSTER_SEND_FAILED);
         }
         if !forwarded {

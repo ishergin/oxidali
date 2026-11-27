@@ -388,7 +388,7 @@ fn a_step_to_all_lamps_never_overtakes_a_setpoint_on_a_channel_given_before_it()
 }
 
 #[test]
-fn a_channel_waits_for_nothing_on_another_channel_and_a_later_setpoint_takes_its_place_in_order() {
+fn a_channel_waits_for_nothing_on_another_channel_and_a_later_setpoint_never_replaces_across_all_lamps() {
     let arrivals = [
         (START_MS, queued(1, setpoint(3, 100))),
         (START_MS + 10, queued(2, setpoint(3, 150))),
@@ -396,9 +396,45 @@ fn a_channel_waits_for_nothing_on_another_channel_and_a_later_setpoint_takes_its
         (START_MS + 35, queued(4, on_all(level(10)))),
         (START_MS + 40, queued(5, setpoint(3, 200))),
     ];
-    let (sent, refused) = drive(&arrivals, START_MS + 400);
+    let (sent, refused) = drive(&arrivals, START_MS + 600);
     assert_eq!(sent.get(1), Some(&(START_MS + 30, 3)), "another channel left at once: {sent:?}");
     let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
-    assert_eq!(order, vec![1, 3, 4, 5], "the replacement keeps the order it was given in: {sent:?}");
-    assert_eq!(refused, vec![Admission::Later { superseded: Some(queued(2, setpoint(3, 150))) }]);
+    assert_eq!(order, vec![1, 3, 2, 4, 5], "each lands in the order it was given: {sent:?}");
+    assert!(refused.is_empty(), "nothing given before all lamps is replaced after it: {refused:?}");
+}
+
+fn forwarded_as(correlation_id: u64, request: ClusterCommandCommand) -> Queued {
+    Queued { correlation_id, request, forwarded: true }
+}
+
+#[test]
+fn a_forwarded_setpoint_is_never_folded_over_one_waiting_before_a_step_to_all_lamps() {
+    let on_warm = LightSetpoint { power: PowerState::On, level: Some(100), color: warm_white() };
+    let colour_only = LightSetpoint { power: PowerState::Unknown, level: None, color: warm_white() };
+    let arrivals = [
+        (START_MS, queued(1, setpoint(3, 50))),
+        (START_MS + 5, forwarded_as(2, on_channel(3, on_warm, SourceClass::Hcl))),
+        (START_MS + 10, queued(3, on_all(LightVerb::Transition(LevelTransition::StepUp)))),
+        (START_MS + 15, forwarded_as(4, on_channel(3, colour_only, SourceClass::Hcl))),
+    ];
+    let (sent, refused) = drive(&arrivals, START_MS + 600);
+    let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
+    assert_eq!(order, vec![1, 2, 3, 4], "the step lands on the level given before it: {sent:?}");
+    assert!(refused.is_empty(), "the level is not carried past the step: {refused:?}");
+}
+
+#[test]
+fn a_full_line_crossed_by_all_lamps_still_takes_the_last_setpoint_as_its_last_word() {
+    let arrivals: Vec<(u32, Queued)> = (0..24_u8)
+        .map(|n| {
+            let request = if n % 2 == 0 { setpoint(3, n) } else { on_all(level(n)) };
+            (START_MS + u32::from(n), queued(u64::from(n) + 1, request))
+        })
+        .collect();
+    let (sent, refused) = drive(&arrivals, START_MS + 4000);
+    let order: Vec<u64> = sent.iter().map(|(_, id)| *id).collect();
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "never out of order: {order:?}");
+    assert_eq!(order.last(), Some(&24), "the last command given is the last word: {order:?}");
+    assert!(order.contains(&23), "the last setpoint of the channel still lands: {order:?}");
+    assert!(refused.iter().all(|admitted| matches!(admitted, Admission::Later { superseded: Some(_) })), "{refused:?}");
 }
