@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DS_DIR="$ROOT/web/design-system"
 STAMP_NAME=".pushed.sha256"
 STAMP_FILE="$DS_DIR/$STAMP_NAME"
-PROJECT_ID="0f3fcd66-9619-445b-b9bc-51bc578eefd9"
+DESIGN_SYSTEM_URL="https://claude.ai/artifact/Pp9mKJk2akZYummf1CbfZP"
 
 die() {
   echo "verify_design_system_pushed: $*" >&2
@@ -31,7 +31,7 @@ current_manifest() {
 
 if [[ "${1:-}" == "--stamp" ]]; then
   current_manifest >"$STAMP_FILE"
-  echo "verify_design_system_pushed: stamped $(wc -l <"$STAMP_FILE" | tr -d ' ') files as pushed to $PROJECT_ID"
+  echo "verify_design_system_pushed: stamped $(wc -l <"$STAMP_FILE" | tr -d ' ') files as pushed to $DESIGN_SYSTEM_URL"
   echo "  commit $STAMP_NAME together with the cards it covers."
   exit 0
 fi
@@ -71,10 +71,11 @@ while IFS= read -r p; do [[ -n "$p" ]] && echo "  new, never pushed:   $p" >&2; 
 while IFS= read -r p; do [[ -n "$p" ]] && echo "  edited since push:   $p" >&2; done <"$tmp/edited"
 while IFS= read -r p; do [[ -n "$p" ]] && echo "  deleted, still live: $p" >&2; done <"$tmp/deleted"
 echo >&2
-echo "  The design system is canonical and the project is where it lives, so a card" >&2
-echo "  that exists only here is a UI change nobody can review. Push it with the" >&2
-echo "  DesignSync tool (/design-sync, localDir = web/design-system, project id" >&2
-echo "  $PROJECT_ID) — write_files for the first" >&2
-echo "  two lists, delete_files for the third — then re-run this script with" >&2
-echo "  --stamp and commit $STAMP_NAME alongside." >&2
+echo "  The design system is canonical and its artifact is where it lives, so a card" >&2
+echo "  that exists only here is a UI change nobody can review. Publish it with the" >&2
+echo "  Artifact tool to $DESIGN_SYSTEM_URL:" >&2
+echo "  each card of the first two lists at project/<its path here> as text/plain," >&2
+echo "  each of the third mapped to null. Read the cards back, then re-run this" >&2
+echo "  script with --stamp and commit $STAMP_NAME alongside" >&2
+echo "  (documentation/architecture/10-build-release-and-tooling.md, Embedded web UI)." >&2
 exit 1

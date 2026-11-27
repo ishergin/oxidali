@@ -404,9 +404,10 @@ UI rules).
 - A card is edited in place to show the current design and why it is so; its history
   goes in the commit, never in the card.
 - The embedded bundle (`bash scripts/build_web_ui.sh`) and the push of the cards to the
-  Claude Design project (`/design-sync`, then `verify_design_system_pushed.sh --stamp`)
-  are the maintainer's sync, landed by pull request before a flash: `hil flash` refuses a
-  stale bundle, and `just verify-release` and CI on `main` report both.
+  design system's Claude artifact (the Artifact tool, then
+  `verify_design_system_pushed.sh --stamp`; 10 §Embedded web UI) are the maintainer's
+  sync, landed by pull request before a flash: `hil flash` refuses a stale bundle, and
+  `just verify-release` and CI on `main` report both.
 
 ## Code style
 

@@ -119,7 +119,7 @@ jobs:
         continue-on-error: true
         run: bash scripts/verify_web_mirror_fresh.sh
 
-      - name: The design cards are pushed to Claude Design
+      - name: The design cards are pushed to the design system
         continue-on-error: true
         run: bash scripts/verify_design_system_pushed.sh
 
