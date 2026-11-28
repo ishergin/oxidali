@@ -171,8 +171,56 @@ unseen. A forwarded HCL tick keeps on the receiving node the wire priority an HC
 at home, not that of a cluster command, for which the contract gets a second cluster
 origin. `UP` and `DOWN` travel as the dim command, a step as the step command and a stopped
 fade by its applied fact, and the operator gives them through the `dim` verb of a group's
-or a channel's target state. Missing still is the sniffer's publication of a foreign `UP`,
-`DOWN` and stopped fade, which it only counts.
+or a channel's target state.
+
+### Following a foreign master
+
+The foreign master reaches the cluster through the same trigger and sender as every other
+source. The sniffer publishes what it understood of a foreign frame — a setpoint, a level
+transition, `UP` and `DOWN` as a dimming observation, a `DAPC` of MASK as a stopped fade,
+a scene recall as its recalled fact — and the cluster worker forwards it under the foreign
+master's switch, with the source class foreign master and this node's wire stamped as
+executed, so no node on that wire executes it again. Only the wire's owner forwards; a
+command to one lamp and a fact of cluster origin never go. The sniffer hears no frame of
+its own: the interrupt pushes only receptions into its ring, and a frame of ours is the
+session's transmit event, so everything it publishes is foreign.
+
+A neighbour on the wire executes its own command at once and sends it to the cluster
+behind its line, so the owner also hears that frame as foreign. The owner therefore holds
+each observation at the head of an ordered queue, and the neighbour's command executed on
+this wire with the same target and verb cancels it:
+
+- A relative verb is held for the neighbour's full relative line plus the network: four
+  relative verbs at their 50 ms spacing and 20 ms of latency, 220 ms. One neighbour
+  command cancels one observation; a cancel heard before its observation waits 70 ms for
+  it.
+- A setpoint is held 70 ms, the relative spacing and the latency. It is cancelled only by a
+  command that agrees with every field it states, the level through `dapc_level()`, and
+  that command supersedes every earlier setpoint held for its target: the colour frames
+  before a `DAPC`, a slider's intermediate values. A setpoint that leaves before its
+  neighbour's command arrives is a duplicate of the same value or an intermediate one the
+  later command overwrites, so a slider on a neighbour leaves every wire at its last
+  value.
+- The queue holds eight observations; a ninth pushes the head out early, which is counted,
+  rather than lose a foreign command. The echoes waiting for their observation have the
+  same bound, and an evicted one is counted the same way.
+- The owner is decided when the observation is heard. A change of owner mid-hold does not
+  recall it, and a node that stops running drops what it holds and counts the relative
+  verbs lost. Silence on the neighbour's side simply lets the observation leave after its
+  hold.
+- Alone on its wire a node holds nothing.
+
+While two nodes both think they own the wire — the window this record already allows —
+both hold and forward, and each one's copy arrives after the other has released its own,
+so a relative verb may run twice on the other wires for that window. The latency figure is
+a design value: the hold against a real neighbour's line is owed to the bench.
+
+A neighbour on this wire without protection, or this node's protection off on a wire that
+became shared, is a storm in the making: the owner reports `unprotected_wire` in its status
+and forwards no foreign frame while it lasts, and a chain of wires already stops the owner.
+These are run-time checks because only pulses show them. What the settings can see is
+refused when written: protection off while the foreign master is forwarded on a wire this
+node names after another, as before, or on its own wire while a live neighbour names it.
 
 ### The bus rules hold
 
@@ -196,10 +244,10 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   `sdkconfig.p4.defaults`, which only a flash proves.
 - The cluster's counters are a block in `/api/v1/stats`, and its worker one more command,
   event and confirmation subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 7936 against a measured worst case of 7935,
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 8128 against a measured worst case of 8119,
   `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8832 against 8805. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
-  of 15857: eight nodes and 24 ignored boards, every text at its widest. The per-node
+  of 15881: eight nodes and 24 ignored boards, every text at its widest. The per-node
   summary of announced channel and scene info goes out in one `ClusterInfo` frame, whose
   ceiling is 2048 against a measured worst case of 1277. The floor of
   internal SRAM moves only by a census on the board.

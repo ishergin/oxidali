@@ -132,8 +132,10 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   carry a tag of their own, so it recognises its commands without a table of pending
   ones.
 - The cluster worker declares the applied facts — target state, level transition, stopped
-  fade, scene recall, the last also from the sniffer translator — and forwards the ones the
-  cluster sends. The stopped fade's fact has no other consumer: the DALI worker publishes it
+  fade, scene recall, the last also from the sniffer translator — and the sniffer's
+  observation, and forwards the ones the cluster sends. The observation is required: it is
+  the only carrier of a foreign master's command to the cluster, and its `UP`, `DOWN` and
+  stopped fade have no other consumer. The stopped fade's fact has no other consumer: the DALI worker publishes it
   required, as the only carrier of an executed `DAPC(MASK)`, and confirms the command only
   once it is queued. One fact follows one executed command or one observed frame, so they arrive at the pace of the wire and its funnel is not sized for
   a burst.
