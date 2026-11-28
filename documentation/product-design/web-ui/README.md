@@ -101,13 +101,13 @@
 |---|---|---|
 | `#/` | Dashboard | — |
 | `#/devices`, `#/devices/{sa}[/{tab}]` | Физические устройства: список и карточка с вкладками | [`commissioning.md`](commissioning.md) (секция Commissioning), [`lamp-state.md`](lamp-state.md) |
-| `#/lamps` | Виртуальные лампы | [`lamp-state.md`](lamp-state.md) |
+| `#/lamps` | Виртуальные лампы; пока кластер включён, колонка Cluster даёт адрес лампы в кластере `N1·VL6` | [`lamp-state.md`](lamp-state.md) |
 | `#/input-devices`, `#/input-devices/{sa}[/{n}]` | Устройства ввода и их инстансы | [`rules.md`](rules.md) |
 | `#/groups` | Матрица групп; столбец группы в канале кластера закрыт | [`groups.md`](groups.md) |
 | `#/scenes`, `#/scenes/{id}` | Сцены и редактор матрицы | — |
 | `#/hcl`, `#/hcl/{id}` | Расписания HCL и редактор | [`hcl.md`](hcl.md) |
 | `#/rules` | Документ правил и живая лента | [`rules.md`](rules.md) |
-| `#/cluster`, `#/cluster/scenes`, `#/cluster/{channels\|scenes}/{n}` | Каналы и сцены кластера, часть этого узла, команды | [`cluster-control.md`](cluster-control.md) |
+| `#/cluster`, `#/cluster/scenes`, `#/cluster/{channels\|scenes}/{n}`, `#/cluster/inputs` | Каналы и сцены кластера, их состояние, часть этого узла, команды; входные устройства всех узлов | [`cluster-control.md`](cluster-control.md) |
 | `#/operations`, `#/operations/{id}` | Операции | — |
 | `#/stats` | Продуктовая сводка | [`stats.md`](stats.md) |
 | `#/console` | DALI-консоль (диагностика) с панелью expert-шагов | [`commissioning.md`](commissioning.md) |

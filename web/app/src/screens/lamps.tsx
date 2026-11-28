@@ -4,6 +4,7 @@ import type { PhysicalDeviceSummary, VirtualLamp, VirtualLampPatch } from '../ap
 import { EditableName, LampState, LevelSlider, Switch, useConfirmTap } from '../components/ui'
 import { ADAPTER, pad2 } from '../format'
 import { useLive } from '../hooks'
+import { clusterStatus } from '../cluster-feed'
 import { errorMessage, mutate, notify } from '../toast'
 
 const VL_ID_MAX = 63
@@ -18,13 +19,33 @@ function deviceOptionLabel(dev: PhysicalDeviceSummary): string {
   return `SA ${pad2(dev.short_address)} · ${dev.device_type_effective}${name}`
 }
 
+const BASE_COLUMNS = 7
+
+function clusterNode(): number | null {
+  const own = clusterStatus.value?.status.own
+  return own && own.state !== 'off' ? own.node_number : null
+}
+
+function ClusterCell({ node, id }: { node: number | null; id: number }) {
+  if (node === null) return null
+  return (
+    <td>
+      <span class="vlid">
+        N{node}·VL{id}
+      </span>
+    </td>
+  )
+}
+
 function LampRow({
   lamp,
   freeDevices,
+  node,
   onDone,
 }: {
   lamp: VirtualLamp
   freeDevices: FreeDevice[]
+  node: number | null
   onDone: () => void
 }) {
   const id = lamp.virtual_lamp_id
@@ -96,6 +117,7 @@ function LampRow({
       <td>
         <span class="vlid">VL {pad2(id)}</span>
       </td>
+      <ClusterCell node={node} id={id} />
       <td>
         <EditableName
           cls={`name-edit${lamp.name ? '' : ' name-faint'}`}
@@ -173,11 +195,13 @@ function LampRow({
 function NewLampRow({
   freeIds,
   freeDevices,
+  columns,
   onCancel,
   onDone,
 }: {
   freeIds: number[]
   freeDevices: FreeDevice[]
+  columns: number
   onCancel: () => void
   onDone: () => void
 }) {
@@ -190,7 +214,7 @@ function NewLampRow({
 
   return (
     <tr class="editor-row">
-      <td colSpan={7}>
+      <td colSpan={columns}>
         <span class="bind-edit">
           <span class="lbl">New virtual lamp</span>
           <select class="sel" value={vlId} onChange={(e) => setVlId(e.currentTarget.value)}>
@@ -258,6 +282,8 @@ export function Lamps() {
   const unbound = lamps.filter((l) => l.binding == null)
 
   const rowDone = () => void reload()
+  const node = clusterNode()
+  const columns = node === null ? BASE_COLUMNS : BASE_COLUMNS + 1
 
   return (
     <>
@@ -283,11 +309,18 @@ export function Lamps() {
         <b>Unbound lamps stage state:</b> level and color set on an unbound lamp are kept in the
         registry and pushed to hardware when the lamp is bound to a short address.
       </p>
+      {node !== null && (
+        <p class="hint">
+          <b>Cluster</b> is the lamp's address in the cluster, <span class="vlid">N{node}·VL6</span>: node {node},
+          lamp 6 — the name other nodes, their rules and the cluster's lamp list give it.
+        </p>
+      )}
 
       <div class="table-wrap">
         <table>
           <colgroup>
             <col style="width:64px" />
+            {node !== null && <col style="width:86px" />}
             <col />
             <col style="width:88px" />
             <col style="width:96px" />
@@ -298,6 +331,7 @@ export function Lamps() {
           <thead>
             <tr>
               <th>VL</th>
+              {node !== null && <th>Cluster</th>}
               <th>Name</th>
               <th>Binding</th>
               <th>HA entity</th>
@@ -311,6 +345,7 @@ export function Lamps() {
               <NewLampRow
                 freeIds={freeIds}
                 freeDevices={freeDevices}
+                columns={columns}
                 onCancel={() => setCreating(false)}
                 onDone={() => {
                   setCreating(false)
@@ -323,12 +358,13 @@ export function Lamps() {
                 key={lamp.virtual_lamp_id}
                 lamp={lamp}
                 freeDevices={freeDevices}
+                node={node}
                 onDone={rowDone}
               />
             ))}
             {unbound.length > 0 && (
               <tr class="group-row" onClick={() => setShowUnbound(!showUnbound)}>
-                <td colSpan={7}>
+                <td colSpan={columns}>
                   <span class="tri">{showUnbound ? '▾' : '▸'}</span> Unbound virtual lamps (
                   {unbound.length})
                 </td>
@@ -340,6 +376,7 @@ export function Lamps() {
                   key={lamp.virtual_lamp_id}
                   lamp={lamp}
                   freeDevices={freeDevices}
+                  node={node}
                   onDone={rowDone}
                 />
               ))}

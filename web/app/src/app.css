@@ -1182,6 +1182,16 @@ table.hcl-points tr:hover td { background: rgba(35,44,56,.5); }
 .ctable td.num { font-family: var(--mono); color: var(--text-muted); width: 76px; }
 .ctable td.nm-col { white-space: normal; }
 .ctable td.nm-col .chip { margin-left: 6px; }
+.ctable td.state-col { white-space: normal; min-width: 150px; }
+.state-col .lampstate { white-space: normal; flex-wrap: wrap; }
+.wirefault { font-size: 11.5px; color: var(--err); }
+.wirefault a { color: var(--info); text-decoration: none; }
+.toolbar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
+.ctable tr.group-row td { cursor: default; }
+.ctable tr.group-row:hover td { background: var(--raised); }
+tr.group-row .unit { margin-left: 8px; font-weight: 400; }
+tr.lastheard td { color: var(--text-faint); }
+tr.lastheard td .nm { color: var(--text-faint); font-weight: 400; }
 .exprow { cursor: pointer; }
 .exprow:hover td { background: var(--hover); }
 .exprow.open > td { border-bottom-color: transparent; }

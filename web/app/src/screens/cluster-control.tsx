@@ -6,8 +6,10 @@ import type {
   ClusterNode,
   ClusterNodePart,
   ClusterRecord,
+  ClusterRecordItem,
   ClusterSettings,
   ClusterStatus,
+  TargetStateRequest,
 } from '../api/types'
 import { statusOnly, useClusterStatus } from '../cluster-feed'
 import { Chip, SelChip, Switch, useConfirmTap } from '../components/ui'
@@ -55,6 +57,7 @@ import {
   offeredLocals,
   orphanName,
   orphansOf,
+  ownPartOf,
   strayFace,
   parseRecordNumber,
   partNodes,
@@ -73,13 +76,25 @@ import {
   takenText,
   unreadText,
 } from './cluster-records'
+import { ClusterInputsTab } from './cluster-inputs'
 import { Select, StandbyBanner, refusalFrom, usePeerUrl } from './cluster-shared'
+import {
+  type StateView,
+  blockHolds,
+  blockNote,
+  channelState,
+  channelGaps,
+  partSilent,
+  partState,
+  wireFaultText,
+} from './cluster-state'
 import { ageText, nodeHref, nodeLine } from './cluster-view'
 
 const SETTINGS_HREF = '#/settings/cluster'
 const SETTINGS_CAUSES = new Set(['cluster_no_address', 'cluster_not_running'])
 const TAB_HREF: Record<Kind, string> = { channel: '#/cluster', scene: '#/cluster/scenes' }
 const TAB_TITLE: Record<Kind, string> = { channel: 'Channels', scene: 'Scenes' }
+const INPUTS_HREF = '#/cluster/inputs'
 const CARD_TITLE: Record<Kind, string> = { channel: 'Channels', scene: 'Cluster scenes' }
 const NEW_LABEL: Record<Kind, string> = { channel: 'New channel', scene: 'New scene' }
 const LOCAL_NOUN: Record<Kind, string> = { channel: 'group', scene: 'scene' }
@@ -266,7 +281,7 @@ function BlindLevel({ label, off, onLevel }: { label: string; off: boolean; onLe
 
 function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   const label = recordLabel('channel', rec.number)
-  const send = (title: string, body: ReturnType<typeof levelBody>) =>
+  const send = (title: string, body: TargetStateRequest) =>
     ctx.command(rec, `${label} ${title}`, () => api.clusterChannelTarget(rec.number, body))
   return (
     <span class="btns">
@@ -275,6 +290,14 @@ function ChannelControls({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
       </button>
       <button class="btn sm" disabled={ctx.readOnly} onClick={() => send('off', { power: 'off' })}>
         Off
+      </button>
+      <button class="btn sm" disabled={ctx.readOnly} aria-label={`Step ${label} down`} title="One step down"
+        onClick={() => send('step down', { dim: 'step_down' })}>
+        −
+      </button>
+      <button class="btn sm" disabled={ctx.readOnly} aria-label={`Step ${label} up`} title="One step up"
+        onClick={() => send('step up', { dim: 'step_up' })}>
+        +
       </button>
       <BlindLevel label={label} off={ctx.readOnly} onLevel={(level) => send(`level ${level}`, levelBody(level))} />
     </span>
@@ -307,12 +330,38 @@ function NameChips({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
     <>
       {edits > 0 && <Chip cls="warn">{edits === 1 ? '1 edit' : `${edits} edits`}</Chip>}
       {rec.source === 'stale' && <Chip cls="muted">home node {rec.home_node} silent</Chip>}
+      {rec.source === 'copy' && <Chip cls="muted">home node {rec.home_node} not heard</Chip>}
       {ignores && <Chip cls="muted">{ignores}</Chip>}
     </>
   )
 }
 
-function RecordRow({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
+function StateMark({ view }: { view: StateView }) {
+  return (
+    <span class={`lampstate ${view.cls}`}>
+      <span class="lampdot" />
+      <span class="lamplv">{view.label}</span>
+      {view.tail && <span class="lampcq">{view.tail}</span>}
+    </span>
+  )
+}
+
+function StateCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecordItem }) {
+  const view = channelState(rec.state, channelGaps(rec, ctx.world.all.channel, ctx.status, ctx.world.unread.channel.length > 0 || ctx.world.infoUnread), rec.source)
+  return (
+    <td class="state-col">
+      <StateMark view={view} />
+    </td>
+  )
+}
+
+const DETAIL_COLUMNS: Record<Kind, number> = { channel: 5, scene: 4 }
+
+function span(kind: Kind): number {
+  return DETAIL_COLUMNS[kind]
+}
+
+function RecordRow({ ctx, rec }: { ctx: Ctx; rec: ClusterRecordItem }) {
   const label = recordLabel(ctx.kind, rec.number)
   const open = ctx.isOpen(rec.number)
   return (
@@ -335,17 +384,18 @@ function RecordRow({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
       </td>
       <td class="unit">{homeCell(rec)}</td>
       <NodesCell ctx={ctx} rec={rec} />
+      {ctx.kind === 'channel' && <StateCell ctx={ctx} rec={rec} />}
       <Controls ctx={ctx} rec={rec} />
     </tr>
   )
 }
 
-function RowError({ err }: { err: RowErr | undefined }) {
+function RowError({ err, kind }: { err: RowErr | undefined; kind: Kind }) {
   if (!err) return null
   return (
     <tr class="rowerr">
       <td />
-      <td colSpan={4} role="alert">
+      <td colSpan={span(kind)} role="alert">
         Not sent: {err.text}
         {err.settings && (
           <>
@@ -457,6 +507,34 @@ function PartFlags({ ctx, rec, shown }: { ctx: Ctx; rec: ClusterRecord; shown: P
   )
 }
 
+function WireFault({ ctx, part }: { ctx: Ctx; part: ClusterNodePart }) {
+  const text = wireFaultText(ctx.kind, part, localLabel(ctx.kind, localOf(part), part.adapter), ctx.me)
+  if (!text || !part.wire_fault) return null
+  const node = part.wire_fault.node
+  const sn = node === ctx.me ? null : statusNode(ctx, node)
+  return (
+    <div class="mrow">
+      <span class="wirefault" role="alert">
+        {text}
+        {sn && (
+          <>
+            {' '}
+            <a href={nodeHref(sn)} target="_blank" rel="noopener noreferrer">
+              Open node {node}
+            </a>
+          </>
+        )}
+      </span>
+    </div>
+  )
+}
+
+function PartStateMark({ ctx, part, silent }: { ctx: Ctx; part: ClusterNodePart; silent: boolean }) {
+  if (ctx.kind !== 'channel') return null
+  const view = partState(part, silent)
+  return view && <StateMark view={view} />
+}
+
 function OwnPart({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   const { kind, world, draft } = ctx
   const key = recordKey(kind, rec)
@@ -466,6 +544,7 @@ function OwnPart({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   const options = withShown(localOptions(kind, world.locals[kind], world.own[kind], draft, key), kind, shown.local)
   const board = ctx.status?.own.board
   const note = partNote(kind, rec.number, shown)
+  const server = key in draft.parts ? null : ownPartOf(rec, world.own[kind])
   return (
     <>
       <div class="mrow">
@@ -482,8 +561,10 @@ function OwnPart({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
           onPick={(local) => ctx.edit((d) => editPart(d, kind, rec, world.own[kind], { local }), key)}
         />
         {shown.local !== null && <PartFlags ctx={ctx} rec={rec} shown={shown} />}
+        {server && <PartStateMark ctx={ctx} part={server} silent={false} />}
         {err && <span class="fielderr">{err}</span>}
       </div>
+      {server && <WireFault ctx={ctx} part={server} />}
       {note && (
         <div class="mrow">
           <span class="mnote">{note}</span>
@@ -551,9 +632,11 @@ function OtherPart({ ctx, rec, node, part }: { ctx: Ctx; rec: ClusterRecord; nod
         <span class="flag">{part.send ? 'sends' : 'does not send'}</span>
         <span class="flag">{part.accept ? 'accepts' : 'does not accept'}</span>
         {part.source === 'stale' && <Chip cls="muted">as last heard</Chip>}
+        <PartStateMark ctx={ctx} part={part} silent={partSilent(part, ctx.status)} />
         <span class="mgrow" />
         <OpenNode node={sn} />
       </div>
+      <WireFault ctx={ctx} part={part} />
       {!part.accept && (
         <div class="mrow">
           <span class="mnote">{ignoreNote(ctx.kind, rec.number, node)}</span>
@@ -564,7 +647,7 @@ function OtherPart({ ctx, rec, node, part }: { ctx: Ctx; rec: ClusterRecord; nod
 }
 
 function OtherParts({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
-  const parts = useRecordParts(ctx, rec).filter((p) => p.node !== ctx.me && p.link === 'live')
+  const parts = useRecordParts(ctx, rec).filter((p) => p.node !== ctx.me && p.link !== 'orphan')
   const nodes = new Set([...parts.map((p) => p.node), ...(ctx.status?.nodes ?? []).map((n) => n.node)])
   nodes.delete(ctx.me)
   return (
@@ -582,7 +665,7 @@ function RecordDetail({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
   return (
     <tr class="expdetail">
       <td />
-      <td colSpan={4}>
+      <td colSpan={span(ctx.kind)}>
         <div class="members">
           <NameRow ctx={ctx} rec={rec} />
           <OwnPart ctx={ctx} rec={rec} />
@@ -622,6 +705,7 @@ function OrphanRow({ ctx, part }: { ctx: Ctx; part: ClusterNodePart }) {
       </td>
       <td class="unit">this node</td>
       <td class="nodes">{localLabel(ctx.kind, local, part.adapter)} of this node</td>
+      {ctx.kind === 'channel' && <td class="state-col" />}
       <td class="acts-col">
         <button
           class={sure ? 'btn sm sure' : 'btn sm'}
@@ -637,7 +721,7 @@ function OrphanRow({ ctx, part }: { ctx: Ctx; part: ClusterNodePart }) {
 
 function RecordTable({ ctx }: { ctx: Ctx }) {
   const records = ctx.world.records[ctx.kind]
-  const orphans = orphansOf(ctx.world.own[ctx.kind])
+  const orphans = orphansOf(ctx.world.own[ctx.kind], ctx.world.records[ctx.kind])
   const scene = ctx.kind === 'scene'
   return (
     <div class="table-wrap">
@@ -648,6 +732,7 @@ function RecordTable({ ctx }: { ctx: Ctx }) {
             <th>Name</th>
             <th>Home</th>
             <th>{scene ? 'Recalls on' : 'Nodes'}</th>
+            {!scene && <th>State</th>}
             <th class="acts-col">{scene ? '' : 'Control'}</th>
           </tr>
         </thead>
@@ -664,11 +749,11 @@ function RecordTable({ ctx }: { ctx: Ctx }) {
   )
 }
 
-function RecordRows({ ctx, rec }: { ctx: Ctx; rec: ClusterRecord }) {
+function RecordRows({ ctx, rec }: { ctx: Ctx; rec: ClusterRecordItem }) {
   return (
     <>
       <RecordRow ctx={ctx} rec={rec} />
-      <RowError err={ctx.rowErr[`${ctx.kind}:${rec.number}`]} />
+      <RowError err={ctx.rowErr[`${ctx.kind}:${rec.number}`]} kind={ctx.kind} />
       {ctx.isOpen(rec.number) && <RecordDetail ctx={ctx} rec={rec} />}
     </>
   )
@@ -887,8 +972,10 @@ function RecordsCard({ ctx }: { ctx: Ctx }) {
   useEffect(() => setStrip(null), [ctx.kind])
   const toggle = (next: Strip) => setStrip(strip === next ? null : next)
   const presetLabel = ctx.kind === 'channel' ? "From this node's groups…" : 'Same numbers'
-  const off = ctx.readOnly || ctx.busy
-  const empty = ctx.world.records[ctx.kind].length === 0 && orphansOf(ctx.world.own[ctx.kind]).length === 0
+  const block = ctx.status?.own.block
+  const off = ctx.readOnly || ctx.busy || blockHolds(block)
+  const note = ctx.readOnly ? null : blockNote(ctx.status?.own, ctx.me)
+  const empty = ctx.world.records[ctx.kind].length === 0 && orphansOf(ctx.world.own[ctx.kind], ctx.world.records[ctx.kind]).length === 0
   return (
     <div class="card">
       <header>
@@ -902,8 +989,9 @@ function RecordsCard({ ctx }: { ctx: Ctx }) {
           </button>
         </span>
       </header>
-      {strip === 'new' && <NewRecord ctx={ctx} onClose={() => setStrip(null)} />}
-      {strip === 'preset' && <Presets ctx={ctx} onClose={() => setStrip(null)} />}
+      {note && <p class="req">{note}</p>}
+      {strip === 'new' && !off && <NewRecord ctx={ctx} onClose={() => setStrip(null)} />}
+      {strip === 'preset' && !off && <Presets ctx={ctx} onClose={() => setStrip(null)} />}
       {empty ? <EmptyRecords kind={ctx.kind} /> : <RecordTable ctx={ctx} />}
     </div>
   )
@@ -981,16 +1069,21 @@ function Head({ world, status }: { world: World | null; status: ClusterStatus | 
   )
 }
 
-function Tabs({ kind, world }: { kind: Kind; world: World }) {
+type View = Kind | 'inputs'
+
+function Tabs({ view, world }: { view: View; world: World }) {
   return (
     <>
       <div class="ptabs">
         {(['channel', 'scene'] as const).map((k) => (
-          <a key={k} class={k === kind ? 'ptab active' : 'ptab'} href={TAB_HREF[k]}>
+          <a key={k} class={k === view ? 'ptab active' : 'ptab'} href={TAB_HREF[k]}>
             {TAB_TITLE[k]}
             <span class="hint">{world.records[k].length}</span>
           </a>
         ))}
+        <a class={view === 'inputs' ? 'ptab active' : 'ptab'} href={INPUTS_HREF}>
+          Inputs
+        </a>
       </div>
       <div class="ptabline" />
     </>
@@ -1111,15 +1204,21 @@ function Page({ children }: { children: ComponentChildren }) {
 const SCENES_HINT =
   "A cluster scene recalls, on each node, the scene chosen for it there. What a scene sets is edited in that node's scene editor."
 
-function Loaded({ ctx, rd, peerUrl }: { ctx: Ctx; rd: ReturnType<typeof useRecordDraft>; peerUrl: string | null }) {
+function Loaded(p: { ctx: Ctx; view: View; rd: ReturnType<typeof useRecordDraft>; peerUrl: string | null }) {
+  const { ctx, rd, view } = p
+  const settings = ctx.world.settings
   return (
     <Page>
       <Head world={ctx.world} status={ctx.status} />
-      <Banners world={ctx.world} peerUrl={peerUrl} />
-      <Tabs kind={ctx.kind} world={ctx.world} />
-      {ctx.kind === 'scene' && <p class="hint">{SCENES_HINT}</p>}
+      <Banners world={ctx.world} peerUrl={p.peerUrl} />
+      <Tabs view={view} world={ctx.world} />
+      {view === 'scene' && <p class="hint">{SCENES_HINT}</p>}
       <Outcomes outcomes={rd.outcomes} onClose={rd.closeOutcomes} />
-      <RecordsCard ctx={ctx} />
+      {view === 'inputs' ? (
+        <ClusterInputsTab me={ctx.me} share={settings.share_input_events} status={ctx.status} />
+      ) : (
+        <RecordsCard ctx={ctx} />
+      )}
       {!ctx.readOnly && (
         <ApplyBar draft={rd.draft} busy={rd.busy} onDiscard={rd.discard} onApply={() => void rd.apply()} />
       )}
@@ -1142,6 +1241,7 @@ function Waiting({ world, status, error }: { world: World | null; status: Cluste
 
 export function ClusterControl({ tab, open }: { tab?: string; open?: string }) {
   const kind: Kind = tab === 'scenes' ? 'scene' : 'channel'
+  const view: View = tab === 'inputs' ? 'inputs' : kind
   const { data: world, error, reload } = useLive(readWorld, ['cluster'], { onEvent: statusOnly })
   const status = useClusterStatus().read?.status ?? null
   const peerUrl = usePeerUrl(world?.settings.read_only ?? false)
@@ -1157,5 +1257,5 @@ export function ClusterControl({ tab, open }: { tab?: string; open?: string }) {
     command: (rec, title, send) => command(kind, rec, title, send),
     armed, tap, reload: () => void reload(), ...rows,
   }
-  return <Loaded ctx={ctx} rd={rd} peerUrl={peerUrl} />
+  return <Loaded ctx={ctx} view={view} rd={rd} peerUrl={peerUrl} />
 }

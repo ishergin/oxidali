@@ -216,6 +216,14 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
       <span class="glyph">◍</span>
       <span class="name">dali2rust</span>
     </div>
+    <a class="nodeline err" href="#"><span class="board">dali-0a11f3</span><span class="node">Node 1 · another board holds it too</span></a>
+    <div class="navitem active">Dashboard</div>
+  </div>
+  <div class="side">
+    <div class="brand">
+      <span class="glyph">◍</span>
+      <span class="name">dali2rust</span>
+    </div>
     <a class="nodeline err" href="#"><span class="board">dali-9b07e4</span><span class="node">Pair split · see Redundancy</span></a>
     <div class="navitem active">Dashboard</div>
   </div>
@@ -223,7 +231,9 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
     <b>Cluster off: nothing.</b> A controller that is not in a cluster shows no line at
     all, for the same reason the active unit gets no badge. In a cluster the line counts
     the other nodes this one has heard; a silent one turns it to warn. A number taken by
-    another board, a split pair, a port that would not bind are faults and read in err.
+    another board, a number another board holds as well (the node's block is contested, so
+    no channel or scene can be created, renamed or deleted), a split pair, a port that
+    would not bind are faults and read in err.
     The line links to Settings → Cluster, or to Redundancy for a split pair. It reads the
     cluster status, pushed on the <span class="mono">cluster</span> channel of the
     WebSocket and polled while the socket is down.

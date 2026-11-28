@@ -237,6 +237,7 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
   <div class="panel">
     <h2>Share and accept</h2>
     <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Share input events</div><div class="d">Key presses and sensor reports of this node's input devices reach the other nodes, which list them under Control → Cluster → Inputs. This changes no light by itself.</div></div><div class="ctl"><span class="toggle on"><i></i></span></div></div>
       <div class="srow"><div class="lbl"><div class="n">Send “all lamps” commands</div><div class="d">A broadcast given on this node's DALI bus is sent to every node.</div></div><div class="ctl"><span class="toggle"><i></i></span></div></div>
       <div class="srow"><div class="lbl"><div class="n">Accept “all lamps” commands</div><div class="d">A cluster-wide “all” becomes a broadcast on this node's DALI bus.</div></div><div class="ctl"><span class="toggle"><i></i></span></div></div>
     </div>
@@ -253,6 +254,35 @@ body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font
 
   <div class="footer-bar idle"><span class="n">No unsaved changes</span><span class="spacer"></span><button class="btn ghost" disabled>Discard</button><button class="btn primary" disabled>Apply</button></div>
   <p class="note"><b>Open</b> goes to that node's own web UI at its address. <b>Forget</b> appears only on a silent node: a node still heard would come back with its next pulse.</p>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Shared DALI bus — the foreign master's hold, an unprotected bus, an unsettled block</span><span class="ln"></span></div>
+  <div class="panel">
+    <h2>This node</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">Status</div></div><div class="ctl"><span class="verdict ok">running</span><div class="addr">dali-51c0aa</div></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Channel and scene numbers</div><div class="d">For a moment after it starts, the node listens to its neighbours and takes back any record of its block they keep a copy of. Until then channels and scenes of this node cannot be created, renamed or deleted.</div></div><div class="ctl"><span class="verdict">listening to the neighbours</span></div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Forward group commands given by</h2>
+    <div class="body">
+      <div class="chips"><span class="selchip on">Operator</span><span class="selchip on">Home Assistant</span><span class="selchip">HCL</span><span class="selchip on">Foreign master</span></div>
+      <div class="hint">Commands to this node's own groups go to the cluster when their source is on.</div>
+      <div class="hint">This node shares its DALI bus. The node that executes on it holds a foreign master's command about 70 ms, and dimming about 220 ms, before forwarding it: a neighbour's own frame for the same lamps cancels it in that time, so the light is not changed twice.</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>DALI bus</h2>
+    <div class="body">
+      <div class="srow"><div class="lbl"><div class="n">This node's DALI bus</div></div><div class="ctl"><span class="sel">Same bus as node 1 · dali-9b07e4</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">On the shared bus</div></div><div class="ctl"><span class="verdict">node 1 executes · dali-9b07e4</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Foreign master</div><div class="d">Loop protection is off on this shared bus at node 1 (dali-9b07e4). Turn it on there, or stop forwarding the foreign master.</div></div><div class="ctl"><span class="verdict err">not forwarded · bus unprotected</span></div></div>
+      <div class="srow"><div class="lbl"><div class="n">Loop protection</div><div class="d">Cannot be turned off while the foreign master is forwarded and the bus is shared.</div></div><div class="ctl"><span class="toggle on"><i></i></span></div></div>
+    </div>
+  </div>
+  <p class="note">The hold is said only while this node shares its bus: alone on its bus the node forwards at once. <b>Foreign master · not forwarded</b> appears while the status raises <b>unprotected_wire</b>: the foreign master is forwarded, the bus is shared, and loop protection is off here or at a live neighbour on the bus; the row names that node, or this one, and what to turn on. <b>Channel and scene numbers</b> appears while the block is not settled: <b>listening to the neighbours</b> after a start (<b>waiting for this node to run</b> while it has no address, no port or a taken number), <b>another board holds this number</b> in err while the number is contested, and plain words for a standby (edits go to the active board) and for a cluster that is off (records are edited as stored).</p>
 </div>
 
 <div class="page">

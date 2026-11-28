@@ -5,6 +5,7 @@ import type {
   ClusterPart,
   ClusterPartWrite,
   ClusterRecord,
+  ClusterRecordItem,
   ClusterRecordKind,
 } from '../api/types.js'
 import { ADAPTER } from '../format.js'
@@ -106,8 +107,8 @@ export interface Draft {
 export const EMPTY_DRAFT: Draft = { names: {}, parts: {} }
 
 export interface Records {
-  channel: ClusterRecord[]
-  scene: ClusterRecord[]
+  channel: ClusterRecordItem[]
+  scene: ClusterRecordItem[]
 }
 
 export interface OwnParts {
@@ -512,8 +513,12 @@ export function partNodes(info: ClusterInfo | null, kind: Kind, ownNode: number)
   return [...nodes].sort((a, b) => a - b)
 }
 
-export function orphansOf(own: ClusterNodePart[]): ClusterNodePart[] {
-  return own.filter((p) => p.link !== 'live').sort((a, b) => a.record.number - b.record.number)
+export function orphansOf(own: ClusterNodePart[], records: Marked[] = []): ClusterNodePart[] {
+  const listed = (p: ClusterNodePart) =>
+    records.some((r) => r.number === p.record.number && sameMark(r.birth_mark, p.record.birth_mark))
+  return own
+    .filter((p) => p.link === 'orphan' || (p.link === 'unknown' && !listed(p)))
+    .sort((a, b) => a.record.number - b.record.number)
 }
 
 export function orphanName(kind: Kind, part: ClusterNodePart, records: ClusterRecord[]): string {

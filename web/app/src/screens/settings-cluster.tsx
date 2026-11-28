@@ -1,19 +1,23 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { ApiError, api } from '../api/client'
-import type { ClusterInfo, ClusterNode, ClusterSettings, ClusterStatus } from '../api/types'
+import type { ClusterInfo, ClusterNode, ClusterOwn, ClusterSettings, ClusterStatus } from '../api/types'
 import { type StatusRead, useClusterInfo, useClusterStatus } from '../cluster-feed'
 import { Card, Chip, EditableText, FieldRow, SelChip, Switch, useConfirmTap } from '../components/ui'
 import { useSettingsDraft, useTick } from '../hooks'
 import { errorMessage, notify } from '../toast'
 import { Select, StandbyBanner, refusalFrom, usePeerUrl } from './cluster-shared'
 import {
+  BLOCK_HINT,
+  FOREIGN_HOLD,
+  UNPROTECTED_VERDICT,
   type ClusterField,
   type Draft,
   NO_DRAFT,
   type Refusal,
   type Tone,
   type Verdict,
+  blockVerdict,
   clipName,
   draftOnRead,
   editDraft,
@@ -23,6 +27,7 @@ import {
   forgettable,
   heardVerdict,
   ignoredReason,
+  inListeningRound,
   nodeHref,
   nodeNumberOptions,
   nodesEmptyText,
@@ -31,7 +36,9 @@ import {
   parsePort,
   pinReason,
   settingsShown,
+  sharesWire,
   showsHomeAssistant,
+  unprotectedText,
   unsavedLine,
   wireOptions,
 } from './cluster-view'
@@ -80,7 +87,6 @@ function ThisNode({
   info,
   storedPort,
 }: PanelProps & { status: ClusterStatus | null; info: ClusterInfo | null; storedPort: number }) {
-  const own = status?.own
   return (
     <Card title="This node">
       <FieldRow
@@ -104,10 +110,25 @@ function ThisNode({
       </FieldRow>
       <NodeNumberRow s={s} edit={edit} refusal={refusal} readOnly={readOnly} status={status} info={info} />
       <PortRow s={s} edit={edit} refusal={refusal} readOnly={readOnly} />
+      <StatusRows own={status?.own} storedPort={storedPort} />
+    </Card>
+  )
+}
+
+function StatusRows({ own, storedPort }: { own: ClusterOwn | undefined; storedPort: number }) {
+  const block = own ? blockVerdict(own) : null
+  const listening = own !== undefined && own.block === 'listening' && inListeningRound(own)
+  return (
+    <>
       <FieldRow label="Status" hint={own?.board ? <span class="mono">{own.board}</span> : undefined}>
         {own ? <VerdictChip v={ownVerdict(own, storedPort)} /> : <span class="unit">reading…</span>}
       </FieldRow>
-    </Card>
+      {block && (
+        <FieldRow label="Channel and scene numbers" hint={listening ? BLOCK_HINT : undefined}>
+          <VerdictChip v={block} />
+        </FieldRow>
+      )}
+    </>
   )
 }
 
@@ -334,7 +355,8 @@ const SOURCES: [keyof ClusterSettings & `forward_${string}`, string][] = [
   ['forward_foreign_master', 'Foreign master'],
 ]
 
-function Forwarding({ s, edit, readOnly }: PanelProps) {
+function Forwarding({ s, edit, readOnly, status }: PanelProps & { status: ClusterStatus | null }) {
+  const hold = s.forward_foreign_master && sharesWire(status?.own, status?.nodes ?? [], s.wire_same_as)
   return (
     <Card title="Forward group commands given by">
       <FieldRow
@@ -350,6 +372,7 @@ function Forwarding({ s, edit, readOnly }: PanelProps) {
           ))}
         </div>
       </FieldRow>
+      {hold && <p class="hint">{FOREIGN_HOLD}</p>}
     </Card>
   )
 }
@@ -377,11 +400,38 @@ function ShareAccept({ s, edit, readOnly }: PanelProps) {
           onToggle={() => edit({ accept_all_lamps: !s.accept_all_lamps })}
         />
       </FieldRow>
+      <FieldRow
+        label="Share input events"
+        hint="Key presses and sensor reports of this node's input devices reach the other nodes, which list them under Control → Cluster → Inputs. This changes no light by itself."
+      >
+        <Switch
+          on={s.share_input_events}
+          disabled={readOnly}
+          onToggle={() => edit({ share_input_events: !s.share_input_events })}
+        />
+      </FieldRow>
     </Card>
   )
 }
 
-function DaliBus({ s, edit, refusal, readOnly, status }: PanelProps & { status: ClusterStatus | null }) {
+function UnprotectedRow({ status, protectedHere }: { status: ClusterStatus | null; protectedHere: boolean }) {
+  const text = status ? unprotectedText(status.own, status.nodes, protectedHere) : null
+  if (!text) return null
+  return (
+    <FieldRow label="Foreign master" hint={text}>
+      <VerdictChip v={UNPROTECTED_VERDICT} />
+    </FieldRow>
+  )
+}
+
+function DaliBus({
+  s,
+  edit,
+  refusal,
+  readOnly,
+  status,
+  stored,
+}: PanelProps & { status: ClusterStatus | null; stored: boolean }) {
   return (
     <Card title="DALI bus">
       <FieldRow
@@ -404,6 +454,7 @@ function DaliBus({ s, edit, refusal, readOnly, status }: PanelProps & { status: 
       >
         {status ? <VerdictChip v={executorVerdict(status.own)} /> : <span class="unit">reading…</span>}
       </FieldRow>
+      <UnprotectedRow status={status} protectedHere={stored} />
       <FieldRow
         label="Loop protection"
         hint="Cannot be turned off while the foreign master is forwarded and the bus is shared."
@@ -521,9 +572,9 @@ export function SettingsCluster() {
       <NodesHeard read={read} readOnly={readOnly} reload={reload} />
       <Ignored status={status} />
       <Dim on={readOnly}>
-        <Forwarding {...props} />
+        <Forwarding {...props} status={status} />
         <ShareAccept {...props} />
-        <DaliBus {...props} status={status} />
+        <DaliBus {...props} status={status} stored={data.wire_protection} />
       </Dim>
       {!readOnly && (
         <ApplyBar patch={patch} busy={busy} onDiscard={discard} onApply={apply} />
