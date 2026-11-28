@@ -227,7 +227,7 @@
 | Записи с таким номером нет ни в реестре, ни в сведениях её домашнего узла | `404 not_found` |
 | Номер записи в пути вне `0..127` | `400 invalid_resource_id` |
 | Запись в `POST`, `PATCH` или `DELETE` на резервной плате | `409 controller_standby` |
-| Запись в `POST`, `PATCH` или `DELETE`, пока узел слушает свой круг | `409 conflict`, `message: cluster_block_unsettled` |
+| Запись в `POST`, `PATCH` или `DELETE`, пока узел слушает свой круг или его круг отработан для прежнего номера узла | `409 conflict`, `message: cluster_block_unsettled` |
 | Запись в `POST`, `PATCH` или `DELETE`, пока номер узла держит ещё одна плата | `409 conflict`, `message: cluster_node_contested` |
 | `home_node`, `birth_mark`, `revision` в `POST`; `number`, `home_node`, `birth_mark` в `PATCH` | `422 unsupported_field` |
 | Номер вне `0..127`, имя длиннее 64 байт, нет имени или ревизии, значение неверного типа | `422 invalid_value` |

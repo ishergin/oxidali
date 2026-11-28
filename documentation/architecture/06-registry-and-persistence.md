@@ -256,15 +256,17 @@ filtered: they address one device.
   parts that can name a copy (`MAX_CLUSTER_COPIES_PER_KIND`, one per part), and its widest
   case fits the slots after the installed tail, which a test holds. A copy out of order, of
   a number past the last, with generation or revision `0` or a name past 64 bytes breaks
-  its slice; an older image does not know the slices and leaves them unread. A reset or a
+  its slice; an older image does not know the slices and leaves them unread and
+  unerased, so an upgrade finds them as they were before the downgrade. A reset or a
   bump erases that kind's copies and nothing else: a record whose home is not heard is then
   not listed, and a replaced home node cannot take that record back until its home is
   heard again.
 - The registry takes a record of its own block back only on the cluster worker's command,
   and never on the standby: it adopts a copy into an empty position whose generation memory
-  is below the copy's generation, raises the memory of an empty position to the highest
-  generation its peers name there, and refreshes a live record only at the same mark with a
-  higher revision. A live record is never replaced.
+  is below the copy's generation, raises the memory of a position, live or empty, to the
+  highest generation its peers name there, and refreshes a live record only at the same mark
+  with a higher revision. A live record is never replaced, and generation `u32::MAX` is never
+  taken, so no position is left without a next generation.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

@@ -113,7 +113,8 @@ is on when some node was commanded on and has a lit member.
 A node's settings are written only through its own REST. A datagram changes no composition,
 link, flag or gear. From announcements a node persists two things only: the name of a
 record another node is home to, at a higher revision, and — after a home node is replaced —
-the records of its own block, taken back from the copies its peers hold.
+the records of its own block, taken back from the copies its peers hold, each named by a
+part of the peer that announces it.
 
 An edit of another node's part is relayed over HTTP by the node the browser has open: one
 thread, one connection, an answer of `202` with an operation, and an outcome the neighbour
