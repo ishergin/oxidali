@@ -233,7 +233,7 @@ impl ClusterPresence {
             _ => {}
         }
         if admitted.feeds_info() {
-            self.hear_member(&decoded, Heard { now_ms: delivery.now_ms, era, own_node }, counters, info);
+            self.hear_member(&decoded, HeardAt { now_ms: delivery.now_ms, era, own_node }, counters, info);
         } else if matches!(decoded.frame, Frame::ChannelSceneInfo(_)) {
             counters.count_unfed_page(admitted.member, admitted.taken);
         }
@@ -257,7 +257,7 @@ impl ClusterPresence {
         Some((admitted, info.era(), state.own.node_no))
     }
 
-    fn hear_member(&self, decoded: &Decoded<'_>, at: Heard, counters: &ClusterCounters, info: &ClusterInfo) {
+    fn hear_member(&self, decoded: &Decoded<'_>, at: HeardAt, counters: &ClusterCounters, info: &ClusterInfo) {
         match &decoded.frame {
             Frame::Hello(_) => self.hello_heard.store(true, Relaxed),
             Frame::ChannelSceneInfo(page) => feed_info(info, &decoded.header, page, at, counters),
@@ -484,7 +484,7 @@ fn ignored_view(roster: &Roster<'_>, board: &HeardBoard, reason: IgnoredReason) 
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Heard {
+struct HeardAt {
     now_ms: u32,
     era: u32,
     own_node: u8,
@@ -494,10 +494,10 @@ fn feed_info(
     info: &ClusterInfo,
     header: &Header,
     page: &crate::frame::InfoPage<'_>,
-    heard: Heard,
+    heard: HeardAt,
     counters: &ClusterCounters,
 ) {
-    let Heard { now_ms, era, own_node } = heard;
+    let HeardAt { now_ms, era, own_node } = heard;
     let at = Arrival { node: header.node_no, own_node, mac: header.sender_mac, epoch: header.boot_epoch, now_ms };
     counters.count_page(info.take_page(at, page, era));
 }

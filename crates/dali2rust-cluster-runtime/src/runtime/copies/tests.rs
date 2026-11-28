@@ -63,6 +63,10 @@ impl ClusterPresenceReadPort for World {
     fn ignored_board(&self, _index: usize) -> Option<IgnoredView> {
         None
     }
+
+    fn neighbour_names_wire(&self, _node: u8, _wire: u8) -> bool {
+        false
+    }
 }
 
 impl ClusterInfoReadPort for World {
