@@ -31,6 +31,7 @@ pub struct OwnStatus {
     pub boot_epoch: Option<u32>,
     pub wire_owner: WireOwner,
     pub faults: OwnFaults,
+    pub shares_wire: bool,
     pub held_by: Option<[u8; 6]>,
 }
 
@@ -365,6 +366,7 @@ impl PresenceState {
             boot_epoch,
             wire_owner: roster.wire_owner(),
             faults: roster.faults(),
+            shares_wire: roster.shares_wire(),
             held_by: roster.rival().filter(|_| waiting).map(|board| board.mac),
         }
     }

@@ -8,17 +8,18 @@ use dali2rust_contracts::msg::{
     ClusterTextUpdateCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::{CLUSTER_NODE_COUNT, MAX_CLUSTER_NAME_BYTES};
+use dali2rust_domain::registry::{ClusterSettingsConflict, CLUSTER_NODE_COUNT, MAX_CLUSTER_NAME_BYTES};
 
 use crate::confirmation_bridge::PendingConfirmationSlots;
-use crate::http::cluster_settings_state::{ClusterSettingsApplyWatch, ClusterSettingsHttpState};
+use crate::http::cluster_settings_state::{ClusterSettingsApplyWatch, ClusterSettingsDto, ClusterSettingsHttpState};
+use crate::http::cluster_status_state::ClusterStatusHttpState;
 use crate::http::dispatcher::{publish_batch_and_wait_for_success, CorrelationIdAllocator};
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    check_body_keys, json_err, json_stream_dto, parse_bool_field, parse_json_body, require_get,
+    check_body_keys, json_err, json_err_with_message, json_stream_dto, parse_bool_field, parse_json_body, require_get,
     wait_apply_counter, MutatingHandler, APPLY_WATCH_BUDGET_MS,
 };
 
@@ -44,6 +45,8 @@ const WRITABLE_KEYS: &[&str] = &[
     "accept_single_lamps",
     "wire_protection",
 ];
+
+const WIRE_GUARD_FIELDS: [Field; 3] = [Field::Wire, Field::ForwardForeignMaster, Field::WireProtection];
 
 const FLAGS: [(&str, Field); 9] = [
     ("enabled", Field::Enabled),
@@ -86,6 +89,7 @@ declare_handler_shell!(ClusterSettingsPatchHandler {
     apply_watch: Arc<dyn ClusterSettingsApplyWatch>,
     bus_id: BusId,
     timeout_ms: u64,
+    presence: Arc<dyn ClusterStatusHttpState>,
 });
 
 pub struct ClusterPatchData {
@@ -119,6 +123,27 @@ impl ClusterSettingsPatchHandler {
     }
 }
 
+impl ClusterSettingsPatchHandler {
+    fn refuse_unprotecting_a_heard_wire(&self, patch: &ClusterSettingsUpdateCommand) -> Result<(), HttpResponse> {
+        if !WIRE_GUARD_FIELDS.into_iter().any(|field| patch.patches(field)) {
+            return Ok(());
+        }
+        if !unprotects_own_wire(&self.state.cluster_settings_dto(), patch) || !self.presence.neighbour_names_this_wire() {
+            return Ok(());
+        }
+        let message = ClusterSettingsConflict::WireProtectionRequired.message();
+        Err(json_err_with_message(409, "conflict", message))
+    }
+}
+
+fn unprotects_own_wire(stored: &ClusterSettingsDto, patch: &ClusterSettingsUpdateCommand) -> bool {
+    let pick = |field, patched: bool, stored: bool| if patch.patches(field) { patched } else { stored };
+    let own_wire = pick(Field::Wire, patch.wire_same_as.is_none(), stored.wire_same_as.is_none());
+    let foreign = pick(Field::ForwardForeignMaster, patch.forwarding.foreign_master, stored.forward_foreign_master);
+    let protected = pick(Field::WireProtection, patch.wire_protection, stored.wire_protection);
+    own_wire && foreign && !protected
+}
+
 impl MutatingHandler for ClusterSettingsPatchHandler {
     type Validated = ClusterPatchData;
     type Executed = ();
@@ -135,6 +160,7 @@ impl MutatingHandler for ClusterSettingsPatchHandler {
     }
 
     fn execute(&self, data: ClusterPatchData) -> Result<(), HttpResponse> {
+        self.refuse_unprotecting_a_heard_wire(&data.settings)?;
         let batch = self.build_batch(data);
         if batch.is_empty() {
             return Ok(());
@@ -282,6 +308,28 @@ mod tests {
             let set = READERS.iter().filter(|(_, _, other)| other(&settings)).count();
             assert_eq!(set, 1, "{key} moved another field");
         }
+    }
+
+    fn stored(foreign: bool, protected: bool) -> ClusterSettingsDto {
+        let mut dto = crate::http::cluster_settings_state::cluster_settings_view_to_dto(Default::default(), false);
+        dto.forward_foreign_master = foreign;
+        dto.wire_protection = protected;
+        dto
+    }
+
+    fn unprotects(stored: &ClusterSettingsDto, body: serde_json::Value) -> bool {
+        unprotects_own_wire(stored, &parsed(body).ok().expect("parses").settings)
+    }
+
+    #[test]
+    fn only_an_own_wire_with_the_foreign_master_forwarded_and_protection_off_is_unprotected() {
+        use serde_json::json;
+        assert!(unprotects(&stored(true, true), json!({ "wire_protection": false })));
+        assert!(!unprotects(&stored(false, true), json!({ "wire_protection": false })), "the foreign master stays home");
+        assert!(!unprotects(&stored(true, true), json!({ "wire_same_as": 1, "wire_protection": false })), "another node's wire");
+        assert!(unprotects(&stored(false, false), json!({ "forward_foreign_master": true })));
+        assert!(!unprotects(&stored(true, false), json!({ "wire_protection": true })));
+        assert!(unprotects(&stored(true, false), json!({ "wire_same_as": null })));
     }
 
     #[test]

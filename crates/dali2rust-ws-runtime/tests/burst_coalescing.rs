@@ -92,6 +92,7 @@ impl ClusterStatusHttpState for NullCluster {
             wire_owner: None,
             split_pair: false,
             wire_chain: false,
+            unprotected_wire: false,
             number_held_by: None,
         }
     }
@@ -102,6 +103,10 @@ impl ClusterStatusHttpState for NullCluster {
 
     fn ignored(&self, _index: usize) -> Option<ClusterIgnoredDto> {
         None
+    }
+
+    fn neighbour_names_this_wire(&self) -> bool {
+        false
     }
 }
 

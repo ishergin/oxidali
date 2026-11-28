@@ -144,6 +144,7 @@ mod tests {
                 boot_epoch: None,
                 wire_owner: WireOwner::Nobody,
                 faults: OwnFaults::default(),
+                shares_wire: false,
                 held_by: None,
             };
             Self { own, nodes: Vec::new(), node_reads: AtomicU32::new(0) }

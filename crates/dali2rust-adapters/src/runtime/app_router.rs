@@ -50,6 +50,8 @@ use dali2rust_api::http::handlers::settings_dali::{
     DaliSettingsGetHandler, DaliSettingsPatchHandler,
 };
 use dali2rust_api::http::handlers::cluster::{ClusterSettingsGetHandler, ClusterSettingsPatchHandler};
+use dali2rust_api::http::cluster_status_state::ClusterStatusHttpState;
+use dali2rust_api::http::redundancy_state::RedundancyHttpState;
 use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
 use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
@@ -298,6 +300,7 @@ pub(super) fn build_app_router(
     let (bus, registry, adapter_count) = (&parts.dispatch, &parts.registry_http, parts.adapter_count);
     let redundancy_read = Arc::clone(&parts.read_models.redundancy);
     let cluster_info = Arc::clone(&parts.read_models.cluster_info);
+    let presence = Arc::clone(&parts.read_models.cluster);
     let uptime = parts.read_models.uptime.clone();
     let base = AppBuilder::new(Arc::clone(&parts.read_models.health))
         .with_role_port(Arc::clone(&registry.role_port));
@@ -312,7 +315,7 @@ pub(super) fn build_app_router(
     let builder = wire_hcl(builder, bus, registry, &hcl_overrides, &op_read);
     let builder = wire_input_devices(builder, bus, registry, &op_read);
     let builder = wire_rules(builder, bus, &parts.rules);
-    let builder = wire_settings_and_lamps(builder, bus, registry, &redundancy_read);
+    let builder = wire_settings_and_lamps(builder, bus, registry, (&redundancy_read, &presence));
     let builder = wire_cluster_records(builder, bus, &registry.cluster, &cluster_info);
     let builder = wire_time(builder, parts.wall_clock, parts.persist_timezone);
     wire_web_ui(builder, parts.web_assets).build()
@@ -902,14 +905,26 @@ fn wire_cluster_status(
 }
 
 #[inline(never)]
-fn wire_cluster(builder: AppBuilder, bus: &HttpBusDispatch, registry: &RegistryHttpPorts) -> AppBuilder {
+fn wire_cluster(
+    builder: AppBuilder,
+    bus: &HttpBusDispatch,
+    registry: &RegistryHttpPorts,
+    presence: &Arc<dyn ClusterStatusHttpState>,
+) -> AppBuilder {
     let ports = &registry.cluster;
+    let patch = ClusterSettingsPatchHandler::new(
+        bus.publisher.clone(),
+        Arc::clone(&bus.slots),
+        Arc::clone(&bus.correlation),
+        Arc::clone(&ports.state),
+        Arc::clone(&ports.apply_watch),
+        bus.bus_id,
+        bus.confirmation_timeout_ms,
+        Arc::clone(presence),
+    );
     let builder = builder
         .with_handler(RouteKey::ClusterSettingsGet, read(&ports.state, ClusterSettingsGetHandler::new))
-        .with_handler(
-            RouteKey::ClusterSettingsPatch,
-            mutation(bus, &ports.state, &ports.apply_watch, ClusterSettingsPatchHandler::new),
-        );
+        .with_handler(RouteKey::ClusterSettingsPatch, Box::new(patch));
     wire_cluster_parts(builder, bus, ports)
 }
 
@@ -1005,12 +1020,12 @@ fn wire_settings_and_lamps(
     builder: AppBuilder,
     bus: &HttpBusDispatch,
     registry: &RegistryHttpPorts,
-    redundancy_read: &Arc<dyn dali2rust_api::http::redundancy_state::RedundancyHttpState>,
+    (redundancy_read, presence): (&Arc<dyn RedundancyHttpState>, &Arc<dyn ClusterStatusHttpState>),
 ) -> AppBuilder {
     let builder = wire_settings_poller(builder, bus, registry);
     let builder = wire_settings_dali(builder, bus, registry);
     let builder = wire_settings_display(builder, bus, registry);
-    let builder = wire_cluster(builder, bus, registry);
+    let builder = wire_cluster(builder, bus, registry, presence);
     let builder = wire_redundancy(builder, bus, registry, redundancy_read);
     let builder = wire_policies(builder, bus, registry);
     let builder = wire_config_transfer(builder, bus, &registry.config_transfer);

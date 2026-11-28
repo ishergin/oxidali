@@ -385,6 +385,8 @@ declare_counter_mapping! {
         commands_dropped_unsupported_total, commands_dropped_no_part_total, commands_dropped_accept_off_total,
         commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total, commands_forwarded_total,
         forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
+        forwards_skipped_wire_total, foreign_forwarded_total, foreign_held_total, foreign_cancelled_total,
+        foreign_hold_full_total,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,
@@ -1520,6 +1522,10 @@ impl ClusterStatusHttpState for ClusterStatusBridge {
     fn ignored(&self, index: usize) -> Option<ClusterIgnoredDto> {
         self.port.ignored_board(index).map(|view| ignored_dto(&view))
     }
+
+    fn neighbour_names_this_wire(&self) -> bool {
+        self.port.own_status().shares_wire
+    }
 }
 
 fn own_dto(status: &OwnStatus) -> ClusterOwnDto {
@@ -1532,6 +1538,7 @@ fn own_dto(status: &OwnStatus) -> ClusterOwnDto {
         wire_owner: wire_owner_dto(status),
         split_pair: status.faults.split_pair,
         wire_chain: status.faults.wire_chain,
+        unprotected_wire: status.faults.unprotected_wire,
         number_held_by: status.held_by.map(node_name),
     }
 }

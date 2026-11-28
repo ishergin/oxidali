@@ -24,6 +24,7 @@ pub struct ClusterOwnDto {
     pub wire_owner: Option<ClusterWireOwnerDto>,
     pub split_pair: bool,
     pub wire_chain: bool,
+    pub unprotected_wire: bool,
     pub number_held_by: Option<String>,
 }
 
@@ -58,6 +59,8 @@ pub trait ClusterStatusHttpState: Send + Sync {
     fn node(&self, node: u8) -> Option<ClusterNodeDto>;
 
     fn ignored(&self, index: usize) -> Option<ClusterIgnoredDto>;
+
+    fn neighbour_names_this_wire(&self) -> bool;
 }
 
 pub fn write_cluster_status(state: &dyn ClusterStatusHttpState, out: &mut dyn Write) -> io::Result<()> {

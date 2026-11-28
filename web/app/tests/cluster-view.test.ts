@@ -58,6 +58,7 @@ const own = (over: Partial<ClusterOwn> = {}): ClusterOwn => ({
   wire_owner: { node: 1, board: 'dali-9b07e4', this_node: true },
   split_pair: false,
   wire_chain: false,
+  unprotected_wire: false,
   number_held_by: null,
   ...over,
 })

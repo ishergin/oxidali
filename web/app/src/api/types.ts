@@ -376,6 +376,7 @@ export interface ClusterOwn {
   wire_owner: ClusterWireOwner | null
   split_pair: boolean
   wire_chain: boolean
+  unprotected_wire: boolean
   number_held_by: string | null
 }
 
@@ -1369,6 +1370,11 @@ export type StatsCluster = {
   forwards_skipped_cluster_origin_total: number
   forwards_skipped_source_off_total: number
   forwards_skipped_not_sent_total: number
+  forwards_skipped_wire_total: number
+  foreign_forwarded_total: number
+  foreign_held_total: number
+  foreign_cancelled_total: number
+  foreign_hold_full_total: number
 }
 
 export type InputDeviceSummary = {
