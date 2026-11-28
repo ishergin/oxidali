@@ -31,7 +31,6 @@ pub struct OwnStatus {
     pub boot_epoch: Option<u32>,
     pub wire_owner: WireOwner,
     pub faults: OwnFaults,
-    pub shares_wire: bool,
     pub held_by: Option<[u8; 6]>,
 }
 
@@ -67,6 +66,8 @@ pub trait ClusterPresenceReadPort: Send + Sync {
     fn heard_node(&self, node: u8) -> Option<NodeView>;
 
     fn ignored_board(&self, index: usize) -> Option<IgnoredView>;
+
+    fn neighbour_names_wire(&self, node: u8, wire: u8) -> bool;
 }
 
 pub struct PresenceState {
@@ -366,7 +367,6 @@ impl PresenceState {
             boot_epoch,
             wire_owner: roster.wire_owner(),
             faults: roster.faults(),
-            shares_wire: roster.shares_wire(),
             held_by: roster.rival().filter(|_| waiting).map(|board| board.mac),
         }
     }
@@ -390,6 +390,12 @@ impl ClusterPresenceReadPort for ClusterPresence {
         let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
         let view = roster.ignored().nth(index).map(|(board, reason)| ignored_view(&roster, board, reason));
         view
+    }
+
+    fn neighbour_names_wire(&self, node: u8, wire: u8) -> bool {
+        let state = self.lock();
+        let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
+        roster.named_by_neighbour(node, wire)
     }
 }
 

@@ -105,7 +105,7 @@ impl ClusterStatusHttpState for NullCluster {
         None
     }
 
-    fn neighbour_names_this_wire(&self) -> bool {
+    fn neighbour_names_wire(&self, _node: u8, _wire: u8) -> bool {
         false
     }
 }

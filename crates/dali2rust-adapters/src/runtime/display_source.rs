@@ -144,7 +144,6 @@ mod tests {
                 boot_epoch: None,
                 wire_owner: WireOwner::Nobody,
                 faults: OwnFaults::default(),
-                shares_wire: false,
                 held_by: None,
             };
             Self { own, nodes: Vec::new(), node_reads: AtomicU32::new(0) }
@@ -184,6 +183,10 @@ mod tests {
 
         fn ignored_board(&self, _index: usize) -> Option<IgnoredView> {
             None
+        }
+
+        fn neighbour_names_wire(&self, _node: u8, _wire: u8) -> bool {
+            false
         }
     }
 

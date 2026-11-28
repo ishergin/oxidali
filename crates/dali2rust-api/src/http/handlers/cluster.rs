@@ -128,7 +128,10 @@ impl ClusterSettingsPatchHandler {
         if !WIRE_GUARD_FIELDS.into_iter().any(|field| patch.patches(field)) {
             return Ok(());
         }
-        if !unprotects_own_wire(&self.state.cluster_settings_dto(), patch) || !self.presence.neighbour_names_this_wire() {
+        let Some(wire) = unprotected_own_wire(&self.state.cluster_settings_dto(), patch) else {
+            return Ok(());
+        };
+        if !self.presence.neighbour_names_wire(wire, wire) {
             return Ok(());
         }
         let message = ClusterSettingsConflict::WireProtectionRequired.message();
@@ -136,12 +139,13 @@ impl ClusterSettingsPatchHandler {
     }
 }
 
-fn unprotects_own_wire(stored: &ClusterSettingsDto, patch: &ClusterSettingsUpdateCommand) -> bool {
+fn unprotected_own_wire(stored: &ClusterSettingsDto, patch: &ClusterSettingsUpdateCommand) -> Option<u8> {
     let pick = |field, patched: bool, stored: bool| if patch.patches(field) { patched } else { stored };
     let own_wire = pick(Field::Wire, patch.wire_same_as.is_none(), stored.wire_same_as.is_none());
     let foreign = pick(Field::ForwardForeignMaster, patch.forwarding.foreign_master, stored.forward_foreign_master);
     let protected = pick(Field::WireProtection, patch.wire_protection, stored.wire_protection);
-    own_wire && foreign && !protected
+    let node = if patch.patches(Field::NodeNumber) { patch.node_number } else { stored.node_number };
+    (own_wire && foreign && !protected).then_some(node)
 }
 
 impl MutatingHandler for ClusterSettingsPatchHandler {
@@ -317,8 +321,12 @@ mod tests {
         dto
     }
 
+    fn unprotected(stored: &ClusterSettingsDto, body: serde_json::Value) -> Option<u8> {
+        unprotected_own_wire(stored, &parsed(body).ok().expect("parses").settings)
+    }
+
     fn unprotects(stored: &ClusterSettingsDto, body: serde_json::Value) -> bool {
-        unprotects_own_wire(stored, &parsed(body).ok().expect("parses").settings)
+        unprotected(stored, body).is_some()
     }
 
     #[test]
@@ -330,6 +338,17 @@ mod tests {
         assert!(unprotects(&stored(false, false), json!({ "forward_foreign_master": true })));
         assert!(!unprotects(&stored(true, false), json!({ "wire_protection": true })));
         assert!(unprotects(&stored(true, false), json!({ "wire_same_as": null })));
+    }
+
+    #[test]
+    fn the_wire_asked_about_is_the_one_the_patch_leaves_this_node_on() {
+        use serde_json::json;
+        let mut on_another = stored(true, false);
+        on_another.wire_same_as = Some(1);
+        on_another.node_number = 3;
+        assert_eq!(unprotected(&on_another, json!({ "wire_same_as": null })), Some(3), "back to its own wire");
+        assert_eq!(unprotected(&on_another, json!({ "wire_same_as": null, "node_number": 5 })), Some(5), "a new number");
+        assert_eq!(unprotected(&stored(true, true), json!({ "wire_protection": false, "node_number": 6 })), Some(6));
     }
 
     #[test]

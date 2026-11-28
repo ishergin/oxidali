@@ -193,17 +193,25 @@ impl<'a> Roster<'a> {
         }
     }
 
-    fn neighbours_on_wire(&self) -> impl Iterator<Item = &'a HeardBoard> + '_ {
-        self.table.iter().filter(|board| {
-            board.node_no != self.own.node_no
-                && board.pulse.wire == self.own.wire
+    fn neighbours_on(&self, node: u8, wire: u8) -> impl Iterator<Item = &'a HeardBoard> + '_ {
+        self.table.iter().filter(move |board| {
+            board.node_no != node
+                && board.pulse.wire == wire
                 && self.live(board)
                 && self.standing(board) == Standing::Holder
         })
     }
 
+    fn neighbours_on_wire(&self) -> impl Iterator<Item = &'a HeardBoard> + '_ {
+        self.neighbours_on(self.own.node_no, self.own.wire)
+    }
+
     pub fn shares_wire(&self) -> bool {
         self.neighbours_on_wire().next().is_some()
+    }
+
+    pub fn named_by_neighbour(&self, node: u8, wire: u8) -> bool {
+        self.neighbours_on(node, wire).next().is_some()
     }
 
     fn unprotected_wire(&self) -> bool {

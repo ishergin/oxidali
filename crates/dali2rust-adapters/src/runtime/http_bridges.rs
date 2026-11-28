@@ -1523,8 +1523,8 @@ impl ClusterStatusHttpState for ClusterStatusBridge {
         self.port.ignored_board(index).map(|view| ignored_dto(&view))
     }
 
-    fn neighbour_names_this_wire(&self) -> bool {
-        self.port.own_status().shares_wire
+    fn neighbour_names_wire(&self, node: u8, wire: u8) -> bool {
+        self.port.neighbour_names_wire(node, wire)
     }
 }
 

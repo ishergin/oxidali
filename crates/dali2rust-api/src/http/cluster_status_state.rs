@@ -60,7 +60,7 @@ pub trait ClusterStatusHttpState: Send + Sync {
 
     fn ignored(&self, index: usize) -> Option<ClusterIgnoredDto>;
 
-    fn neighbour_names_this_wire(&self) -> bool;
+    fn neighbour_names_wire(&self, node: u8, wire: u8) -> bool;
 }
 
 pub fn write_cluster_status(state: &dyn ClusterStatusHttpState, out: &mut dyn Write) -> io::Result<()> {
