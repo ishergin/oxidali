@@ -83,11 +83,17 @@ pub trait ClusterInfoHttpState: Send + Sync {
 
     fn part_keys(&self, node: u8, kind: ClusterRecordKind) -> ClusterPartKeys;
 
-    fn copy_at(&self, kind: ClusterRecordKind, index: usize) -> Option<ClusterRecordDto>;
+    fn copy_at(&self, _kind: ClusterRecordKind, _index: usize) -> Option<ClusterRecordDto> {
+        None
+    }
 
-    fn link(&self, kind: ClusterRecordKind, record: ClusterRecordRef) -> ClusterPartLink;
+    fn link(&self, _kind: ClusterRecordKind, _record: ClusterRecordRef) -> ClusterPartLink {
+        ClusterPartLink::Unknown
+    }
 
-    fn wire(&self, node: u8) -> Option<u8>;
+    fn wire(&self, _node: u8) -> Option<u8> {
+        None
+    }
 
     fn record_write_refusal(&self) -> Option<&'static str>;
 }

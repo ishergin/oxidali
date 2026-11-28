@@ -79,6 +79,10 @@ impl ClusterInfoHttpState for NullCluster {
     fn part_keys(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterPartKeys {
         ClusterPartKeys::default()
     }
+
+    fn record_write_refusal(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 impl ClusterStatusHttpState for NullCluster {
@@ -94,6 +98,7 @@ impl ClusterStatusHttpState for NullCluster {
             wire_chain: false,
             unprotected_wire: false,
             number_held_by: None,
+            block: "off",
         }
     }
 

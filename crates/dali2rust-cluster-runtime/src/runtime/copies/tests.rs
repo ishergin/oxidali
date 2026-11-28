@@ -123,11 +123,13 @@ fn store(revision: u32) -> ClusterCopyAction {
     ClusterCopyAction::Store { revision, name: fixed_text_64("Hall") }
 }
 
-const BASE: World = World { home: None, judged: true, parts: Vec::new(), copies: Mutex::new(Vec::new()) };
+fn base() -> World {
+    World { home: None, judged: true, parts: Vec::new(), copies: Mutex::new(Vec::new()) }
+}
 
 #[test]
 fn a_part_s_record_held_whole_by_its_home_is_copied_once_and_again_only_at_a_higher_revision() {
-    let world = World { home: Some((mark(2, 7), 3)), parts: vec![(0, record(NUMBER, 2)), (1, record(NUMBER, 2))], ..BASE };
+    let world = World { home: Some((mark(2, 7), 3)), parts: vec![(0, record(NUMBER, 2)), (1, record(NUMBER, 2))], ..base() };
     assert_eq!(actions(&world), [(NUMBER, store(3))], "two parts of one record make one copy");
     world.copies.lock().unwrap().push((record(NUMBER, 2), 3));
     assert!(actions(&world).is_empty(), "the same revision is not written again");
@@ -139,25 +141,25 @@ fn a_part_s_record_held_whole_by_its_home_is_copied_once_and_again_only_at_a_hig
 
 #[test]
 fn a_home_holding_another_mark_at_the_number_writes_no_copy() {
-    let world = World { home: Some((mark(2, 8), 9)), parts: vec![(0, record(NUMBER, 2))], ..BASE };
+    let world = World { home: Some((mark(2, 8), 9)), parts: vec![(0, record(NUMBER, 2))], ..base() };
     assert!(actions(&world).is_empty());
 }
 
 #[test]
 fn a_copy_is_dropped_only_once_its_part_is_judged_an_orphan() {
     let held = || Mutex::new(vec![(record(NUMBER, 2), 3)]);
-    let unsettled = World { judged: false, parts: vec![(0, record(NUMBER, 2))], copies: held(), ..BASE };
+    let unsettled = World { judged: false, parts: vec![(0, record(NUMBER, 2))], copies: held(), ..base() };
     assert!(actions(&unsettled).is_empty(), "nothing is dropped before the home's full round");
-    let older = World { home: Some((mark(1, 7), 1)), parts: vec![(0, record(NUMBER, 2))], copies: held(), ..BASE };
+    let older = World { home: Some((mark(1, 7), 1)), parts: vec![(0, record(NUMBER, 2))], copies: held(), ..base() };
     assert!(actions(&older).is_empty(), "an older generation at the number is not an orphan verdict");
-    let gone = World { parts: vec![(0, record(NUMBER, 2))], copies: held(), ..BASE };
+    let gone = World { parts: vec![(0, record(NUMBER, 2))], copies: held(), ..base() };
     assert_eq!(actions(&gone), [(NUMBER, ClusterCopyAction::Drop)]);
-    let reissued = World { home: Some((mark(3, 1), 1)), parts: vec![(0, record(NUMBER, 2))], copies: held(), ..BASE };
+    let reissued = World { home: Some((mark(3, 1), 1)), parts: vec![(0, record(NUMBER, 2))], copies: held(), ..base() };
     assert_eq!(actions(&reissued), [(NUMBER, ClusterCopyAction::Drop)]);
 }
 
 #[test]
 fn a_part_of_this_node_s_own_block_is_never_copied() {
-    let world = World { home: Some((mark(2, 7), 3)), parts: vec![(0, record(OWN_NUMBER, 2))], ..BASE };
+    let world = World { home: Some((mark(2, 7), 3)), parts: vec![(0, record(OWN_NUMBER, 2))], ..base() };
     assert!(actions(&world).is_empty());
 }
