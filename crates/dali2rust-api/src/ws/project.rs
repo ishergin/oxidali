@@ -1,5 +1,5 @@
 use dali2rust_contracts::msg::{
-    BusEventPayload, ColorValue, DaliInputEventObservedEvent, EventEnvelope, FailureStatus,
+    BusEventPayload, ClusterInputEventObservedEvent, ColorValue, DaliInputEventObservedEvent, EventEnvelope, FailureStatus,
     InputEventKind, LightSetpoint, OperationStatusChangedEvent, RulesActivationEvent,
     RulesChangedEvent, RuntimeObservation, RuntimeStateChangedEvent, StatusFlags,
 };
@@ -28,6 +28,7 @@ enum ProjectionBody<'a> {
     RulesChanged(&'a RulesChangedEvent),
     RulesActivation(&'a RulesActivationEvent),
     InputEvent(&'a DaliInputEventObservedEvent),
+    ClusterInputEvent(&'a ClusterInputEventObservedEvent),
     Identity(IdentityIds),
 }
 
@@ -49,6 +50,7 @@ impl ProjectionBody<'_> {
                 "trigger_to_publish_ms": ev.trigger_to_publish_ms,
             }),
             Self::InputEvent(ev) => input_event_payload(ev),
+            Self::ClusterInputEvent(ev) => cluster_input_event_payload(ev),
             Self::Identity(ids) => json!(ids),
         }
     }
@@ -111,7 +113,9 @@ pub fn coalesce_key(envelope: &EventEnvelope) -> Option<CoalesceKey> {
         ProjectionBody::Operation(ev) => KeyDetail::Operation {
             key: ev.operation_key.clone(),
         },
-        ProjectionBody::RulesActivation(_) | ProjectionBody::InputEvent(_) => return None,
+        ProjectionBody::RulesActivation(_) | ProjectionBody::InputEvent(_) | ProjectionBody::ClusterInputEvent(_) => {
+            return None
+        }
         ProjectionBody::RulesChanged(_) => KeyDetail::Identity(IdentityIds::adapter(0)),
         ProjectionBody::Identity(ids) => KeyDetail::Identity(ids),
     };
@@ -136,6 +140,7 @@ pub const WS_PROJECTED_EVENTS: &[&str] = &[
     "DaliInputDeviceLifecycleEvent",
     "RulesChangedEvent",
     "RulesActivationEvent",
+    "ClusterInputEventObservedEvent",
 ];
 
 fn projection(payload: &BusEventPayload) -> Option<Projection<'_>> {
@@ -166,6 +171,9 @@ fn projection(payload: &BusEventPayload) -> Option<Projection<'_>> {
                 &[Channel::Input],
                 ProjectionBody::InputEvent(ev),
             ),
+            BusEventPayload::ClusterInputEventObservedEvent(ev) => {
+                ("ClusterInputEventObservedEvent", &[Channel::Input], ProjectionBody::ClusterInputEvent(ev))
+            }
             other => return identity_projection(other),
         };
     Some(Projection {
@@ -332,10 +340,31 @@ fn input_event_payload(ev: &DaliInputEventObservedEvent) -> Value {
     })
 }
 
+fn cluster_input_event_payload(ev: &ClusterInputEventObservedEvent) -> Value {
+    json!({
+        "node": ev.node,
+        "adapter_id": ev.registry_adapter_id,
+        "scheme": ev.scheme,
+        "short_address": ev.short_address,
+        "device_group": None::<u8>,
+        "instance_group": ev.instance_groups.first().copied().flatten(),
+        "instance_groups": ev.instance_groups,
+        "instance_number": ev.instance_number,
+        "instance_type": ev.instance_type,
+        "event": typed_event_name(ev.typed, ev.event_info),
+        "event_info": ev.event_info,
+        "value": ev.typed_value,
+    })
+}
+
 fn input_event_name(ev: &DaliInputEventObservedEvent) -> Option<&'static str> {
-    match ev.typed {
-        InputEventKind::Button => ButtonEvent::from_info(ev.event_info).map(ButtonEvent::name),
-        InputEventKind::Occupancy => OccupancyEvent::from_info(ev.event_info).map(|o| {
+    typed_event_name(ev.typed, ev.event_info)
+}
+
+fn typed_event_name(typed: InputEventKind, event_info: u16) -> Option<&'static str> {
+    match typed {
+        InputEventKind::Button => ButtonEvent::from_info(event_info).map(ButtonEvent::name),
+        InputEventKind::Occupancy => OccupancyEvent::from_info(event_info).map(|o| {
             match (o.occupied, o.still) {
                 (true, false) => "becomes occupied",
                 (true, true) => "still occupied",
@@ -759,7 +788,40 @@ mod tests {
                 partial: 0,
                 trigger_to_publish_ms: 5,
             }),
+            envelope(neighbour_press()),
         ]
+    }
+
+    fn neighbour_press() -> ClusterInputEventObservedEvent {
+        ClusterInputEventObservedEvent {
+            node: 2,
+            registry_adapter_id: 0,
+            short_address: 7,
+            instance_number: Some(1),
+            instance_type: Some(1),
+            instance_groups: [Some(4), None, Some(9)],
+            scheme: 1,
+            event_info: 1,
+            typed: InputEventKind::Button,
+            typed_value: 0,
+            received_at_mono_ms: 1,
+        }
+    }
+
+    #[test]
+    fn a_neighbour_s_press_has_the_local_shape_plus_its_node_and_is_never_coalesced() {
+        let ev = envelope(neighbour_press());
+        assert_eq!(coalesce_key(&ev), None);
+        let (channel, text) = project_event(&ev, EVENT_TS_MS).pop().expect("one frame");
+        assert_eq!(channel, Channel::Input);
+        let frame: Value = serde_json::from_str(&text).expect("one JSON frame");
+        let payload = &frame["payload"];
+        assert_eq!(frame["type"], "ClusterInputEventObservedEvent");
+        assert_eq!((payload["node"].as_u64(), payload["adapter_id"].as_u64(), payload["short_address"].as_u64()), (Some(2), Some(0), Some(7)));
+        assert_eq!((payload["instance_number"].as_u64(), payload["instance_group"].as_u64()), (Some(1), Some(4)));
+        assert_eq!(payload["instance_groups"], json!([4, null, 9]));
+        assert_eq!(payload["event"], "press");
+        assert_eq!(payload["device_group"], Value::Null);
     }
 
     #[test]
@@ -804,6 +866,7 @@ mod tests {
             let occurrence = matches!(
                 ev.payload,
                 BusEventPayload::DaliInputEventObservedEvent(_)
+                    | BusEventPayload::ClusterInputEventObservedEvent(_)
                     | BusEventPayload::RulesActivationEvent(_)
             );
             assert_eq!(

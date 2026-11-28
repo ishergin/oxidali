@@ -6,6 +6,7 @@ use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_domain::registry::CLUSTER_NODE_COUNT;
 
 use crate::http::cluster_info_state::{write_cluster_info, ClusterInfoHttpState, ClusterView};
+use crate::http::cluster_inputs_state::{write_node_inputs, ClusterInputsHttpState};
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
@@ -78,5 +79,39 @@ impl ClusterNodePartsHandler {
                 w.write_all(b"]}")
             }),
         )
+    }
+}
+
+declare_handler_shell! {
+    ClusterNodeInputsHandler {
+        state: Arc<dyn ClusterInputsHttpState>,
+    }
+}
+
+impl ApiHandler for ClusterNodeInputsHandler {
+    fn handle_request(
+        &self,
+        method: &str,
+        _path: &str,
+        _body: &[u8],
+        params: &HashMap<String, String>,
+    ) -> HttpResponse {
+        if let Err(error) = require_get(method) {
+            return error;
+        }
+        match parse_resource_id_param(params, NODE_PARAM, LAST_NODE) {
+            Ok(node) => self.node_inputs(node),
+            Err(refusal) => refusal,
+        }
+    }
+}
+
+impl ClusterNodeInputsHandler {
+    fn node_inputs(&self, node: u8) -> HttpResponse {
+        let Some(summary) = self.state.inputs_node(node) else {
+            return json_err(404, "not_found");
+        };
+        let state = Arc::clone(&self.state);
+        HttpResponse::json_stream(200, Box::new(move |w: &mut dyn Write| write_node_inputs(state.as_ref(), &summary, w)))
     }
 }

@@ -5,6 +5,7 @@ use crate::DaliWorld;
 pub mod cluster_command_steps;
 pub mod cluster_lamp_steps;
 pub mod cluster_info_steps;
+pub mod cluster_input_steps;
 pub mod cluster_steps;
 pub mod commissioning_steps;
 pub mod contracts_steps;

@@ -127,6 +127,10 @@ const REQUIRED_EVENT_PUBLISHERS: &[(&str, &[&str])] = &[
         "ota_worker",
         dali2rust_ota_runtime::OTA_WORKER_REQUIRED_EVENTS,
     ),
+    (
+        "cluster_rx",
+        dali2rust_cluster_runtime::CLUSTER_RX_REQUIRED_EVENTS,
+    ),
 ];
 
 const OBSERVED_ONLY_EVENTS: &[(&str, &str)] = &[

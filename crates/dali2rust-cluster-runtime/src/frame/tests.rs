@@ -10,7 +10,7 @@ const COMMAND_KIND: u8 = 0;
 const PULSE_KIND: u8 = 1;
 const HELLO_KIND: u8 = 2;
 const INFO_KIND: u8 = 3;
-const FIRST_UNKNOWN_KIND: u8 = 7;
+const FIRST_UNKNOWN_KIND: u8 = 9;
 
 const GOLDEN_HEADER: [u8; 17] = [
     0x8e, 0x85, 0xa3, 0x96, 0x0d, 0x30, 0xed, 0xa0, 0x7b, 0x90, 0xe4, 0x84, 0x86, 0x88, 0x08,

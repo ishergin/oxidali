@@ -27,6 +27,7 @@
 | `GET` | `/api/v1/cluster/nodes/{node}/lamps/{lamp}` | `200` — лампа узла |
 | `GET` | `/api/v1/cluster/nodes/{node}/channel-parts` | `200` — `{"node", "channel_parts": [...]}` |
 | `GET` | `/api/v1/cluster/nodes/{node}/scene-parts` | `200` — `{"node", "scene_parts": [...]}` |
+| `GET` | `/api/v1/cluster/nodes/{node}/inputs` | `200` — входные устройства узла; `404`, пока о них ничего не известно |
 | `GET` | `/api/v1/cluster/channels` | `200` — `{"channels": [...]}` всех узлов по возрастанию номера |
 | `POST` | `/api/v1/cluster/channels` | `201` — созданная запись |
 | `GET` | `/api/v1/cluster/channels/{number}` | `200` — запись и `parts` всех узлов |
@@ -71,6 +72,7 @@
 | `send_all_lamps` | `false` | Отправлять свои команды «всем» в кластер. |
 | `accept_single_lamps` | `false` | Исполнять входящие команды одиночным лампам этого узла. |
 | `wire_protection` | `true` | Защита от петли на общем проводе. |
+| `share_input_events` | `true` | Слать события своих входных устройств и объявлять их. |
 | `read_only` | — | Только чтение: `true` на резервной плате. |
 | `block` | — | `{first, last}` — блок номеров записей узла: `node_number·16 … node_number·16+15`. |
 
@@ -277,6 +279,26 @@
 | `on` | Как у канала, для одной части. |
 | `commanded`, `lit`, `known`, `members` | Что сообщил узел; `null`, если часть не услышана или её набор устарел. |
 | `fresh` | Свежий ли набор, из которого взята часть. |
+## Входные устройства узлов
+
+Узел с `share_input_events` шлёт события своих входных устройств и объявляет их наборами
+страниц; правила —
+[`../../runtime-modules/cluster/README.md`](../../runtime-modules/cluster/README.md)
+§Правила.
+
+`GET /api/v1/cluster/nodes/{node}/inputs` — входные устройства узла: свои из реестра,
+чужие из последнего целого набора. Ответ — строка узла, `owner` и `devices` в полях
+ресурса входного устройства ([`input-devices.md`](input-devices.md)) с `instances`. Строки
+узлов несёт и кадр `ClusterInputs` канала `cluster`.
+
+| Поле | Смысл |
+|---|---|
+| `node`, `source`, `set`, `age_ms` | Как у сведений узлов. |
+| `device_count` | Устройства узла; в `devices` — не больше 32. |
+| `owner` | `{controller_id, discovery_prefix}` Home Assistant узла; `null`, пока неизвестен. |
+| `devices[].adapter_id`, `short_address`, `name`, `present`, `instance_count` | Как у ресурса входного устройства. |
+| `devices[].ha_entity` | Узел выставляет входные устройства, и это не скрыто. |
+| `devices[].instances[]` | `instance_number`, `instance_type`, `instance_type_name`, `instance_groups` (три группы), `runtime`: `last_event_info`, `input_value`, `age_ms` — возраст значения, а не время: часы соседа не наши. |
 
 ## Ошибки
 

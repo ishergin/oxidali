@@ -44,6 +44,7 @@
 | `SceneChangedEvent`, `SceneMatrixChangedEvent` | `scenes` | Триггер. |
 | `InputDeviceChangedEvent`, `DaliInputDeviceLifecycleEvent` | `input` | Триггер (адресное пространство устройств ввода, не control gear). |
 | `DaliInputEventObservedEvent` | `input` | Полная — см. ниже. |
+| `ClusterInputEventObservedEvent` | `input` | Полная: событие входного устройства другого узла кластера в форме `DaliInputEventObservedEvent` и `node` — номер узла; `instance_groups` — три группы экземпляра, `instance_group` — первая из них, `device_group` — `null`. Не сливается никогда. |
 | `RulesChangedEvent` | `rules` | `revision`, `rule_count`, `lang_id`: документ сменился, перечитать `/rules`. |
 | `RulesActivationEvent` | `rules` | `rule_name`, `dry`, `effects`, `partial`, `trigger_to_publish_ms`. |
 | `StatsSnapshot` | `stats` | Тело `GET /api/v1/stats`; серверный снимок, а не событие шины. |
@@ -52,6 +53,7 @@
 | `ClusterStatus` | `cluster` | Тело `GET /api/v1/cluster/status`; строится из порта присутствия кластера по `ClusterStateChangedEvent`, один кадр на бёрст событий. |
 | `ClusterInfo` | `cluster` | Тело `GET /api/v1/cluster/info`; строится по `ClusterStateChangedEvent` с темой `Info`, один кадр на бёрст событий. Записи и части в кадр не входят: их читают по REST. |
 | `ClusterLamps` | `cluster` | Тело `GET /api/v1/cluster/lamps`: сводка по узлу, а не лампы — состояние 64 ламп узла в JSON не помещается в кадр, и клиент по нему перечитывает `GET /api/v1/cluster/nodes/{node}/lamps`. Строится, когда меняется сводка или свежесть узла; переход в устаревшие по возрасту виден не позже чем через период пульса. |
+| `ClusterInputs` | `cluster` | `{"nodes": [...]}` — строка каждого узла, о входах которого что-то известно: `node`, `source`, `set`, `age_ms`, `device_count`; строится по `ClusterStateChangedEvent` с темой `Inputs`, один кадр на бёрст. Устройства, их экземпляры и значения читают по REST: `GET /api/v1/cluster/nodes/{node}/inputs`. |
 | `SnifferBatch` | `sniffer` | Записи кадров (время, направление, ширина, hex, цель, имя команды, запрос ли) и `dropped_since`. |
 | `LogBatch` | `logs` | Строки лога (`seq`, время, уровень, модуль, текст) и `dropped_since`. |
 | `DropNotice` | любой или `*` | Признание потери — [`websocket.md`](websocket.md). |

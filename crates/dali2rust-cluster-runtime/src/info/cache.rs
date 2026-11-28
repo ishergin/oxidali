@@ -21,7 +21,7 @@ pub struct SetId {
 }
 
 impl SetId {
-    fn follows(self, held: Self) -> bool {
+    pub(crate) fn follows(self, held: Self) -> bool {
         let same_run = self.mac == held.mac && self.epoch == held.epoch;
         let ahead = self.set.wrapping_sub(held.set);
         !same_run || (ahead != 0 && ahead < HALF_CLOCK_MS)

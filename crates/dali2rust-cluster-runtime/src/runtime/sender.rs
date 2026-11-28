@@ -23,7 +23,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
-    ClusterCopyReadPort, ClusterLampReadPort, ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort,
+    ClusterCopyReadPort, ClusterInputReadPort, ClusterLampReadPort, ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort,
     ClusterSettingsView, ClusterWire, AdapterReadPort, DaliSettingsReadPort, HomeAssistantSettingsReadPort,
 };
 use dali2rust_platform::cluster_link::{ClusterLink, ClusterLinkBinder, MAX_CLUSTER_DATAGRAM_BYTES};
@@ -32,6 +32,7 @@ use dali2rust_platform::net::NetworkLink;
 
 use crate::frame::{cluster_tag, encode, DatagramBuffer, Frame, Header, Hello, Pulse, NODE_COUNT};
 use crate::info::{ClusterInfo, ClusterInfoReadPort};
+use crate::inputs::ClusterInputs;
 use crate::lamps::{ClusterLamps, ClusterLampsReadPort};
 use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 
@@ -41,15 +42,18 @@ use super::counters::{bump, ClusterCounters};
 use super::execute::{ClusterExecution, ExecutionReads};
 use super::hold::ForeignHold;
 use super::incoming::CommandIntake;
+use super::input_announce::InputAnnouncer;
+use super::input_intake::InputIntake;
 use super::lamp_announce::{LampAnnouncer, OwnLamps, Subject, ANNOUNCED_ADAPTER};
 use super::outgoing::{placed_outgoing, Outgoing};
-use super::receiver::{run_receiver, LinkHandoff};
+use super::receiver::{run_receiver, Intakes, LinkHandoff, Shared};
 use super::round::BlockRound;
 use super::shared::{BlockState, ClusterPresence, ClusterPresenceReadPort, Forgotten, Settled};
 
 mod block;
 mod command;
 mod forward;
+mod inputs;
 
 pub use command::{
     CLUSTER_BUSY, CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING, CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED,
@@ -72,6 +76,8 @@ pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] = &[
     "GroupMatrixChangedEvent",
     "PhysicalDeviceChangedEvent",
     "HomeAssistantSettingsChangedEvent",
+    "DaliInputEventObservedEvent",
+    "InputDeviceChangedEvent",
 ];
 
 
@@ -94,6 +100,8 @@ pub struct ClusterWorkerPorts {
     pub info: Arc<ClusterInfo>,
     pub lamps: Arc<dyn ClusterLampReadPort>,
     pub lamp_cache: Arc<ClusterLamps>,
+    pub inputs: Arc<dyn ClusterInputReadPort>,
+    pub input_cache: Arc<ClusterInputs>,
 }
 
 pub struct ClusterWorkerThreads {
@@ -108,23 +116,29 @@ pub struct ClusterInboxes {
 
 pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) -> ClusterWorkerThreads {
     let (handoff_tx, handoff_rx) = mpsc::channel();
-    let (presence, counters) = (Arc::clone(&ports.presence), Arc::clone(&ports.counters));
-    let caches = (Arc::clone(&ports.info), Arc::clone(&ports.lamp_cache));
+    let shared = Shared {
+        presence: Arc::clone(&ports.presence),
+        info: Arc::clone(&ports.info),
+        lamps: Arc::clone(&ports.lamp_cache),
+        inputs: Arc::clone(&ports.input_cache),
+        counters: Arc::clone(&ports.counters),
+    };
     let execution = execution(&ports);
     let settings = Arc::clone(&ports.settings);
     let hold = Arc::new(ForeignHold::new());
-    let intake = CommandIntake {
+    let commands = CommandIntake {
         execution: Arc::clone(&execution),
         settings,
         parts: Arc::clone(&ports.parts),
         confirmations: inboxes.confirmations,
         hold: Arc::clone(&hold),
     };
+    let inputs = InputIntake { publisher: ports.publisher.clone(), bus_id: ports.bus_id };
     let receiver = spawn_named_stack_in(
         c"cluster_rx",
         std_thread_stack::EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        move || run_receiver(handoff_rx, (presence, caches.0, caches.1), counters, intake),
+        move || run_receiver(handoff_rx, shared, Intakes { commands, inputs }),
     );
     let inbox = inboxes.commands_and_events;
     let sender = spawn_named_stack_in(
@@ -257,6 +271,8 @@ struct NodeSender<'a> {
     digest: u64,
     announcer: Announcer,
     info_digest: u64,
+    input_announcer: InputAnnouncer,
+    inputs_digest: u64,
     round: BlockRound,
     next_copy_ms: u32,
     lamps_digest: u64,
@@ -284,6 +300,8 @@ impl<'a> NodeSender<'a> {
             digest,
             announcer: Announcer::new(),
             info_digest: 0,
+            input_announcer: InputAnnouncer::new(),
+            inputs_digest: 0,
             round: BlockRound::new(),
             next_copy_ms: now_ms,
             lamps_digest: 0,
@@ -306,12 +324,14 @@ impl<'a> NodeSender<'a> {
         if renamed {
             self.ports.info.clear();
             self.ports.lamp_cache.clear();
+            self.ports.input_cache.clear();
         }
         if settled.entered_running || self.slot_due(now_ms) {
             self.on_slot(&reading, settled, now_ms);
         }
         self.release_foreign(&reading, now_ms);
         self.carry_commands(&reading, now_ms);
+        self.carry_inputs(&reading, now_ms);
         let running = settled.mode == OwnMode::Running;
         self.keep_block(reading.settings.node_number, running, now_ms);
         self.announce(&reading, running, now_ms);
@@ -327,6 +347,7 @@ impl<'a> NodeSender<'a> {
         let own = OwnInfo { records: &*self.ports.records, parts: &*self.ports.parts, copies: &*self.ports.copies };
         self.announcer.plan(turn, own);
         self.lamp_announcer.plan(turn, OwnLamps { lamps: &*self.ports.lamps, parts: &*self.ports.parts });
+        self.plan_inputs(reading, turn);
         if self.page_slot.held(now_ms) {
             return;
         }
@@ -334,6 +355,8 @@ impl<'a> NodeSender<'a> {
             self.send_info_page(reading, now_ms);
         } else if self.lamp_announcer.page_due(now_ms) {
             self.send_lamp_page(reading, now_ms);
+        } else if self.input_announcer.page_due(now_ms) {
+            self.send_input_page(reading, now_ms);
         }
     }
 
@@ -393,7 +416,9 @@ impl<'a> NodeSender<'a> {
             let commands = self.outgoing.deadline().map_or(u32::MAX, left);
             let held = self.hold.line().deadline().map_or(u32::MAX, left);
             let block = self.block_deadline().map_or(u32::MAX, left);
-            let soonest = left(self.next_slot_ms).min(info).min(lamps).min(commands).min(held).min(block);
+            let inputs = self.input_announcer.deadline().map(paced).map_or(u32::MAX, left);
+            let trailing = self.outgoing.trailing_deadline().map_or(u32::MAX, left);
+            let soonest = left(self.next_slot_ms).min(info).min(lamps).min(inputs).min(commands).min(held).min(block).min(trailing);
             Duration::from_millis(u64::from(soonest))
         })
     }
@@ -432,6 +457,7 @@ impl<'a> NodeSender<'a> {
             self.ports.presence.clear();
             self.ports.info.clear();
             self.ports.lamp_cache.clear();
+            self.ports.input_cache.clear();
         }
     }
 
@@ -446,6 +472,8 @@ impl<'a> NodeSender<'a> {
         if settled.mode == OwnMode::Standby {
             bump(&self.ports.counters.withheld_standby_total);
         }
+        self.input_announcer.note_changed();
+        self.ports.input_cache.hold_in_reach(now_ms);
     }
 
     fn send(&mut self, reading: &Reading, frame: &Frame<'_>) {
@@ -491,6 +519,10 @@ impl<'a> NodeSender<'a> {
         if lamps_digest != self.lamps_digest && self.publish(ClusterSubject::Lamps) {
             self.lamps_digest = lamps_digest;
         }
+        let inputs_digest = self.inputs_digest(now_ms);
+        if inputs_digest != self.inputs_digest && self.publish(ClusterSubject::Inputs) {
+            self.inputs_digest = inputs_digest;
+        }
     }
 
     fn lamps_digest(&self, now_ms: u32) -> u64 {
@@ -499,6 +531,15 @@ impl<'a> NodeSender<'a> {
         for node in 0..NODE_COUNT {
             let fresh = self.ports.lamp_cache.lamps_held(node).map(|held| held.fresh);
             (fresh, fresh.is_some() && self.ports.presence.member_heard(node, now_ms)).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn inputs_digest(&self, now_ms: u32) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        (self.ports.input_cache.digest(now_ms), self.input_announcer.announced()).hash(&mut hasher);
+        for node in 0..NODE_COUNT {
+            self.ports.presence.member_heard(node, now_ms).hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -527,6 +568,8 @@ impl<'a> NodeSender<'a> {
                 self.note_lamps_moved(&event.payload);
                 match &event.payload {
                     BusEventPayload::ClusterSettingsChangedEvent(_) => self.on_settings_changed(),
+                    BusEventPayload::DaliInputEventObservedEvent(observed) => self.on_input_event(observed),
+                    BusEventPayload::InputDeviceChangedEvent(_) => self.input_announcer.note_changed(),
                     fact => self.forward(fact),
                 }
             }
@@ -543,6 +586,7 @@ impl<'a> NodeSender<'a> {
 
     fn on_settings_changed(&mut self) {
         self.announcer.note_settings_changed();
+        self.input_announcer.note_changed();
         self.next_slot_ms = monotonic_ms();
     }
 
@@ -551,6 +595,7 @@ impl<'a> NodeSender<'a> {
         if outcome == Forgotten::Removed {
             self.ports.info.forget(forget.node);
             self.ports.lamp_cache.forget(forget.node);
+            self.ports.input_cache.forget(forget.node);
         }
         let product_error = (outcome == Forgotten::StillHeard).then_some((ErrorCode::Conflict, NODE_HEARD));
         confirm(&self.ports.publisher, correlation_id, product_error);

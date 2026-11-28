@@ -27,6 +27,7 @@ pub struct ClusterSettingsDto {
     pub send_all_lamps: bool,
     pub accept_single_lamps: bool,
     pub wire_protection: bool,
+    pub share_input_events: bool,
     pub read_only: bool,
     pub block: ClusterBlockDto,
 }
@@ -76,6 +77,7 @@ pub(crate) fn cluster_settings_view_to_dto(view: ClusterSettingsView, read_only:
         send_all_lamps: view.send_all_lamps,
         accept_single_lamps: view.accept_single_lamps,
         wire_protection: view.wire_protection,
+        share_input_events: view.share_input_events,
         read_only,
     }
 }
@@ -103,7 +105,7 @@ mod tests {
 
     type Flip = (&'static str, fn(&mut ClusterSettingsView));
 
-    const FLAGS: [&str; 9] = [
+    const FLAGS: [&str; 10] = [
         "enabled",
         "forward_operator",
         "forward_home_assistant",
@@ -113,9 +115,10 @@ mod tests {
         "send_all_lamps",
         "accept_single_lamps",
         "wire_protection",
+        "share_input_events",
     ];
 
-    const FLIPS: [Flip; 9] = [
+    const FLIPS: [Flip; 10] = [
         ("enabled", |v| v.enabled = !v.enabled),
         ("forward_operator", |v| v.forwarding.operator = !v.forwarding.operator),
         ("forward_home_assistant", |v| v.forwarding.home_assistant = !v.forwarding.home_assistant),
@@ -125,9 +128,10 @@ mod tests {
         ("send_all_lamps", |v| v.send_all_lamps = !v.send_all_lamps),
         ("accept_single_lamps", |v| v.accept_single_lamps = !v.accept_single_lamps),
         ("wire_protection", |v| v.wire_protection = !v.wire_protection),
+        ("share_input_events", |v| v.share_input_events = !v.share_input_events),
     ];
 
-    fn flags(dto: &ClusterSettingsDto) -> [bool; 9] {
+    fn flags(dto: &ClusterSettingsDto) -> [bool; 10] {
         [
             dto.enabled,
             dto.forward_operator,
@@ -138,6 +142,7 @@ mod tests {
             dto.send_all_lamps,
             dto.accept_single_lamps,
             dto.wire_protection,
+            dto.share_input_events,
         ]
     }
 

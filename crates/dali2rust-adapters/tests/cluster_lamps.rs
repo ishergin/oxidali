@@ -162,7 +162,23 @@ fn neighbour_greets_until_stopped(hub: &ClusterHub, stop: &Receiver<()>) {
 
 fn is_announced_page(datagram: &HubDatagram) -> bool {
     let frame = decode(&datagram.bytes).map(|decoded| decoded.frame);
-    matches!(frame, Ok(Frame::ChannelSceneInfo(_) | Frame::LampState(_) | Frame::LampInfo(_)))
+    matches!(frame, Ok(Frame::ChannelSceneInfo(_) | Frame::LampState(_) | Frame::LampInfo(_) | Frame::InputInfo(_)))
+}
+
+fn is_input_page(datagram: &HubDatagram) -> bool {
+    decode(&datagram.bytes).is_ok_and(|decoded| matches!(decoded.frame, Frame::InputInfo(_)))
+}
+
+fn announced_by(hub: &ClusterHub, board: &Board, window: Duration) -> (Vec<Instant>, usize) {
+    let deadline = Instant::now() + window;
+    let (mut sent, mut inputs) = (Vec::new(), 0);
+    while let Some(datagram) = hub.next_sent(deadline.saturating_duration_since(Instant::now())) {
+        if datagram.source == board.address && is_announced_page(&datagram) {
+            sent.push(datagram.at);
+            inputs += usize::from(is_input_page(&datagram));
+        }
+    }
+    (sent, inputs)
 }
 
 fn sent_by(hub: &ClusterHub, board: &Board, window: Duration, wanted: fn(&HubDatagram) -> bool) -> Vec<Instant> {
@@ -199,7 +215,7 @@ fn a_lamp_lit_on_one_node_shows_on_the_other_with_its_level_and_source() {
 }
 
 #[test]
-fn a_node_s_announced_pages_go_out_a_page_gap_apart_across_info_and_lamps() {
+fn a_node_s_announced_pages_go_out_a_page_gap_apart_across_info_lamps_and_inputs() {
     let hub = Arc::new(ClusterHub::new());
     let first = node_on(&hub, &FIRST);
     first.commission_lamp_1_in_group_5();
@@ -218,8 +234,9 @@ fn a_node_s_announced_pages_go_out_a_page_gap_apart_across_info_and_lamps() {
     }
     drop(stop);
     neighbour.join().expect("the neighbour greets");
-    let sent = sent_by(&hub, &FIRST, CLOCK_GRAIN, is_announced_page);
+    let (sent, inputs) = announced_by(&hub, &FIRST, CLOCK_GRAIN);
     assert!(sent.len() >= 2, "both the info set and the lamp sets went out: {}", sent.len());
+    assert!(inputs >= 1, "the input set went out among them");
     let gaps = gaps(&sent);
     assert!(gaps.iter().all(|gap| *gap + CLOCK_GRAIN >= PAGE_GAP), "pages closer than the page gap: {gaps:?}");
 }

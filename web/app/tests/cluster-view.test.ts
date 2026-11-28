@@ -45,6 +45,7 @@ const stored: ClusterSettings = {
   send_all_lamps: false,
   accept_single_lamps: false,
   wire_protection: true,
+  share_input_events: true,
   read_only: false,
   block: { first: 0, last: 15 },
 }

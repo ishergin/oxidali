@@ -5,6 +5,7 @@ use super::*;
 use crate::frame::{BirthMark, LightVerb, RecordRef, SourceClass};
 
 const START_MS: u32 = 50_000;
+const SHARED: bool = true;
 const MARK: BirthMark = BirthMark { generation: 4, nonce: 9 };
 
 fn channel(number: u8) -> RecordRef {
@@ -40,10 +41,10 @@ fn the_second_copy_comes_due_twenty_milliseconds_after_the_first() {
     let mut outgoing = Outgoing::new();
     send(&mut outgoing, 1, setpoint(3, 100), START_MS);
     assert_eq!(outgoing.deadline(), Some(START_MS + COPY_GAP_MS));
-    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS - 1), None);
-    let due = outgoing.take_due(START_MS + COPY_GAP_MS);
+    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS - 1, SHARED), None);
+    let due = outgoing.take_due(START_MS + COPY_GAP_MS, SHARED);
     assert_eq!(due, Some(Due::Repeat(repeat_of(&setpoint(3, 100), 1))));
-    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS), None, "the copy went once");
+    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), None, "the copy went once");
 }
 
 #[test]
@@ -54,9 +55,9 @@ fn a_setpoint_inside_the_spacing_waits_and_a_later_one_supersedes_it() {
     assert_eq!(outgoing.admit(queued(2, setpoint(3, 150)), inside), Admission::Later { superseded: None });
     let superseded = Some(queued(2, setpoint(3, 150)));
     assert_eq!(outgoing.admit(queued(3, setpoint(3, 200)), inside + 1), Admission::Later { superseded });
-    assert!(matches!(outgoing.take_due(inside), Some(Due::Repeat(_))));
-    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS - 1), None);
-    let last = outgoing.take_due(START_MS + TARGET_SPACING_MS);
+    assert!(matches!(outgoing.take_due(inside, SHARED), Some(Due::Repeat(_))));
+    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS - 1, SHARED), None);
+    let last = outgoing.take_due(START_MS + TARGET_SPACING_MS, SHARED);
     assert_eq!(last, Some(Due::Waiting(queued(3, setpoint(3, 200)))), "the last setpoint is sent, never dropped");
 }
 
@@ -67,24 +68,24 @@ fn another_channel_waits_for_the_first_s_second_copy_and_not_for_its_spacing() {
     let other = queued(2, setpoint(4, 100));
     assert_eq!(outgoing.admit(other.clone(), START_MS + 1), Admission::AfterCopy);
     assert_eq!(outgoing.deadline(), Some(START_MS + COPY_GAP_MS), "only the copy is waited for");
-    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS - 1), None);
-    let copy = outgoing.take_due(START_MS + COPY_GAP_MS);
+    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS - 1, SHARED), None);
+    let copy = outgoing.take_due(START_MS + COPY_GAP_MS, SHARED);
     assert_eq!(copy, Some(Due::Repeat(repeat_of(&setpoint(3, 100), 1))));
-    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Waiting(other)));
+    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), Some(Due::Waiting(other)));
 }
 
 #[test]
 fn a_waiting_command_that_came_due_still_lets_the_second_copy_before_it_go_first() {
     let mut outgoing = Outgoing::new();
     send(&mut outgoing, 1, setpoint(3, 100), START_MS);
-    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
+    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), Some(Due::Repeat(_))));
     assert_eq!(outgoing.admit(queued(2, setpoint(3, 150)), START_MS + COPY_GAP_MS), Admission::Later { superseded: None });
     let other_at = START_MS + TARGET_SPACING_MS - COPY_GAP_MS / 2;
     send(&mut outgoing, 3, setpoint(4, 100), other_at);
-    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS), None, "the other channel's copy is not out yet");
+    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS, SHARED), None, "the other channel's copy is not out yet");
     assert_eq!(outgoing.deadline(), Some(other_at + COPY_GAP_MS));
-    assert!(matches!(outgoing.take_due(other_at + COPY_GAP_MS), Some(Due::Repeat(_))));
-    let waiting = outgoing.take_due(other_at + COPY_GAP_MS);
+    assert!(matches!(outgoing.take_due(other_at + COPY_GAP_MS, SHARED), Some(Due::Repeat(_))));
+    let waiting = outgoing.take_due(other_at + COPY_GAP_MS, SHARED);
     assert_eq!(waiting, Some(Due::Waiting(queued(2, setpoint(3, 150)))));
 }
 
@@ -92,7 +93,7 @@ fn a_waiting_command_that_came_due_still_lets_the_second_copy_before_it_go_first
 fn a_target_is_free_again_once_its_spacing_has_passed() {
     let mut outgoing = Outgoing::new();
     send(&mut outgoing, 1, setpoint(3, 100), START_MS);
-    assert!(outgoing.take_due(START_MS + COPY_GAP_MS).is_some());
+    assert!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED).is_some());
     let later = queued(2, setpoint(3, 120));
     assert_eq!(outgoing.admit(later.clone(), START_MS + TARGET_SPACING_MS), Admission::Now(later));
 }
@@ -102,9 +103,9 @@ fn the_waiting_command_of_a_target_survives_the_copy_of_the_one_before_it() {
     let mut outgoing = Outgoing::new();
     send(&mut outgoing, 1, setpoint(3, 100), START_MS);
     assert_eq!(outgoing.admit(queued(2, setpoint(3, 150)), START_MS + 1), Admission::Later { superseded: None });
-    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
+    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), Some(Due::Repeat(_))));
     outgoing.prune(START_MS + COPY_GAP_MS);
-    let waiting = outgoing.take_due(START_MS + TARGET_SPACING_MS);
+    let waiting = outgoing.take_due(START_MS + TARGET_SPACING_MS, SHARED);
     assert_eq!(waiting, Some(Due::Waiting(queued(2, setpoint(3, 150)))));
 }
 
@@ -137,9 +138,9 @@ fn the_earliest_deadline_is_found_across_a_clock_wrap() {
     let start = u32::MAX - TARGET_SPACING_MS - 10;
     let second = start.wrapping_add(COPY_GAP_MS);
     send(&mut outgoing, 1, setpoint(3, 100), start);
-    assert!(outgoing.take_due(second).is_some());
+    assert!(outgoing.take_due(second, SHARED).is_some());
     send(&mut outgoing, 2, setpoint(4, 100), second);
-    assert!(outgoing.take_due(second.wrapping_add(COPY_GAP_MS)).is_some());
+    assert!(outgoing.take_due(second.wrapping_add(COPY_GAP_MS), SHARED).is_some());
     let after = second.wrapping_add(COPY_GAP_MS + 1);
     assert!(matches!(outgoing.admit(queued(4, setpoint(4, 1)), after), Admission::Later { .. }));
     assert!(matches!(outgoing.admit(queued(3, setpoint(3, 1)), after), Admission::Later { .. }));
@@ -172,8 +173,8 @@ fn a_forwarded_setpoint_and_a_command_given_here_keep_their_own_flag_through_the
     assert_eq!(outgoing.admit(forwarded.clone(), inside), Admission::Later { superseded: None });
     let given_here = queued(4, setpoint(3, 200));
     assert_eq!(outgoing.admit(given_here.clone(), inside + 1), Admission::Later { superseded: Some(forwarded) });
-    assert!(matches!(outgoing.take_due(inside), Some(Due::Repeat(_))));
-    let last = outgoing.take_due(START_MS + TARGET_SPACING_MS);
+    assert!(matches!(outgoing.take_due(inside, SHARED), Some(Due::Repeat(_))));
+    let last = outgoing.take_due(START_MS + TARGET_SPACING_MS, SHARED);
     assert_eq!(last, Some(Due::Waiting(given_here)), "the command given here still runs this node's own part");
 }
 
@@ -195,8 +196,8 @@ fn waiting_after(earlier: Queued, later: Queued) -> Option<Due> {
     send(&mut outgoing, 1, setpoint(3, 100), START_MS);
     assert_eq!(outgoing.admit(earlier, START_MS + 1), Admission::Later { superseded: None });
     assert!(matches!(outgoing.admit(later, START_MS + 2), Admission::Later { superseded: Some(_) }));
-    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
-    outgoing.take_due(START_MS + TARGET_SPACING_MS)
+    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), Some(Due::Repeat(_))));
+    outgoing.take_due(START_MS + TARGET_SPACING_MS, SHARED)
 }
 
 #[test]
@@ -236,8 +237,8 @@ fn a_recall_inside_the_spacing_replaces_a_waiting_setpoint_whole() {
     let action = Action::Light { target: Target::Channel(channel(3)), verb: LightVerb::Transition(LevelTransition::RecallMaxLevel) };
     let recall = queued(3, ClusterCommandCommand { action, source: SourceClass::Operator, hold_hcl: true });
     assert!(matches!(outgoing.admit(recall.clone(), START_MS + 2), Admission::Later { superseded: Some(_) }));
-    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS), Some(Due::Repeat(_))));
-    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS), Some(Due::Waiting(recall)));
+    assert!(matches!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), Some(Due::Repeat(_))));
+    assert_eq!(outgoing.take_due(START_MS + TARGET_SPACING_MS, SHARED), Some(Due::Waiting(recall)));
 }
 
 fn relative(number: u8, transition: LevelTransition) -> ClusterCommandCommand {
@@ -268,7 +269,7 @@ fn drive(arrivals: &[(u32, Queued)], until_ms: u32) -> (Vec<(u32, u64)>, Vec<Adm
                 Admission::AfterCopy | Admission::Later { superseded: None } => {}
             }
         }
-        while let Some(due) = outgoing.take_due(now_ms) {
+        while let Some(due) = outgoing.take_due(now_ms, SHARED) {
             if let Due::Waiting(queued) = due {
                 send_now(&mut outgoing, queued, now_ms, &mut sent);
             }
@@ -469,4 +470,52 @@ fn a_line_crossed_by_all_lamps_keeps_room_for_a_step_and_the_setpoint_after_it()
     assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "never out of order: {order:?}");
     assert!(order.contains(&25), "the step is not lost to a full line: {order:?} {refused:?}");
     assert_eq!(order.last(), Some(&26), "the setpoint after the step is the last word: {order:?}");
+}
+
+fn press() -> InputEvent {
+    InputEvent {
+        address: crate::frame::InputAddress { adapter: 0, device: 3, instance: Some(0) },
+        instance_type: Some(1),
+        groups: [None; 3],
+        scheme: 1,
+        kind: dali2rust_contracts::msg::InputEventKind::Button,
+        event_info: 1,
+        value: 0,
+    }
+}
+
+fn input_repeat(seq: u32) -> InputRepeat {
+    let header = Header { cluster_tag: 1, sender_mac: [2, 0, 0, 0, 0, 1], boot_epoch: 3, node_no: 0, seq };
+    InputRepeat { header, event: press() }
+}
+
+#[test]
+fn an_input_event_and_a_command_share_the_one_pending_second_copy() {
+    let mut outgoing = Outgoing::new();
+    send(&mut outgoing, 1, setpoint(3, 100), START_MS);
+    assert_eq!(outgoing.admit_input(press()), InputAdmission::Later, "the command's copy is pending");
+    assert_eq!(outgoing.take_due(START_MS + COPY_GAP_MS, SHARED), Some(Due::Repeat(repeat_of(&setpoint(3, 100), 1))));
+    let gone_ms = START_MS + COPY_GAP_MS;
+    assert_eq!(outgoing.take_due(gone_ms, SHARED), Some(Due::Input(press())));
+    outgoing.input_sent(input_repeat(2), gone_ms);
+    let other = queued(3, setpoint(4, 100));
+    assert_eq!(outgoing.admit(other.clone(), gone_ms + 1), Admission::AfterCopy, "the input's copy is pending");
+    assert_eq!(outgoing.deadline(), Some(gone_ms + COPY_GAP_MS));
+    assert_eq!(outgoing.take_due(gone_ms + COPY_GAP_MS - 1, SHARED), None);
+    assert_eq!(outgoing.take_due(gone_ms + COPY_GAP_MS, SHARED), Some(Due::InputRepeat(input_repeat(2))));
+    assert_eq!(outgoing.take_due(gone_ms + COPY_GAP_MS, SHARED), Some(Due::Waiting(other)));
+}
+
+#[test]
+fn a_queued_input_event_is_not_taken_once_the_node_stops_sharing_them() {
+    let mut outgoing = Outgoing::new();
+    send(&mut outgoing, 1, setpoint(3, 100), START_MS);
+    assert_eq!(outgoing.admit_input(press()), InputAdmission::Later);
+    let other = queued(2, setpoint(4, 100));
+    assert_eq!(outgoing.admit(other.clone(), START_MS + 1), Admission::AfterCopy);
+    let due_ms = START_MS + COPY_GAP_MS;
+    assert!(matches!(outgoing.take_due(due_ms, !SHARED), Some(Due::Repeat(_))), "a pending copy still goes");
+    assert_eq!(outgoing.take_due(due_ms, !SHARED), Some(Due::Waiting(other)), "the command passes the held input");
+    assert_eq!(outgoing.take_due(due_ms, !SHARED), None);
+    assert_eq!(outgoing.abandon_inputs(), 1, "the input stays queued until the line abandons it");
 }

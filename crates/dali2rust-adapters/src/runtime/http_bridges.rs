@@ -405,7 +405,8 @@ declare_counter_mapping! {
         forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
         forwards_skipped_wire_total, foreign_forwarded_total, foreign_held_total, foreign_cancelled_total,
         foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
-        copies_stored_total = 0, records_taken_back_total = 0,
+        copies_stored_total = 0, records_taken_back_total = 0, input_events_sent_total, input_events_received_total,
+        input_events_unaddressed_total, input_events_unsent_total, input_events_dropped_total,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,
@@ -1975,6 +1976,166 @@ impl ClusterLampsHttpState for ClusterLampsBridge {
         let state = part.state;
         let lit = ClusterGroupLitView { commanded: state.commanded, lit: state.lit, known: state.known, members: state.members };
         ChannelPartLit { lit: Some(lit), fresh: self.source(node, part.mac, part.fresh) == ClusterInfoSource::Cached }
+    }
+}
+
+use dali2rust_api::http::cluster_inputs_state::{
+    ClusterInputDeviceDto, ClusterInputInstanceDto, ClusterInputOwnerDto, ClusterInputRuntimeDto, ClusterInputsHttpState,
+    ClusterInputsNodeDto,
+};
+use dali2rust_cluster_runtime::inputs::{CachedInstance, ClusterInputsReadPort, HeldDevice, InputsHeldView};
+use dali2rust_cluster_runtime::presence::elapsed_ms;
+use dali2rust_domain::registry::{ClusterInputReadPort, HomeAssistantSettingsReadPort, InputDeviceView, InputInstanceView};
+
+pub(crate) struct ClusterInputsBridge {
+    pub(crate) settings: Arc<dyn ClusterSettingsReadPort>,
+    pub(crate) home_assistant: Arc<dyn HomeAssistantSettingsReadPort>,
+    pub(crate) registry: Arc<dyn ClusterInputReadPort>,
+    pub(crate) cache: Arc<dyn ClusterInputsReadPort>,
+    pub(crate) presence: Arc<dyn ClusterPresenceReadPort>,
+}
+
+impl ClusterInputsBridge {
+    fn own(&self, node: u8) -> bool {
+        node == self.settings.cluster_settings_view().node_number
+    }
+
+    fn cached_source(&self, held: &InputsHeldView) -> ClusterInfoSource {
+        let live = self.presence.heard_node(held.node).is_some_and(|view| view.live && view.mac == held.mac);
+        if held.fresh && live {
+            ClusterInfoSource::Cached
+        } else {
+            ClusterInfoSource::Stale
+        }
+    }
+
+    fn source(&self, node: u8) -> Option<ClusterInfoSource> {
+        if self.own(node) {
+            return Some(ClusterInfoSource::Own);
+        }
+        self.cache.inputs_held(node).map(|held| self.cached_source(&held))
+    }
+
+    fn own_key(&self, index: usize) -> Option<(u8, u8)> {
+        self.registry.input_device_keys().iter().nth(index)
+    }
+
+    fn own_summary(&self, node: u8) -> ClusterInputsNodeDto {
+        let count = self.registry.input_device_keys().iter().count();
+        ClusterInputsNodeDto {
+            node,
+            source: ClusterInfoSource::Own,
+            set: None,
+            age_ms: None,
+            device_count: u8::try_from(count).unwrap_or(u8::MAX),
+        }
+    }
+
+    fn cached_summary(&self, held: &InputsHeldView) -> ClusterInputsNodeDto {
+        ClusterInputsNodeDto {
+            node: held.node,
+            source: self.cached_source(held),
+            set: Some(held.set),
+            age_ms: Some(held.heard_ms_ago),
+            device_count: held.devices,
+        }
+    }
+
+    fn own_device(&self, node: u8, view: &InputDeviceView) -> ClusterInputDeviceDto {
+        let expose = self.home_assistant.home_assistant_settings_view().expose_input_devices;
+        ClusterInputDeviceDto {
+            node,
+            source: ClusterInfoSource::Own,
+            adapter_id: view.adapter_id,
+            short_address: view.short_address,
+            name: named(view.name.as_str()),
+            present: view.present,
+            instance_count: view.instance_count,
+            ha_entity: expose && view.ha_expose,
+        }
+    }
+}
+
+fn named(name: &str) -> Option<String> {
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+fn cached_device(node: u8, source: ClusterInfoSource, held: &HeldDevice) -> ClusterInputDeviceDto {
+    ClusterInputDeviceDto {
+        node,
+        source,
+        adapter_id: held.adapter,
+        short_address: held.device,
+        name: named(held.name.as_str()),
+        present: held.present,
+        instance_count: held.instances,
+        ha_entity: held.ha_entity,
+    }
+}
+
+fn own_instance(view: &InputInstanceView, now_ms: u32) -> ClusterInputInstanceDto {
+    ClusterInputInstanceDto {
+        instance_number: view.instance_number,
+        instance_type: view.instance_type,
+        instance_type_name: view.instance_type.and_then(instance_type_name),
+        instance_groups: view.groups,
+        runtime: ClusterInputRuntimeDto {
+            last_event_info: view.last_event_info,
+            input_value: view.input_value,
+            age_ms: view.last_event_mono_ms.map(|at_ms| elapsed_ms(now_ms, at_ms)),
+        },
+    }
+}
+
+fn cached_instance(held: &CachedInstance) -> ClusterInputInstanceDto {
+    ClusterInputInstanceDto {
+        instance_number: held.instance,
+        instance_type: held.instance_type,
+        instance_type_name: held.instance_type.and_then(instance_type_name),
+        instance_groups: held.groups,
+        runtime: ClusterInputRuntimeDto {
+            last_event_info: held.last.map(|last| last.event_info),
+            input_value: held.last.and_then(|last| last.value),
+            age_ms: held.last.map(|last| last.age_ms),
+        },
+    }
+}
+
+impl ClusterInputsHttpState for ClusterInputsBridge {
+    fn inputs_node(&self, node: u8) -> Option<ClusterInputsNodeDto> {
+        if self.own(node) {
+            return Some(self.own_summary(node));
+        }
+        self.cache.inputs_held(node).map(|held| self.cached_summary(&held))
+    }
+
+    fn input_owner(&self, node: u8) -> Option<ClusterInputOwnerDto> {
+        if self.own(node) {
+            let home = self.home_assistant.home_assistant_settings_view();
+            return Some(ClusterInputOwnerDto { controller_id: home.controller_id, discovery_prefix: home.discovery_prefix });
+        }
+        let owner = self.cache.cached_input_owner(node)?;
+        Some(ClusterInputOwnerDto {
+            controller_id: owner.controller_id.as_str().to_owned(),
+            discovery_prefix: owner.discovery_prefix.as_str().to_owned(),
+        })
+    }
+
+    fn input_device(&self, node: u8, index: usize) -> Option<ClusterInputDeviceDto> {
+        if self.own(node) {
+            let (adapter, short) = self.own_key(index)?;
+            return self.registry.input_device_view(adapter, short).map(|view| self.own_device(node, &view));
+        }
+        let source = self.source(node)?;
+        self.cache.cached_input_device(node, index).map(|held| cached_device(node, source, &held))
+    }
+
+    fn input_instance(&self, node: u8, device_index: usize, index: usize) -> Option<ClusterInputInstanceDto> {
+        if self.own(node) {
+            let (adapter, short) = self.own_key(device_index)?;
+            return self.registry.input_instance_view(adapter, short, index).map(|view| own_instance(&view, monotonic_ms()));
+        }
+        self.cache.cached_input_instance(node, device_index, index).map(|held| cached_instance(&held))
     }
 }
 

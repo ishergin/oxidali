@@ -9,6 +9,7 @@ use dali2rust_platform::liveness::monotonic_ms;
 use super::counters::ClusterCounters;
 use super::shared::ClusterPresence;
 use crate::info::ClusterInfo;
+use crate::inputs::ClusterInputs;
 use crate::lamps::ClusterLamps;
 use crate::presence::PresenceTiming;
 
@@ -65,6 +66,7 @@ pub struct ClusterSeams {
     pub presence: Arc<ClusterPresence>,
     pub counters: Arc<ClusterCounters>,
     pub info: Arc<ClusterInfo>,
+    pub inputs: Arc<ClusterInputs>,
     pub lamps: Arc<ClusterLamps>,
 }
 
@@ -74,6 +76,7 @@ impl ClusterSeams {
             presence: Arc::new(ClusterPresence::new(composition.timing, Arc::clone(&composition.boot_epoch))),
             counters: Arc::new(ClusterCounters::default()),
             info: Arc::new(ClusterInfo::new()),
+            inputs: Arc::new(ClusterInputs::new(composition.timing)),
             lamps: Arc::new(ClusterLamps::new(composition.timing)),
         }
     }

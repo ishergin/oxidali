@@ -53,6 +53,11 @@ pub struct ClusterCounters {
     pub foreign_hold_full_total: AtomicU32,
     pub wire_notes_sent_total: AtomicU32,
     pub wire_notes_taken_total: AtomicU32,
+    pub input_events_sent_total: AtomicU32,
+    pub input_events_received_total: AtomicU32,
+    pub input_events_unaddressed_total: AtomicU32,
+    pub input_events_unsent_total: AtomicU32,
+    pub input_events_dropped_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {

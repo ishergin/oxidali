@@ -15,8 +15,10 @@ export const clusterStatus = signal<StatusRead | null>(null)
 
 let framesTaken = 0
 
+const INPUTS_FRAME = 'ClusterInputs'
+
 function takeStatus(event: WsEvent): boolean {
-  if (event.type === 'ClusterInfo') return true
+  if (event.type === 'ClusterInfo' || event.type === INPUTS_FRAME) return true
   if (event.type !== 'ClusterStatus' || !event.payload || document.hidden) return false
   framesTaken += 1
   clusterStatus.value = { status: event.payload as ClusterStatus, at: Date.now() }
@@ -45,7 +47,7 @@ export function useClusterStatus(intervalMs: number = DEFAULT_POLL_MS): {
 }
 
 export function statusOnly(event: WsEvent): boolean {
-  return event.type === 'ClusterStatus'
+  return event.type === 'ClusterStatus' || event.type === INPUTS_FRAME
 }
 
 export function useClusterInfo(): { info: ClusterInfo | null; reload: () => Promise<void> } {

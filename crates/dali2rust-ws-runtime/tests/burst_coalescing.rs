@@ -3,6 +3,9 @@ use std::time::Duration;
 
 use dali2rust_api::http::cluster_info_state::{ClusterInfoHttpState, ClusterInfoNodeDto};
 use dali2rust_api::http::cluster_lamps_state::{ClusterLampDto, ClusterLampsHttpState, ClusterLampsNodeDto};
+use dali2rust_api::http::cluster_inputs_state::{
+    ClusterInputDeviceDto, ClusterInputInstanceDto, ClusterInputOwnerDto, ClusterInputsHttpState, ClusterInputsNodeDto,
+};
 use dali2rust_api::http::cluster_parts_state::ClusterPartDto;
 use dali2rust_api::http::cluster_records_state::ClusterRecordDto;
 use dali2rust_contracts::msg::{ClusterRecordKind, ClusterRecordRef};
@@ -104,6 +107,24 @@ impl ClusterLampsHttpState for NullCluster {
     }
 }
 
+impl ClusterInputsHttpState for NullCluster {
+    fn inputs_node(&self, _node: u8) -> Option<ClusterInputsNodeDto> {
+        None
+    }
+
+    fn input_owner(&self, _node: u8) -> Option<ClusterInputOwnerDto> {
+        None
+    }
+
+    fn input_device(&self, _node: u8, _index: usize) -> Option<ClusterInputDeviceDto> {
+        None
+    }
+
+    fn input_instance(&self, _node: u8, _device_index: usize, _index: usize) -> Option<ClusterInputInstanceDto> {
+        None
+    }
+}
+
 impl ClusterStatusHttpState for NullCluster {
     fn own(&self) -> ClusterOwnDto {
         ClusterOwnDto {
@@ -158,6 +179,28 @@ fn addressed_runtime_frame(
     ))
 }
 
+fn neighbour_press_frame(event_info: u16) -> BusFrame {
+    BusFrame::event(dali2rust_contracts::bus::event_envelope(
+        0,
+        0,
+        0,
+        Some(dali2rust_contracts::msg::Origin::Cluster),
+        dali2rust_contracts::msg::ClusterInputEventObservedEvent {
+            node: 1,
+            registry_adapter_id: 0,
+            short_address: 4,
+            instance_number: Some(0),
+            instance_type: Some(1),
+            instance_groups: [Some(2), None, None],
+            scheme: 1,
+            event_info,
+            typed: dali2rust_contracts::msg::InputEventKind::Button,
+            typed_value: 0,
+            received_at_mono_ms: 0,
+        },
+    ))
+}
+
 fn runtime_frame(level: u8) -> BusFrame {
     addressed_runtime_frame(Some(1), Some(1), level)
 }
@@ -192,6 +235,7 @@ fn spawn_harness() -> Harness {
             cluster: Arc::new(NullCluster),
             cluster_info: Arc::new(NullCluster),
             cluster_lamps: Arc::new(NullCluster),
+            cluster_inputs: Arc::new(NullCluster),
         },
         Arc::new(|| 0),
     );
@@ -351,4 +395,38 @@ fn a_dual_channel_subscriber_still_gets_both_views_of_the_survivor() {
     };
     wait_until(has("\"channel\":\"virtual_lamps\""), Duration::from_secs(3));
     wait_until(has("\"channel\":\"physical_devices\""), Duration::from_secs(3));
+}
+
+const BUTTON_PRESSED: u16 = 1;
+const BUTTON_RELEASED: u16 = 0;
+const PRESS_PAIRS: usize = 3;
+
+#[test]
+fn a_neighbour_s_presses_reach_the_client_one_frame_each_in_order() {
+    let h = spawn_harness();
+    let (publisher, counters, frames) = (&h.publisher, &h.counters, &h.frames);
+    h.hub.handle_client_text(h.client_id, r#"{"op":"subscribe","channels":["input"]}"#);
+    wait_until(
+        || frames.lock().expect("frames").iter().any(|f| f.contains("\"op\":\"subscribed\"")),
+        Duration::from_secs(2),
+    );
+    let sent: Vec<u16> = (0..PRESS_PAIRS).flat_map(|_| [BUTTON_PRESSED, BUTTON_RELEASED]).collect();
+    for event_info in &sent {
+        assert_eq!(publisher.try_publish(BusChannel::Events, neighbour_press_frame(*event_info)), PublishResult::Queued);
+    }
+    let neighbour_frames = || -> Vec<String> {
+        let seen = frames.lock().expect("frames");
+        seen.iter().filter(|f| f.contains("ClusterInputEventObservedEvent")).cloned().collect()
+    };
+    wait_until(|| neighbour_frames().len() >= sent.len(), Duration::from_secs(3));
+    let delivered = neighbour_frames();
+    let infos: Vec<Option<u16>> = delivered.iter().map(|frame| number_after(frame, "\"event_info\":")).collect();
+    assert_eq!(infos, sent.iter().copied().map(Some).collect::<Vec<_>>(), "no press is folded or reordered");
+    assert!(delivered.iter().all(|frame| number_after(frame, "\"node\":") == Some(1)));
+    assert_eq!(WsCounters::load(&counters.events_coalesced_total), 0);
+}
+
+fn number_after(frame: &str, key: &str) -> Option<u16> {
+    let rest = &frame[frame.find(key)? + key.len()..];
+    rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
 }

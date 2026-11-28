@@ -2,6 +2,7 @@ use std::io;
 
 use crate::http::cluster_info_state::{write_cluster_info, ClusterInfoHttpState};
 use crate::http::cluster_lamps_state::{write_cluster_lamps, ClusterLampsHttpState};
+use crate::http::cluster_inputs_state::{write_cluster_inputs, ClusterInputsHttpState};
 use crate::http::cluster_status_state::{write_cluster_status, ClusterStatusHttpState};
 use crate::ws::project::WS_PROJECTED_EVENTS;
 use crate::ws::protocol::{event_frame_with_payload, Channel};
@@ -11,6 +12,7 @@ pub const CLUSTER_STATUS_FRAME_CEILING_BYTES: usize = 16_384;
 pub const CLUSTER_INFO_FRAME_CEILING_BYTES: usize = 2_048;
 
 pub const CLUSTER_LAMPS_FRAME_CEILING_BYTES: usize = 1_216;
+pub const CLUSTER_INPUTS_FRAME_CEILING_BYTES: usize = 768;
 
 const CLUSTER_FRAME_FIRST_RESERVE_BYTES: usize = 1_024;
 
@@ -46,6 +48,10 @@ pub fn cluster_lamps_frame(state: &dyn ClusterLampsHttpState, ts_ms: u64) -> Str
     cluster_frame("ClusterLamps", ts_ms, |payload| write_cluster_lamps(state, payload))
 }
 
+pub fn cluster_inputs_frame(state: &dyn ClusterInputsHttpState, ts_ms: u64) -> String {
+    cluster_frame("ClusterInputs", ts_ms, |payload| write_cluster_inputs(state, payload))
+}
+
 fn cluster_frame(event: &str, ts_ms: u64, write: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> String {
     let mut payload = Vec::with_capacity(CLUSTER_FRAME_FIRST_RESERVE_BYTES);
     let written = write(&mut payload).ok().and_then(|()| String::from_utf8(payload).ok());
@@ -59,6 +65,9 @@ mod tests {
     use crate::http::cluster_lamps_state::{ClusterLampDto, ClusterLampsNodeDto};
     use dali2rust_contracts::msg::ClusterRecordRef;
     use dali2rust_domain::registry::ChannelPartLit;
+    use crate::http::cluster_inputs_state::{
+        ClusterInputDeviceDto, ClusterInputInstanceDto, ClusterInputOwnerDto, ClusterInputsNodeDto,
+    };
     use crate::http::cluster_parts_state::ClusterPartDto;
     use crate::http::cluster_records_state::ClusterRecordDto;
     use dali2rust_contracts::msg::ClusterRecordKind;
@@ -193,6 +202,32 @@ mod tests {
         assert_eq!((parsed["type"].as_str(), parsed["channel"].as_str()), (Some("ClusterInfo"), Some("cluster")));
     }
 
+    struct WorstInputs;
+
+    impl ClusterInputsHttpState for WorstInputs {
+        fn inputs_node(&self, node: u8) -> Option<ClusterInputsNodeDto> {
+            Some(ClusterInputsNodeDto {
+                node,
+                source: ClusterInfoSource::Stale,
+                set: Some(u32::MAX),
+                age_ms: Some(u32::MAX),
+                device_count: u8::MAX,
+            })
+        }
+
+        fn input_owner(&self, _node: u8) -> Option<ClusterInputOwnerDto> {
+            None
+        }
+
+        fn input_device(&self, _node: u8, _index: usize) -> Option<ClusterInputDeviceDto> {
+            None
+        }
+
+        fn input_instance(&self, _node: u8, _device_index: usize, _index: usize) -> Option<ClusterInputInstanceDto> {
+            None
+        }
+    }
+
     struct WorstLamps;
 
     impl ClusterLampsHttpState for WorstLamps {
@@ -219,6 +254,16 @@ mod tests {
         fn part_lit(&self, _node: u8, _adapter: u8, _group: u8, _channel: ClusterRecordRef) -> ChannelPartLit {
             ChannelPartLit::UNHEARD
         }
+    }
+
+    #[test]
+    fn the_cluster_inputs_frame_worst_case_is_measured_and_frozen() {
+        let frame = cluster_inputs_frame(&WorstInputs, u64::MAX);
+        eprintln!("worst-case ClusterInputs: {} B of {} B ceiling", frame.len(), CLUSTER_INPUTS_FRAME_CEILING_BYTES);
+        assert!(frame.len() <= CLUSTER_INPUTS_FRAME_CEILING_BYTES);
+        let parsed: serde_json::Value = serde_json::from_str(&frame).expect("one JSON frame");
+        assert_eq!(parsed["payload"]["nodes"].as_array().map(Vec::len), Some(usize::from(CLUSTER_NODE_COUNT)));
+        assert_eq!((parsed["type"].as_str(), parsed["channel"].as_str()), (Some("ClusterInputs"), Some("cluster")));
     }
 
     #[test]

@@ -197,6 +197,28 @@ pub struct PersistableClusterSettingsSlice {
     pub channel_generations: [u32; CLUSTER_BLOCK_SIZE],
     pub scenes: Vec<PersistableClusterRecord>,
     pub scene_generations: [u32; CLUSTER_BLOCK_SIZE],
+    pub share_input_events: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ClusterSettingsBeforeInputsSlice {
+    pub enabled: bool,
+    pub cluster_name: String,
+    pub node_number: u8,
+    pub port: u16,
+    pub wire_same_as: Option<u8>,
+    pub forward_operator: bool,
+    pub forward_home_assistant: bool,
+    pub forward_hcl: bool,
+    pub forward_foreign_master: bool,
+    pub accept_all_lamps: bool,
+    pub send_all_lamps: bool,
+    pub accept_single_lamps: bool,
+    pub wire_protection: bool,
+    pub channels: Vec<PersistableClusterRecord>,
+    pub channel_generations: [u32; CLUSTER_BLOCK_SIZE],
+    pub scenes: Vec<PersistableClusterRecord>,
+    pub scene_generations: [u32; CLUSTER_BLOCK_SIZE],
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]

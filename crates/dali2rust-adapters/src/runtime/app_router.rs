@@ -55,8 +55,9 @@ use dali2rust_api::http::redundancy_state::RedundancyHttpState;
 use dali2rust_api::http::handlers::cluster_status::{ClusterNodeForgetHandler, ClusterStatusGetHandler};
 use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
+use dali2rust_api::http::cluster_inputs_state::ClusterInputsHttpState;
 use dali2rust_api::http::handlers::cluster_commands::{ClusterCommandDeps, ClusterCommandHandler, ClusterCommandRoute};
-use dali2rust_api::http::handlers::cluster_info::{ClusterInfoGetHandler, ClusterNodePartsHandler};
+use dali2rust_api::http::handlers::cluster_info::{ClusterInfoGetHandler, ClusterNodeInputsHandler, ClusterNodePartsHandler};
 use dali2rust_api::http::cluster_lamps_state::ClusterLampsHttpState;
 use dali2rust_api::http::handlers::cluster_lamps::{ClusterLampsHandler, ClusterLampsRoute};
 use dali2rust_api::http::handlers::cluster_parts::{ClusterPartDeps, ClusterPartHandler, ClusterPartRoute};
@@ -108,6 +109,7 @@ pub(crate) struct ReadModelPorts {
     pub cluster: Arc<dyn dali2rust_api::http::cluster_status_state::ClusterStatusHttpState>,
     pub cluster_info: Arc<dyn ClusterInfoHttpState>,
     pub cluster_lamps: Arc<dyn ClusterLampsHttpState>,
+    pub cluster_inputs: Arc<dyn ClusterInputsHttpState>,
     pub uptime: Uptime,
 }
 
@@ -357,6 +359,7 @@ fn wire_read_models(
     let builder = wire_cluster_status(builder, bus, &read_models.cluster);
     let builder = wire_cluster_info(builder, bus, &read_models.cluster_info);
     let builder = wire_cluster_lamps(builder, &read_models.cluster_lamps);
+    let builder = builder.with_handler(RouteKey::ClusterNodeInputsList, read(&read_models.cluster_inputs, ClusterNodeInputsHandler::new));
     builder
         .with_handler(
             RouteKey::Diagnostics,

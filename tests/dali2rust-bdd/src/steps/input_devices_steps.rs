@@ -23,7 +23,7 @@ fn translator_counter(world: &DaliWorld, name: &str) -> Option<u64> {
         .and_then(Value::as_u64)
 }
 
-// INP-001 INP-002 INP-003 INP-004 INP-005 RULE-020 RULE-023 INP-006 MQTT-025 RULE-092 INP-100 INP-101 INP-102 INP-103 INP-104
+// INP-001 INP-002 INP-003 INP-004 INP-005 RULE-020 RULE-023 INP-006 MQTT-025 RULE-092 INP-100 INP-101 INP-102 INP-103 INP-104 CLU-240 CLU-241 CLU-242 CLU-243 CLU-244 CLU-245 CLU-250
 #[when(regex = r"^a 24-bit input event frame ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) ([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_forward24_observed(world: &mut DaliWorld, b0: String, b1: String, b2: String) {
     inject_forward24(world, [&b0, &b1, &b2]);

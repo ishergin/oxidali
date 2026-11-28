@@ -24,13 +24,14 @@ Feature: Cluster — node settings
     And the JSON boolean field "send_all_lamps" should be false
     And the JSON boolean field "accept_single_lamps" should be false
     And the JSON boolean field "wire_protection" should be true
+    And the JSON boolean field "share_input_events" should be true
     And the JSON boolean field "read_only" should be false
     And the JSON pointer "/block/first" should be 0
     And the JSON pointer "/block/last" should be 15
 
   @id:CLU-002
   Scenario: PATCH round-trips every field through a subsequent GET
-    When I PATCH JSON {"cluster_name":"dali-cluster","node_number":3,"port":47900,"wire_same_as":1,"forward_operator":false,"forward_home_assistant":false,"forward_hcl":true,"forward_foreign_master":true,"accept_all_lamps":true,"send_all_lamps":true,"accept_single_lamps":true} to "/api/v1/cluster"
+    When I PATCH JSON {"cluster_name":"dali-cluster","node_number":3,"port":47900,"wire_same_as":1,"forward_operator":false,"forward_home_assistant":false,"forward_hcl":true,"forward_foreign_master":true,"accept_all_lamps":true,"send_all_lamps":true,"accept_single_lamps":true,"share_input_events":false} to "/api/v1/cluster"
     Then the response status should be 200
     And the JSON numeric field "node_number" should be 3
     When I send a GET request to "/api/v1/cluster"
@@ -46,6 +47,7 @@ Feature: Cluster — node settings
     And the JSON boolean field "send_all_lamps" should be true
     And the JSON boolean field "accept_single_lamps" should be true
     And the JSON boolean field "wire_protection" should be true
+    And the JSON boolean field "share_input_events" should be false
     And the JSON boolean field "enabled" should be false
     And the JSON pointer "/block/first" should be 48
     And the JSON pointer "/block/last" should be 63
@@ -95,6 +97,7 @@ Feature: Cluster — node settings
       | {"wire_same_as":8}                                                                      |
       | {"wire_same_as":"own"}                                                                  |
       | {"enabled":"yes"}                                                                       |
+      | {"share_input_events":1}                                                                |
       | {"cluster_name":7}                                                                      |
       | {"cluster_name":"0123456789012345678901234567890123456789012345678901234567890123456"} |
 
@@ -163,7 +166,7 @@ Feature: Cluster — node settings
   @id:CLU-012
   Scenario: Cluster settings survive a controller restart
     Given in-memory slice persistence is enabled for the host stack
-    When I PATCH JSON {"enabled":true,"cluster_name":"dali-cluster","node_number":2,"wire_same_as":5,"forward_hcl":true} to "/api/v1/cluster"
+    When I PATCH JSON {"enabled":true,"cluster_name":"dali-cluster","node_number":2,"wire_same_as":5,"forward_hcl":true,"share_input_events":false} to "/api/v1/cluster"
     Then the response status should be 200
     When I restart the host stack
     And I send a GET request to "/api/v1/cluster"
@@ -173,6 +176,7 @@ Feature: Cluster — node settings
     And the JSON numeric field "node_number" should be 2
     And the JSON pointer "/wire_same_as" should be 5
     And the JSON boolean field "forward_hcl" should be true
+    And the JSON boolean field "share_input_events" should be false
 
   @id:CLU-013
   Scenario: A standby reads the cluster settings and refuses to write them

@@ -983,6 +983,33 @@ declare_bus_payloads! {
         applied_at_mono_ms: u32::MAX,
     };
 
+    pub struct ClusterInputEventObservedEvent {
+        pub node: u8,
+        pub registry_adapter_id: u8,
+        pub short_address: u8,
+        pub instance_number: Option<u8>,
+        pub instance_type: Option<u8>,
+        pub instance_groups: [Option<u8>; 3],
+        pub scheme: u8,
+        pub event_info: u16,
+        pub typed: InputEventKind,
+        pub typed_value: u16,
+        pub received_at_mono_ms: u32,
+    }
+    budget = ClusterInputEventObservedEvent {
+        node: u8::MAX,
+        registry_adapter_id: u8::MAX,
+        short_address: u8::MAX,
+        instance_number: Some(u8::MAX),
+        instance_type: Some(u8::MAX),
+        instance_groups: [Some(u8::MAX); 3],
+        scheme: u8::MAX,
+        event_info: u16::MAX,
+        typed: InputEventKind::Illuminance,
+        typed_value: u16::MAX,
+        received_at_mono_ms: u32::MAX,
+    };
+
 }
 
 impl DaliInputManualConfigEvent {

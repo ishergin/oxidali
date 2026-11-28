@@ -83,6 +83,7 @@ pub struct ClusterSettingsView {
     pub send_all_lamps: bool,
     pub accept_single_lamps: bool,
     pub wire_protection: bool,
+    pub share_input_events: bool,
 }
 
 impl Default for ClusterSettingsView {
@@ -98,6 +99,7 @@ impl Default for ClusterSettingsView {
             send_all_lamps: false,
             accept_single_lamps: false,
             wire_protection: true,
+            share_input_events: true,
         }
     }
 }

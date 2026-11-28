@@ -14,7 +14,9 @@ REST — [`../../rest-api/resources/input-devices.md`](../../rest-api/resources/
 события — [`../../bus-contracts/events.md`](../../bus-contracts/events.md)
 §Вход Part 103; потребитель событий — [`../rules-engine/README.md`](../rules-engine/README.md);
 сущности Home Assistant — [`../mqtt-home-assistant/README.md`](../mqtt-home-assistant/README.md);
-арбитраж пары контроллеров — [`../redundancy/README.md`](../redundancy/README.md).
+арбитраж пары контроллеров — [`../redundancy/README.md`](../redundancy/README.md);
+события и устройства других узлов кластера — [`../cluster/README.md`](../cluster/README.md)
+§Правила.
 Первоисточники — PDF стандартов в `documentation/IEC62386/` (локально, вне git);
 каждое правило ниже сверяется с PDF, а декодер — с кадрами, снятыми с реальной панели.
 

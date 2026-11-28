@@ -1245,6 +1245,7 @@ declare_bus_payloads! {
         pub send_all_lamps: bool,
         pub accept_single_lamps: bool,
         pub wire_protection: bool,
+        pub share_input_events: bool,
     }
     budget = ClusterSettingsUpdateCommand {
         series: u64::MAX,
@@ -1258,6 +1259,7 @@ declare_bus_payloads! {
         send_all_lamps: true,
         accept_single_lamps: true,
         wire_protection: true,
+        share_input_events: true,
     };
 
     pub struct ClusterTextUpdateCommand {
@@ -1666,6 +1668,7 @@ patch_fields! {
         SendAllLamps = 9,
         AcceptSingleLamps = 10,
         WireProtection = 11,
+        ShareInputEvents = 12,
     }
 }
 

@@ -260,6 +260,24 @@ typed for a channel leaves the neighbour before it reaches its wire; and the sni
 required publication, which retries a fact under a full ingress the way it already did for
 a recall, against a burst that fills the interrupt's ring.
 
+### Input devices across nodes
+
+A node shares the events of its IEC 62386-103 input devices that name a short address and
+pages the devices themselves like its channel info. An event is an occurrence, not a state
+a neighbour could re-read, so it is never folded: it goes twice with one sequence number
+through the same single pending second copy as the commands, and a release never overtakes
+its press. Only measured values are paced — illuminance at most once a second, position
+once a 250 ms window, the newest value trailing — because a sensor's next report replaces
+its last; every occupancy report goes, since one may be the only "occupied" of a room. A
+late event is taken, as a late command is, unless a later event of the same board and boot
+epoch was already applied: showing the press after its release would show an old value as
+fresh. A neighbour's event becomes one required bus event with the node number, which the
+WebSocket carries; rules and Home Assistant read it in their own stages. Values travel in
+events and the periodic refresh, never as a change of the set, so a busy sensor costs no
+info pages. A received set keeps a value heard later than its snapshot, from the shown set
+or from the last events of the board's run, and never one from an earlier boot; the first
+frame of the board's new boot, of any kind, drops the set and the lamps it showed before.
+
 ### The bus rules hold
 
 The cluster worker never touches the DALI wire: what it receives it publishes as the same
@@ -282,18 +300,19 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   `sdkconfig.p4.defaults`, which only a flash proves.
 - The cluster's counters are a block in `/api/v1/stats`, and its worker one more command,
   event and confirmation subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 8320 against a measured worst case of 8261 — the smallest
-  8192 + 64·k that holds it, k = 2 —
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 8512 against a measured worst case of 8462 — the smallest
+  8192 + 64·k that holds it, k = 5 —
   `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8832 against 8805. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15901: eight nodes and 24 ignored boards, every text at its widest. The per-node
   summary of announced channel and scene info goes out in one `ClusterInfo` frame, whose
   ceiling is 2048 against a measured worst case of 1277. The per-node summary of announced
   lamps goes out in one `ClusterLamps` frame, whose ceiling is 1216 against a measured worst
-  case of 1158 — the smallest 64·k that holds it, k = 19. The floor of
+  case of 1158 — the smallest 64·k that holds it, k = 19; the per-node summary of shared
+  input devices goes out in one `ClusterInputs` frame, whose ceiling is 768 against 767,
+  k = 12. The floor of
   internal SRAM moves only by a census on the board.
-- Input-device events and rule targets across nodes are later stages, and the rule targets
-  get a record of their own. The stages are in the
+- Rule targets across nodes are a later stage and get a record of their own. The stages are in the
   [roadmap](../../product-design/roadmap.md); the module's design is in
   [`cluster`](../../product-design/runtime-modules/cluster/README.md).
 - BDD drives a node through HTTP, the WebSocket and the hub double, with a scenario playing

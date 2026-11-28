@@ -143,6 +143,13 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
   required, as the only carrier of an executed `DAPC(MASK)`, and confirms the command only
   once it is queued. One fact follows one executed command or one observed frame, so they arrive at the pace of the wire and its funnel is not sized for
   a burst.
+- The cluster worker also consumes the node's own input events and
+  `InputDeviceChangedEvent`, which only marks its input info changed. A neighbour's input
+  event that the cluster receiver takes is `ClusterInputEventObservedEvent`, the only
+  carrier of that press: the receiver publishes it required (`CLUSTER_RX_REQUIRED_EVENTS`)
+  under a budget of its own and counts a refusal as dropped. Events arrive at the pace of
+  a neighbour's wire, twice each, and one of the two copies is dropped as a duplicate
+  before the bus.
 
 ## Required events
 
