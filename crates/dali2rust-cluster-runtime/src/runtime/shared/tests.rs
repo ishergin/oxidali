@@ -5,7 +5,13 @@ use dali2rust_contracts::msg::{fixed_text_32, fixed_text_64};
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 
 use super::*;
-use crate::frame::{cluster_tag, encode, DatagramBuffer, Header, InfoPageWriter, NodeClaim, Pulse};
+use dali2rust_contracts::msg::{ColorMode, DeviceType};
+
+use crate::frame::{
+    cluster_tag, encode, AdapterScope, DatagramBuffer, Header, InfoPageWriter, LampCapabilities, LampInfo, LampInfoElement,
+    LampInfoWriter, NodeClaim, PagePlace, Pulse,
+};
+use crate::lamps::ClusterLampsReadPort;
 use crate::runtime::fixed_boot_epoch;
 
 const TIMING: PresenceTiming = PresenceTiming::every_ms(1_000);
@@ -61,7 +67,7 @@ fn present() -> (ClusterPresence, ClusterCounters) {
 }
 
 fn deliver(presence: &ClusterPresence, counters: &ClusterCounters, bytes: &[u8], link: u32, now_ms: u32) {
-    presence.take_datagram(bytes, Delivery { source: SOURCE, link, now_ms }, counters, &ClusterInfo::new());
+    presence.take_datagram(bytes, Delivery { source: SOURCE, link, now_ms }, counters, Caches { info: &ClusterInfo::new(), lamps: &ClusterLamps::new(TIMING) });
 }
 
 fn boards(presence: &ClusterPresence) -> usize {
@@ -143,7 +149,7 @@ fn a_late_page_of_a_member_is_stale_and_a_page_of_another_cluster_is_ignored() {
     let (presence, counters) = present();
     let info = ClusterInfo::new();
     let take = |bytes: &[u8]| {
-        presence.take_datagram(bytes, Delivery { source: SOURCE, link: 0, now_ms: START_MS }, &counters, &info);
+        presence.take_datagram(bytes, Delivery { source: SOURCE, link: 0, now_ms: START_MS }, &counters, Caches { info: &info, lamps: &ClusterLamps::new(TIMING) });
     };
     let read = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
     take(&pulse(NAME, BARN, 1, 10));
@@ -183,7 +189,7 @@ fn command_from(sender_mac: [u8; 6], cluster_name: &str, node: u8, seq: u32) -> 
 
 fn heard(presence: &ClusterPresence, counters: &ClusterCounters, bytes: &[u8]) -> Option<CommandAdmission> {
     let delivery = Delivery { source: SOURCE, link: presence.link(), now_ms: START_MS };
-    presence.take_datagram(bytes, delivery, counters, &ClusterInfo::new()).map(|heard| heard.admission)
+    presence.take_datagram(bytes, delivery, counters, Caches { info: &ClusterInfo::new(), lamps: &ClusterLamps::new(TIMING) }).map(|heard| heard.admission)
 }
 
 #[test]
@@ -227,4 +233,54 @@ fn a_running_node_that_owns_its_wire_stands_to_execute_a_member_s_command() {
     let running = CommandStanding { running: true, owns_wire: true, wire: 0 };
     let admission = heard(&presence, &counters, &command_from(NEIGHBOUR_MAC, NAME, 1, 11));
     assert_eq!(admission, Some(CommandAdmission::Taken(running)));
+}
+
+fn lamp_info_page(node: u8, boot_epoch: u32, seq: u32) -> Vec<u8> {
+    let header = Header { cluster_tag: cluster_tag(NAME), sender_mac: NEIGHBOUR_MAC, boot_epoch, node_no: node, seq };
+    let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let place = PagePlace { scope: AdapterScope { adapter: 0 }, set: 1, page: 0 };
+    let mut writer = LampInfoWriter::open(&mut buffer, &header, place).expect("a page opens");
+    let lamp = LampInfo {
+        lamp: 1,
+        name: "Hall",
+        device_type: DeviceType::Dt6Led,
+        device_type_overridden: false,
+        device_types: 0,
+        color_mode: ColorMode::Brightness,
+        color_mode_overridden: false,
+        capabilities: LampCapabilities::default(),
+        kelvin_range: None,
+        bound: true,
+        ha_entity: true,
+    };
+    writer.push(&LampInfoElement::Lamp(lamp)).expect("the lamp fits");
+    let len = writer.finish(true);
+    buffer[..len].to_vec()
+}
+
+fn pulse_of_epoch(node: u8, boot_epoch: u32, seq: u32) -> Vec<u8> {
+    let header = Header { cluster_tag: cluster_tag(NAME), sender_mac: NEIGHBOUR_MAC, boot_epoch, node_no: node, seq };
+    let frame = Frame::Pulse(Pulse { cluster_name: NAME, installation: BARN, claim: NodeClaim::Holding, wire: node, wire_protection: true });
+    let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let len = encode(&header, &frame, &mut buffer).expect("a pulse fits");
+    buffer[..len].to_vec()
+}
+
+#[test]
+fn a_neighbour_s_first_pulse_after_a_reboot_drops_its_cached_lamps() {
+    let (presence, counters) = present();
+    let lamps = ClusterLamps::new(TIMING);
+    let take = |bytes: &[u8]| {
+        let delivery = Delivery { source: SOURCE, link: 0, now_ms: START_MS };
+        presence.take_datagram(bytes, delivery, &counters, Caches { info: &ClusterInfo::new(), lamps: &lamps });
+    };
+    take(&pulse_of_epoch(1, 7, 1));
+    take(&lamp_info_page(1, 7, 2));
+    take(&pulse_of_epoch(1, 7, 3));
+    assert_eq!(lamps.cached_lamp_ids(1, 0), 1 << 1, "the board's lamp is held across its pulses");
+    take(&pulse_of_epoch(1, 8, 0));
+    assert_eq!(lamps.cached_lamp_ids(1, 0), 0, "the board booted again, so its old lamps are gone");
+    take(&lamp_info_page(1, 8, 1));
+    take(&pulse_of_epoch(1, 7, 4));
+    assert_eq!(lamps.cached_lamp_ids(1, 0), 1 << 1, "a late pulse from before the reboot leaves the new run alone");
 }

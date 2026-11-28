@@ -23,8 +23,8 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
-    ClusterCopyReadPort, ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort, ClusterSettingsView, ClusterWire,
-    AdapterReadPort, DaliSettingsReadPort, HomeAssistantSettingsReadPort,
+    ClusterCopyReadPort, ClusterLampReadPort, ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort,
+    ClusterSettingsView, ClusterWire, AdapterReadPort, DaliSettingsReadPort, HomeAssistantSettingsReadPort,
 };
 use dali2rust_platform::cluster_link::{ClusterLink, ClusterLinkBinder, MAX_CLUSTER_DATAGRAM_BYTES};
 use dali2rust_platform::liveness::monotonic_ms;
@@ -32,13 +32,16 @@ use dali2rust_platform::net::NetworkLink;
 
 use crate::frame::{cluster_tag, encode, DatagramBuffer, Frame, Header, Hello, Pulse, NODE_COUNT};
 use crate::info::{ClusterInfo, ClusterInfoReadPort};
+use crate::lamps::{ClusterLamps, ClusterLampsReadPort};
 use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 
 use super::announce::{reached, Announcer, OwnInfo, Turn};
+use super::page_slot::PageSlot;
 use super::counters::{bump, ClusterCounters};
 use super::execute::{ClusterExecution, ExecutionReads};
 use super::hold::ForeignHold;
 use super::incoming::CommandIntake;
+use super::lamp_announce::{LampAnnouncer, OwnLamps, Subject, ANNOUNCED_ADAPTER};
 use super::outgoing::{placed_outgoing, Outgoing};
 use super::receiver::{run_receiver, LinkHandoff};
 use super::round::BlockRound;
@@ -64,6 +67,11 @@ pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] = &[
     "DaliSceneRecalledEvent",
     "DaliStopFadeAppliedEvent",
     "DaliObservedFrameEvent",
+    "RuntimeStateChangedEvent",
+    "VirtualLampChangedEvent",
+    "GroupMatrixChangedEvent",
+    "PhysicalDeviceChangedEvent",
+    "HomeAssistantSettingsChangedEvent",
 ];
 
 
@@ -84,6 +92,8 @@ pub struct ClusterWorkerPorts {
     pub copies: Arc<dyn ClusterCopyReadPort>,
     pub adapters: Arc<dyn AdapterReadPort>,
     pub info: Arc<ClusterInfo>,
+    pub lamps: Arc<dyn ClusterLampReadPort>,
+    pub lamp_cache: Arc<ClusterLamps>,
 }
 
 pub struct ClusterWorkerThreads {
@@ -99,7 +109,7 @@ pub struct ClusterInboxes {
 pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) -> ClusterWorkerThreads {
     let (handoff_tx, handoff_rx) = mpsc::channel();
     let (presence, counters) = (Arc::clone(&ports.presence), Arc::clone(&ports.counters));
-    let info = Arc::clone(&ports.info);
+    let caches = (Arc::clone(&ports.info), Arc::clone(&ports.lamp_cache));
     let execution = execution(&ports);
     let settings = Arc::clone(&ports.settings);
     let hold = Arc::new(ForeignHold::new());
@@ -114,7 +124,7 @@ pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) 
         c"cluster_rx",
         std_thread_stack::EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        move || run_receiver(handoff_rx, (presence, info), counters, intake),
+        move || run_receiver(handoff_rx, (presence, caches.0, caches.1), counters, intake),
     );
     let inbox = inboxes.commands_and_events;
     let sender = spawn_named_stack_in(
@@ -249,6 +259,9 @@ struct NodeSender<'a> {
     info_digest: u64,
     round: BlockRound,
     next_copy_ms: u32,
+    lamps_digest: u64,
+    lamp_announcer: LampAnnouncer,
+    page_slot: PageSlot,
 }
 
 impl<'a> NodeSender<'a> {
@@ -273,6 +286,9 @@ impl<'a> NodeSender<'a> {
             info_digest: 0,
             round: BlockRound::new(),
             next_copy_ms: now_ms,
+            lamps_digest: 0,
+            lamp_announcer: LampAnnouncer::new(),
+            page_slot: PageSlot::default(),
         }
     }
 
@@ -289,6 +305,7 @@ impl<'a> NodeSender<'a> {
         self.mode = settled.mode;
         if renamed {
             self.ports.info.clear();
+            self.ports.lamp_cache.clear();
         }
         if settled.entered_running || self.slot_due(now_ms) {
             self.on_slot(&reading, settled, now_ms);
@@ -309,15 +326,32 @@ impl<'a> NodeSender<'a> {
         let turn = Turn { running, node: reading.settings.node_number, now_ms, hello, split, timing };
         let own = OwnInfo { records: &*self.ports.records, parts: &*self.ports.parts, copies: &*self.ports.copies };
         self.announcer.plan(turn, own);
-        if !self.announcer.page_due(now_ms) {
+        self.lamp_announcer.plan(turn, OwnLamps { lamps: &*self.ports.lamps, parts: &*self.ports.parts });
+        if self.page_slot.held(now_ms) {
             return;
         }
+        if self.announcer.page_due(now_ms) {
+            self.send_info_page(reading, now_ms);
+        } else if self.lamp_announcer.page_due(now_ms) {
+            self.send_lamp_page(reading, now_ms);
+        }
+    }
+
+    fn send_info_page(&mut self, reading: &Reading, now_ms: u32) {
+        self.page_slot.take(now_ms);
         let header = self.next_header(reading);
         let written = self.announcer.write_page(&mut self.buffer, &header, now_ms);
         let closes_set = written.is_ok() && !self.announcer.paging();
         if self.transmit(written.ok()) && closes_set {
             bump(&self.ports.counters.info_sets_sent_total);
         }
+    }
+
+    fn send_lamp_page(&mut self, reading: &Reading, now_ms: u32) {
+        self.page_slot.take(now_ms);
+        let header = self.next_header(reading);
+        let written = self.lamp_announcer.write_page(&mut self.buffer, &header, now_ms);
+        self.transmit(written.ok());
     }
 
     fn listened_ms(&mut self, reading: &Reading, now_ms: u32) -> (u32, bool) {
@@ -353,11 +387,14 @@ impl<'a> NodeSender<'a> {
     fn wait(&self, now_ms: u32) -> Option<Duration> {
         self.wants_link.then(|| {
             let left = |at_ms: u32| if reached(now_ms, at_ms) { 0 } else { at_ms.wrapping_sub(now_ms) };
-            let info = self.announcer.deadline().map_or(u32::MAX, left);
+            let paced = |at_ms: u32| self.page_slot.clamp(now_ms, at_ms);
+            let info = self.announcer.deadline().map(paced).map_or(u32::MAX, left);
+            let lamps = self.lamp_announcer.deadline().map(paced).map_or(u32::MAX, left);
             let commands = self.outgoing.deadline().map_or(u32::MAX, left);
             let held = self.hold.line().deadline().map_or(u32::MAX, left);
             let block = self.block_deadline().map_or(u32::MAX, left);
-            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info).min(commands).min(held).min(block)))
+            let soonest = left(self.next_slot_ms).min(info).min(lamps).min(commands).min(held).min(block);
+            Duration::from_millis(u64::from(soonest))
         })
     }
 
@@ -394,6 +431,7 @@ impl<'a> NodeSender<'a> {
             let _ = self.handoff.send(LinkHandoff::Unbound);
             self.ports.presence.clear();
             self.ports.info.clear();
+            self.ports.lamp_cache.clear();
         }
     }
 
@@ -449,6 +487,20 @@ impl<'a> NodeSender<'a> {
         if info_digest != self.info_digest && self.publish(ClusterSubject::Info) {
             self.info_digest = info_digest;
         }
+        let lamps_digest = self.lamps_digest(now_ms);
+        if lamps_digest != self.lamps_digest && self.publish(ClusterSubject::Lamps) {
+            self.lamps_digest = lamps_digest;
+        }
+    }
+
+    fn lamps_digest(&self, now_ms: u32) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.ports.lamp_cache.changes(now_ms).hash(&mut hasher);
+        for node in 0..NODE_COUNT {
+            let fresh = self.ports.lamp_cache.lamps_held(node).map(|held| held.fresh);
+            (fresh, fresh.is_some() && self.ports.presence.member_heard(node, now_ms)).hash(&mut hasher);
+        }
+        hasher.finish()
     }
 
     fn info_digest(&self, now_ms: u32) -> u64 {
@@ -471,11 +523,21 @@ impl<'a> NodeSender<'a> {
     fn take(&mut self, frame: &BusFrame) {
         match frame {
             BusFrame::Command(command) => dispatch_cluster_command(&command.payload, self, command.meta.correlation_id),
-            BusFrame::Event(event) => match &event.payload {
-                BusEventPayload::ClusterSettingsChangedEvent(_) => self.on_settings_changed(),
-                fact => self.forward(fact),
-            },
+            BusFrame::Event(event) => {
+                self.note_lamps_moved(&event.payload);
+                match &event.payload {
+                    BusEventPayload::ClusterSettingsChangedEvent(_) => self.on_settings_changed(),
+                    fact => self.forward(fact),
+                }
+            }
             _ => {}
+        }
+    }
+
+    fn note_lamps_moved(&mut self, payload: &BusEventPayload) {
+        let now_ms = monotonic_ms();
+        for &subject in lamp_subjects(payload) {
+            self.lamp_announcer.note_moved(subject, now_ms);
         }
     }
 
@@ -488,9 +550,30 @@ impl<'a> NodeSender<'a> {
         let outcome = self.ports.presence.forget(forget.node, monotonic_ms());
         if outcome == Forgotten::Removed {
             self.ports.info.forget(forget.node);
+            self.ports.lamp_cache.forget(forget.node);
         }
         let product_error = (outcome == Forgotten::StillHeard).then_some((ErrorCode::Conflict, NODE_HEARD));
         confirm(&self.ports.publisher, correlation_id, product_error);
+    }
+}
+
+fn lamp_subjects(payload: &BusEventPayload) -> &'static [Subject] {
+    const STATE: &[Subject] = &[Subject::State];
+    const BOTH: &[Subject] = &[Subject::State, Subject::Info];
+    const INFO: &[Subject] = &[Subject::Info];
+    match payload {
+        BusEventPayload::RuntimeStateChangedEvent(changed) if changed.adapter_id == ANNOUNCED_ADAPTER => STATE,
+        BusEventPayload::GroupMatrixChangedEvent(changed) if changed.adapter_id == ANNOUNCED_ADAPTER => STATE,
+        BusEventPayload::ClusterSettingsChangedEvent(_) => STATE,
+        BusEventPayload::DaliTargetStateAppliedEvent(_)
+        | BusEventPayload::DaliLevelTransitionAppliedEvent(_)
+        | BusEventPayload::DaliSceneRecalledEvent(_)
+        | BusEventPayload::DaliStopFadeAppliedEvent(_)
+        | BusEventPayload::DaliObservedFrameEvent(_) => STATE,
+        BusEventPayload::VirtualLampChangedEvent(changed) if changed.adapter_id == ANNOUNCED_ADAPTER => BOTH,
+        BusEventPayload::PhysicalDeviceChangedEvent(changed) if changed.adapter_id == ANNOUNCED_ADAPTER => BOTH,
+        BusEventPayload::HomeAssistantSettingsChangedEvent(_) => INFO,
+        _ => &[],
     }
 }
 

@@ -457,11 +457,21 @@ export interface ClusterWireFault {
   holds: ClusterWireHolding
 }
 
+export interface ClusterPartState {
+  on: boolean | null
+  commanded: boolean | null
+  lit: number | null
+  known: number | null
+  members: number | null
+  fresh: boolean
+}
+
 export interface ClusterNodePart extends ClusterPart {
   node: number
   source: ClusterInfoSource
   link: ClusterPartLink
   wire_fault: ClusterWireFault | null
+  state?: ClusterPartState
 }
 
 export interface ClusterInfo {
@@ -469,6 +479,14 @@ export interface ClusterInfo {
 }
 
 export type ClusterRecordKind = 'channel' | 'scene'
+
+export interface ClusterChannelState {
+  on: boolean | null
+  lit: number
+  known: number
+  members: number
+  parts_unknown: number
+}
 
 export interface ClusterRecord {
   number: number
@@ -479,8 +497,51 @@ export interface ClusterRecord {
   source: ClusterInfoSource
 }
 
-export interface ClusterRecordDetail extends ClusterRecord {
+export interface ClusterRecordItem extends ClusterRecord {
+  state?: ClusterChannelState
+}
+
+export interface ClusterRecordDetail extends ClusterRecordItem {
   parts: ClusterNodePart[]
+}
+
+export interface ClusterLampsNode {
+  node: number
+  source: ClusterInfoSource
+  lamps: number
+  state_set: number | null
+  info_set: number | null
+  age_ms: number | null
+  sequence_gaps: number | null
+}
+
+export interface ClusterLamps {
+  nodes: ClusterLampsNode[]
+}
+
+export interface ClusterLampAddress {
+  node: number
+  adapter: number
+  lamp: number
+}
+
+export interface ClusterLampHomeAssistant {
+  unique_id: string
+  discovery_topic: string
+}
+
+export interface ClusterLamp extends VirtualLamp {
+  cluster_address: ClusterLampAddress
+  source: ClusterInfoSource
+  bound: boolean
+  observation_age_ms: number | null
+  home_assistant: ClusterLampHomeAssistant | null
+}
+
+export interface ClusterNodeLamps {
+  node: number
+  source: ClusterInfoSource
+  lamps: ClusterLamp[]
 }
 
 export interface ClusterRecordCreate {

@@ -1,5 +1,6 @@
 pub mod frame;
 pub mod info;
+pub mod lamps;
 pub mod presence;
 pub mod runtime;
 pub mod sequence;

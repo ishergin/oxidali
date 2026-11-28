@@ -10,6 +10,7 @@ use dali2rust_contracts::msg::{FixedText32, FixedText64};
 
 use crate::frame::{decode, Command, Decoded, Frame, Header, WireNote, NODE_COUNT};
 use crate::info::{Arrival, ClusterInfo};
+use crate::lamps::{ClusterLamps, LampArrival};
 use crate::presence::{
     claim_mode, elapsed_ms, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
     PresenceTiming, Roster, Taken, WireOwner, MAX_HEARD_BOARDS,
@@ -95,6 +96,18 @@ pub struct PresenceState {
     pub(crate) mode: OwnMode,
     pub(crate) mac_known: bool,
     pub(crate) link: u32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Caches<'a> {
+    pub(crate) info: &'a ClusterInfo,
+    pub(crate) lamps: &'a ClusterLamps,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Eras {
+    info: u32,
+    lamps: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +227,7 @@ impl ClusterPresence {
         bytes: &[u8],
         delivery: Delivery,
         counters: &ClusterCounters,
-        info: &ClusterInfo,
+        caches: Caches<'_>,
     ) -> Option<HeardCommand> {
         let decoded = match decode(bytes) {
             Ok(decoded) => decoded,
@@ -223,9 +236,10 @@ impl ClusterPresence {
                 return None;
             }
         };
-        let (admitted, era, own_node) = self.admit(&decoded, delivery, counters, info)?;
+        let (admitted, at) = self.admit(&decoded, delivery, counters, caches)?;
         if let Some(taken) = admitted.taken {
             counters.count_taken(taken);
+            note_run(&decoded, taken, delivery.now_ms, caches.lamps);
         }
         match decoded.frame {
             Frame::Command(command) => return admitted.command(Heard::Command(command)),
@@ -233,7 +247,7 @@ impl ClusterPresence {
             _ => {}
         }
         if admitted.feeds_info() {
-            self.hear_member(&decoded, HeardAt { now_ms: delivery.now_ms, era, own_node }, counters, info);
+            self.hear_member(&decoded, at, counters, caches);
         } else if matches!(decoded.frame, Frame::ChannelSceneInfo(_)) {
             counters.count_unfed_page(admitted.member, admitted.taken);
         }
@@ -245,8 +259,8 @@ impl ClusterPresence {
         decoded: &Decoded<'_>,
         delivery: Delivery,
         counters: &ClusterCounters,
-        info: &ClusterInfo,
-    ) -> Option<(Admitted, u32, u8)> {
+        caches: Caches<'_>,
+    ) -> Option<(Admitted, HeardAt)> {
         let mut state = self.lock();
         if state.link != delivery.link {
             drop(state);
@@ -254,13 +268,18 @@ impl ClusterPresence {
             return None;
         }
         let admitted = state.take(decoded, delivery, self.timing, counters);
-        Some((admitted, info.era(), state.own.node_no))
+        let eras = Eras { info: caches.info.era(), lamps: caches.lamps.era() };
+        Some((admitted, HeardAt { now_ms: delivery.now_ms, eras, own_node: state.own.node_no }))
     }
 
-    fn hear_member(&self, decoded: &Decoded<'_>, at: HeardAt, counters: &ClusterCounters, info: &ClusterInfo) {
+    fn hear_member(&self, decoded: &Decoded<'_>, at: HeardAt, counters: &ClusterCounters, caches: Caches<'_>) {
+        let header = &decoded.header;
+        let lamp_at = LampArrival { node: header.node_no, mac: header.sender_mac, epoch: header.boot_epoch, now_ms: at.now_ms };
         match &decoded.frame {
             Frame::Hello(_) => self.hello_heard.store(true, Relaxed),
-            Frame::ChannelSceneInfo(page) => feed_info(info, &decoded.header, page, at, counters),
+            Frame::ChannelSceneInfo(page) => feed_info(caches.info, header, page, at, counters),
+            Frame::LampState(page) => drop(caches.lamps.take_state(lamp_at, page, at.eras.lamps)),
+            Frame::LampInfo(page) => drop(caches.lamps.take_info(lamp_at, page, at.eras.lamps)),
             _ => {}
         }
     }
@@ -372,7 +391,11 @@ impl PresenceState {
         let taken = match &decoded.frame {
             Frame::Pulse(pulse) => self.table.take_pulse(at, pulse),
             Frame::Hello(hello) => self.table.take_hello(header, hello),
-            Frame::Command(_) | Frame::WireNote(_) | Frame::ChannelSceneInfo(_) => self.table.take_other(header),
+            Frame::Command(_)
+            | Frame::WireNote(_)
+            | Frame::ChannelSceneInfo(_)
+            | Frame::LampState(_)
+            | Frame::LampInfo(_) => self.table.take_other(header),
         };
         let speaks = !matches!(decoded.frame, Frame::Pulse(_)) && self.speaks_for_its_node(header, delivery.now_ms, timing);
         let standing = matches!(decoded.frame, Frame::Command(_) | Frame::WireNote(_)).then(|| self.command_standing(delivery.now_ms, timing));
@@ -486,7 +509,7 @@ fn ignored_view(roster: &Roster<'_>, board: &HeardBoard, reason: IgnoredReason) 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HeardAt {
     now_ms: u32,
-    era: u32,
+    eras: Eras,
     own_node: u8,
 }
 
@@ -497,9 +520,9 @@ fn feed_info(
     heard: HeardAt,
     counters: &ClusterCounters,
 ) {
-    let HeardAt { now_ms, era, own_node } = heard;
+    let HeardAt { now_ms, eras, own_node } = heard;
     let at = Arrival { node: header.node_no, own_node, mac: header.sender_mac, epoch: header.boot_epoch, now_ms };
-    counters.count_page(info.take_page(at, page, era));
+    counters.count_page(info.take_page(at, page, eras.info));
 }
 
 fn placed_state() -> PsramBox<PresenceState> {
@@ -516,5 +539,12 @@ fn placed_state() -> PsramBox<PresenceState> {
             ptr::addr_of_mut!((*state).mac_known).write(false);
             ptr::addr_of_mut!((*state).link).write(0);
         })
+    }
+}
+
+fn note_run(decoded: &Decoded<'_>, taken: Taken, now_ms: u32, lamps: &ClusterLamps) {
+    if matches!(decoded.frame, Frame::Pulse(_)) && matches!(taken, Taken::Restarted | Taken::First { .. }) {
+        let header = &decoded.header;
+        lamps.note_run(LampArrival { node: header.node_no, mac: header.sender_mac, epoch: header.boot_epoch, now_ms });
     }
 }

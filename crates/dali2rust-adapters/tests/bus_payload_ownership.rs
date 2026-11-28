@@ -136,10 +136,6 @@ const OBSERVED_ONLY_EVENTS: &[(&str, &str)] = &[
     ("DaliDiscoveryFailedEvent", "operation completion travels by worker signal"),
     ("PersistenceLoadResultEvent", "boot-only hydrate summary for the diagnostic surface and BDD"),
     (
-        "HomeAssistantSettingsChangedEvent",
-        "the bridge re-reads its settings from the read port on every pass; a dropped event must not park it",
-    ),
-    (
         "PoliciesChangedEvent",
         "the policy is read from the port when it is applied, never latched from an event",
     ),

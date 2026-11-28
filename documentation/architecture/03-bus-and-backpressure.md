@@ -73,10 +73,14 @@ composition subscribes (`dali2rust-adapters/src/runtime/bus_host.rs`).
 | Rules funnel | 128 |
 | OTA commands | 2 |
 | Redundancy: arbitration / replication / supervisor events | 16 / 8 / 4 |
-| Cluster funnel / confirmations | 16 / 32 |
+| Cluster funnel / confirmations | 128 / 32 |
 
-- The two 128-deep event inboxes belong to the slowest consumers (per-event JSON
-  projection, per-event rule evaluation), where a loss is visible to an operator.
+- The 128-deep event inboxes belong to the slowest consumers (per-event JSON
+  projection, per-event rule evaluation), where a loss is visible to an operator, and to
+  the cluster worker, whose one funnel carries its commands beside the facts its lamp
+  announcer wakes on: one runtime commit per lamp of a broadcast and the paced reload
+  announcements. Half the funnel holds a broadcast's commits, so they never crowd out a
+  cluster command; a test in `bus_host.rs` holds it.
 - No depth is sized for a producer's burst. Raising a depth moves the cliff instead of
   removing it; flow control belongs to the producer (*Producers*, below).
 - A queue slot holds an `Arc`, so depth costs slot memory, not envelope memory. A

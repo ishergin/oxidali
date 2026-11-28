@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 
 use crate::runtime::coalesce::BurstCoalescer;
 use dali2rust_api::ws::{
-    cluster_info_frame, cluster_status_frame, diagnostics_snapshot_frame, event_channels, health_snapshot_frame,
+    cluster_info_frame, cluster_lamps_frame, cluster_status_frame, diagnostics_snapshot_frame, event_channels, health_snapshot_frame,
     log_batch_frame, log_batch_prefix, project_event_where, sniffer_batch_frame,
     stats_snapshot_frame, Channel, SnifferDecoderState,
 };
 use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
+use dali2rust_api::http::cluster_lamps_state::ClusterLampsHttpState;
 use dali2rust_api::http::cluster_status_state::ClusterStatusHttpState;
 use dali2rust_api::http::diagnostics_state::DiagnosticsHttpState;
 use dali2rust_api::http::health_state::HealthHttpState;
@@ -48,12 +49,14 @@ pub struct WsWorkerPorts {
     pub health: Arc<dyn HealthHttpState>,
     pub cluster: Arc<dyn ClusterStatusHttpState>,
     pub cluster_info: Arc<dyn ClusterInfoHttpState>,
+    pub cluster_lamps: Arc<dyn ClusterLampsHttpState>,
 }
 
 #[derive(Clone, Copy, Default)]
 struct ClusterMoved {
     status: bool,
     info: bool,
+    lamps: bool,
 }
 
 impl ClusterMoved {
@@ -61,6 +64,7 @@ impl ClusterMoved {
         match subject {
             ClusterSubject::Status => Self { status: true, ..self },
             ClusterSubject::Info => Self { info: true, ..self },
+            ClusterSubject::Lamps => Self { lamps: true, ..self },
         }
     }
 }
@@ -258,6 +262,9 @@ fn broadcast_cluster(hub: &WsHub, ports: &WsWorkerPorts, moved: ClusterMoved, no
     }
     if moved.info {
         hub.broadcast(Channel::Cluster, &cluster_info_frame(ports.cluster_info.as_ref(), now_ms));
+    }
+    if moved.lamps {
+        hub.broadcast(Channel::Cluster, &cluster_lamps_frame(ports.cluster_lamps.as_ref(), now_ms));
     }
 }
 

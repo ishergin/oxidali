@@ -225,7 +225,7 @@ fn wait_for_frame(world: &mut DaliWorld, frame: u16) {
     );
 }
 
-// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070 CLU-094 CLU-097 CLU-100
+// HCL-050 HCL-057 HCL-063 HCL-051 HCL-053 HCL-054 HCL-056 HCL-060 HCL-061 HCL-062 HCL-064 HCL-077 HCL-078 SYS-237 RULE-037 RULE-038 RULE-060 RULE-061 RULE-062 RULE-063 RULE-064 RULE-070 CLU-094 CLU-097 CLU-100 CLU-208
 #[given(regex = r"^the controller clock reads (\d+) minutes past midnight$")]
 async fn given_clock_reads(world: &mut DaliWorld, minutes: u64) {
     set_clock(world, minutes);
@@ -252,7 +252,7 @@ async fn then_group_driven(world: &mut DaliWorld, group_id: u8, level: u8) {
     wait_for_frame(world, dapc_frame(Some(group_id), level));
 }
 
-// HCL-057 HCL-078 CLU-097
+// HCL-057 HCL-078 CLU-097 CLU-208
 #[then(regex = r"^the scheduler should drive broadcast to level (\d+)$")]
 async fn then_broadcast_driven(world: &mut DaliWorld, level: u8) {
     wait_for_frame(world, dapc_frame(None, level));

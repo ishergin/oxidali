@@ -108,7 +108,8 @@ impl ClusterRecordHandler {
             200,
             Box::new(move |w: &mut dyn Write| {
                 write!(w, "{{\"{}\":[", list_key(kind))?;
-                write_json_array_items(w, ClusterView::read(cluster.as_ref()).records(kind))?;
+                let view = ClusterView::read(cluster.as_ref());
+                write_json_array_items(w, view.records(kind).map(|record| view.with_state(kind, record)))?;
                 w.write_all(b"]}")
             }),
         )
@@ -120,9 +121,11 @@ impl ClusterRecordHandler {
         Ok(HttpResponse::json_stream(
             200,
             Box::new(move |w: &mut dyn Write| {
-                write_object_then(w, &record, "parts")?;
+                let view = ClusterView::read(cluster.as_ref());
+                let parts = view.parts_of(kind, &record);
+                write_object_then(w, &view.with_state(kind, record.clone()), "parts")?;
                 w.write_all(b"[")?;
-                write_json_array_items(w, ClusterView::read(cluster.as_ref()).parts_of(kind, &record))?;
+                write_json_array_items(w, parts)?;
                 w.write_all(b"]}")
             }),
         ))

@@ -79,7 +79,7 @@ const REPLICATION: EventInbox =
     event_inbox("replication", dali2rust_redundancy_runtime::REPLICATION_HANDLED_EVENTS, 8);
 const CLUSTER_CONFIRMATION_INBOX: usize = 32;
 const CLUSTER: EventInbox =
-    event_inbox("cluster", dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_EVENTS, 16);
+    event_inbox("cluster", dali2rust_cluster_runtime::CLUSTER_WORKER_HANDLED_EVENTS, 128);
 
 fn named_events<S: dali2rust_bus::Sender<dali2rust_bus::BusFrame> + Clone>(
     reg: &mut dali2rust_bus::BusRegistrar<S, dali2rust_bus::BusSubscriberRx>,
@@ -231,6 +231,13 @@ mod tests {
             assert!(most <= room, "{name}: {most} announcements a park against {inbox} slots");
         }
         assert_eq!(EVENT_INBOXES.len(), NAMED_EVENT_SUBSCRIBERS.len(), "a row names no subscriber");
+    }
+
+    #[test]
+    fn a_broadcast_s_runtime_commits_leave_the_cluster_inbox_room_for_its_commands() {
+        let commits = usize::from(dali2rust_domain::registry::VIRTUAL_LAMP_COUNT);
+        let room = CLUSTER.inbox / ANNOUNCEMENT_SHARE_OF_INBOX;
+        assert!(commits <= room, "a commit per lamp ({commits}) against {} slots", CLUSTER.inbox);
     }
 
     #[test]

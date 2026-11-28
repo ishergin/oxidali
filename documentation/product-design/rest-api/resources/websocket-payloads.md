@@ -51,6 +51,7 @@
 | `HealthSnapshot` | `health` | Тело `GET /api/v1/health`; `role` и `quiescent` опущены там, где роли нет. |
 | `ClusterStatus` | `cluster` | Тело `GET /api/v1/cluster/status`; строится из порта присутствия кластера по `ClusterStateChangedEvent`, один кадр на бёрст событий. |
 | `ClusterInfo` | `cluster` | Тело `GET /api/v1/cluster/info`; строится по `ClusterStateChangedEvent` с темой `Info`, один кадр на бёрст событий. Записи и части в кадр не входят: их читают по REST. |
+| `ClusterLamps` | `cluster` | Тело `GET /api/v1/cluster/lamps`: сводка по узлу, а не лампы — состояние 64 ламп узла в JSON не помещается в кадр, и клиент по нему перечитывает `GET /api/v1/cluster/nodes/{node}/lamps`. Строится, когда меняется сводка или свежесть узла; переход в устаревшие по возрасту виден не позже чем через период пульса. |
 | `SnifferBatch` | `sniffer` | Записи кадров (время, направление, ширина, hex, цель, имя команды, запрос ли) и `dropped_since`. |
 | `LogBatch` | `logs` | Строки лога (`seq`, время, уровень, модуль, текст) и `dropped_since`. |
 | `DropNotice` | любой или `*` | Признание потери — [`websocket.md`](websocket.md). |

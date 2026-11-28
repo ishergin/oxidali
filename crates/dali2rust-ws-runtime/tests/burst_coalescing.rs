@@ -2,10 +2,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dali2rust_api::http::cluster_info_state::{ClusterInfoHttpState, ClusterInfoNodeDto};
+use dali2rust_api::http::cluster_lamps_state::{ClusterLampDto, ClusterLampsHttpState, ClusterLampsNodeDto};
 use dali2rust_api::http::cluster_parts_state::ClusterPartDto;
 use dali2rust_api::http::cluster_records_state::ClusterRecordDto;
-use dali2rust_contracts::msg::ClusterRecordKind;
-use dali2rust_domain::registry::{ClusterPartKeys, ClusterRecordNumbers};
+use dali2rust_contracts::msg::{ClusterRecordKind, ClusterRecordRef};
+use dali2rust_domain::registry::{ChannelPartLit, ClusterPartKeys, ClusterRecordNumbers};
 use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState,
 };
@@ -82,6 +83,24 @@ impl ClusterInfoHttpState for NullCluster {
 
     fn record_write_block(&self) -> Result<u8, &'static str> {
         Ok(0)
+    }
+}
+
+impl ClusterLampsHttpState for NullCluster {
+    fn lamps_node(&self, _node: u8) -> Option<ClusterLampsNodeDto> {
+        None
+    }
+
+    fn lamp_ids(&self, _node: u8) -> u64 {
+        0
+    }
+
+    fn lamp(&self, _node: u8, _lamp: u8) -> Option<ClusterLampDto> {
+        None
+    }
+
+    fn part_lit(&self, _node: u8, _adapter: u8, _group: u8, _channel: ClusterRecordRef) -> ChannelPartLit {
+        ChannelPartLit::UNHEARD
     }
 }
 
@@ -172,6 +191,7 @@ fn spawn_harness() -> Harness {
             health: Arc::new(NullHealth),
             cluster: Arc::new(NullCluster),
             cluster_info: Arc::new(NullCluster),
+            cluster_lamps: Arc::new(NullCluster),
         },
         Arc::new(|| 0),
     );

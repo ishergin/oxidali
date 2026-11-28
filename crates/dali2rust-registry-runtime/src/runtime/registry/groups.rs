@@ -1,4 +1,4 @@
-use crate::runtime::registry::physical_devices::write_groups_membership_read;
+use crate::runtime::registry::physical_devices::{write_groups_membership_read, PhysicalDeviceRecord};
 use crate::runtime::registry::store::{Inner, RegistryStore};
 use dali2rust_contracts::msg::{
     fixed_text_64, FixedText64, GroupMatrixDesiredRow, GroupMetadataUpdateCommand,
@@ -113,6 +113,21 @@ pub(crate) fn group_members_applied(inner: &Inner, adapter_id: u8, group_id: u8)
     (0..VIRTUAL_LAMP_COUNT)
         .filter(|vlid| mask_has_group(derived_applied_mask(inner, adapter_id, *vlid), group_id))
         .collect()
+}
+
+pub(crate) fn applied_member_devices<'a>(
+    inner: &'a Inner,
+    adapter_id: u8,
+    group_id: u8,
+) -> impl Iterator<Item = Option<&'a PhysicalDeviceRecord>> + 'a {
+    group_members_applied(inner, adapter_id, group_id).into_iter().map(move |virtual_lamp_id| {
+        inner
+            .lamps
+            .get(&(adapter_id, virtual_lamp_id))
+            .and_then(|lamp| lamp.binding_short)
+            .and_then(|short| inner.physical_devices.get(&(adapter_id, short)))
+            .map(|boxed| boxed.as_ref())
+    })
 }
 
 impl RegistryStore {

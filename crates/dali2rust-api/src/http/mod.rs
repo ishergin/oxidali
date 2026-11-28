@@ -23,6 +23,7 @@ pub mod role;
 pub mod firmware_state;
 pub mod poller_settings_state;
 pub mod cluster_info_state;
+pub mod cluster_lamps_state;
 pub mod cluster_parts_state;
 pub mod cluster_records_state;
 pub mod cluster_settings_state;

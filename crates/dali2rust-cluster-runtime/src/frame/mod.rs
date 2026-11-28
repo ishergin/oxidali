@@ -2,10 +2,14 @@ mod codec;
 mod command;
 mod header;
 mod info;
+mod lamps;
 mod limits;
 mod note;
+mod page;
 mod presence;
 
+#[cfg(test)]
+mod lamp_tests;
 #[cfg(test)]
 mod tests;
 
@@ -19,9 +23,15 @@ pub use command::{
 };
 pub use header::{cluster_tag, Header};
 pub use info::{
-    ChannelPart, GroupMap, InfoElement, InfoElements, InfoPage, InfoPageWriter, LocalName, PageCursor,
-    PageMeta, PartFlags, PushError, Record, ScenePart,
+    ChannelPart, GroupMap, InfoElement, InfoElements, InfoKind, InfoPage, InfoPageWriter, LocalName, PartFlags,
+    Record, ScenePart,
 };
+pub use lamps::{
+    AdapterScope, HaIdentity, KelvinRange, LampCapabilities, LampColour, LampInfo, LampInfoElement,
+    LampInfoElements, LampInfoKind, LampInfoPage, LampInfoWriter, LampState, LampStateKind, LampStatePage,
+    LampStateWriter, PartState, StateElement, StateElements, MAX_DISCOVERY_PREFIX_BYTES,
+};
+pub use page::{InRange, Page, PageCursor, PageElements, PageKind, PageMeta, PagePlace, PageWriter, PushError};
 pub use limits::{
     ADAPTER_COUNT, MAX_CLUSTER_NAME_BYTES, MAX_INSTALLATION_BYTES, MAX_NAME_BYTES, NODE_COUNT,
     NUMBERS_PER_NODE, RECORD_NUMBER_COUNT,

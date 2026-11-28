@@ -13,8 +13,9 @@ use dali2rust_platform::liveness::monotonic_ms;
 
 use super::counters::{bump, ClusterCounters};
 use super::incoming::CommandIntake;
-use super::shared::{ClusterPresence, Delivery};
+use super::shared::{Caches, ClusterPresence, Delivery};
 use crate::info::ClusterInfo;
+use crate::lamps::ClusterLamps;
 
 pub(crate) const RECEIVE_SLICE: Duration = Duration::from_millis(250);
 
@@ -49,6 +50,7 @@ enum Next {
 struct Intake {
     presence: Arc<ClusterPresence>,
     info: Arc<ClusterInfo>,
+    lamps: Arc<ClusterLamps>,
     counters: Arc<ClusterCounters>,
     commands: CommandIntake,
     buffer: PsramBox<ClusterReceiveBuffer>,
@@ -56,11 +58,11 @@ struct Intake {
 
 pub(crate) fn run_receiver(
     handoff: Receiver<LinkHandoff>,
-    (presence, info): (Arc<ClusterPresence>, Arc<ClusterInfo>),
+    (presence, info, lamps): (Arc<ClusterPresence>, Arc<ClusterInfo>, Arc<ClusterLamps>),
     counters: Arc<ClusterCounters>,
     commands: CommandIntake,
 ) {
-    let mut intake = Intake { presence, info, counters, commands, buffer: receive_buffer() };
+    let mut intake = Intake { presence, info, lamps, counters, commands, buffer: receive_buffer() };
     let mut link: Option<HeldLink> = None;
     RECEIVER_STACK.note("start");
     loop {
@@ -104,7 +106,8 @@ impl Intake {
                 bump(&counters.datagrams_received_total);
                 let delivery = Delivery { source, link: held.generation, now_ms: monotonic_ms() };
                 let bytes = self.buffer.get(..len).unwrap_or_default();
-                if let Some(heard) = self.presence.take_datagram(bytes, delivery, counters, &self.info) {
+                let caches = Caches { info: &self.info, lamps: &self.lamps };
+                if let Some(heard) = self.presence.take_datagram(bytes, delivery, counters, caches) {
                     self.commands.take(heard, counters);
                 }
                 RECEIVER_STACK.note("datagram");
