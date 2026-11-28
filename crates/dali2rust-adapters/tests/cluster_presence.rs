@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::MockDaliTransport;
 use dali2rust_adapters::{
@@ -9,7 +9,7 @@ use dali2rust_adapters::{
 };
 use dali2rust_api::http::router::Router;
 use dali2rust_bus::BusConfig;
-use dali2rust_cluster_runtime::frame::{cluster_tag, decode, Frame};
+use dali2rust_cluster_runtime::frame::{cluster_tag, decode, Frame, InfoElement};
 use dali2rust_cluster_runtime::presence::PresenceTiming;
 use dali2rust_test_support::{try_wait_until, ClusterHub, ClusterHubBinder, HubDatagram, MockNetworkLink};
 use serde_json::Value;
@@ -254,6 +254,30 @@ fn two_nodes_learn_each_other_s_records_and_parts_and_a_rename_crosses_over() {
     assert!(try_wait_until(renamed, SETTLE), "{:?}", second.read("/api/v1/cluster/channels/2"));
 }
 
+fn is_info_page(bytes: &[u8]) -> bool {
+    decode(bytes).is_ok_and(|decoded| matches!(decoded.frame, Frame::ChannelSceneInfo(_)))
+}
+
+fn copy_numbers(sent: &HubDatagram, source: [u8; 4]) -> Option<Vec<u8>> {
+    let decoded = decode(&sent.bytes).ok().filter(|_| sent.source == source)?;
+    let Frame::ChannelSceneInfo(page) = decoded.frame else {
+        return None;
+    };
+    let whole = page.meta().page == 0 && page.meta().last;
+    let numbers = page.elements().filter_map(|element| match element {
+        InfoElement::ChannelRecord(record) => Some(record.id.number),
+        _ => None,
+    });
+    whole.then(|| numbers.collect())
+}
+
+fn lets_go(hub: &ClusterHub, source: [u8; 4], (kept, dropped): (u8, u8)) -> bool {
+    let deadline = Instant::now() + ROUND;
+    std::iter::from_fn(|| hub.next_sent(deadline.saturating_duration_since(Instant::now())))
+        .filter_map(|sent| copy_numbers(&sent, source))
+        .any(|numbers| numbers.contains(&kept) && !numbers.contains(&dropped))
+}
+
 fn quick(hub: &Arc<ClusterHub>, board: &Board) -> Node {
     node_timed(hub, board, fixed_boot_epoch(board.epoch), PresenceTiming::every_ms(QUICK_PULSE_MS))
 }
@@ -293,10 +317,47 @@ fn a_replaced_home_node_takes_its_block_back_from_a_neighbour_s_copies() {
     assert_eq!(deleted, NO_CONTENT);
     let judged = || keeper.part_link(1, 4) == "orphan";
     assert!(try_wait_until(judged, ROUND), "{:?}", keeper.read("/api/v1/cluster/nodes/1/channel-parts"));
+    assert!(lets_go(&hub, SECOND.address, (0, 1)), "the keeper still announces the copy of the deleted record");
     drop(home);
     let replaced = quick(&hub, &REPLACEMENT);
     replaced.join(0);
     assert!(try_wait_until(|| replaced.block() == "settled", ROUND), "{:?}", replaced.status());
+    took_its_block_back(&replaced, &keeper, &corridor);
+}
+
+#[test]
+fn a_home_node_replaced_while_its_keeper_went_unheard_takes_its_block_back_late() {
+    let hub = Arc::new(ClusterHub::new());
+    let (home, keeper) = (quick(&hub, &FIRST), quick(&hub, &SECOND));
+    home.join(0);
+    keeper.join(1);
+    home.settled();
+    keeper.settled();
+    let corridor = home.send("POST", "/api/v1/cluster/channels", r#"{"name":"Corridor"}"#);
+    let porch = home.send("POST", "/api/v1/cluster/channels", r#"{"name":"Porch"}"#);
+    keeper.send("PUT", "/api/v1/cluster/channel-parts/0/3", &part_body(&corridor));
+    keeper.send("PUT", "/api/v1/cluster/channel-parts/0/4", &part_body(&porch));
+    assert!(try_wait_until(|| keeper.stat("copies_stored_total") == 2, ROUND), "{:?}", keeper.read("/api/v1/stats"));
+    assert_eq!(home.router.dispatch("DELETE", "/api/v1/cluster/channels/1", br#"{"revision":1}"#).status, NO_CONTENT);
+    assert!(lets_go(&hub, SECOND.address, (0, 1)), "the keeper still announces the copy of the deleted record");
+    drop(home);
+    hub.lose_sends(|_| true);
+    let replaced = quick(&hub, &REPLACEMENT);
+    replaced.join(0);
+    assert!(try_wait_until(|| replaced.block() == "settled", ROUND), "{:?}", replaced.status());
+    assert_eq!(replaced.router.dispatch("GET", "/api/v1/cluster/channels/0", &[]).status, 404, "nothing was heard");
+    let mut first = true;
+    hub.lose_sends(move |sent| {
+        let lost = first && sent.source == SECOND.address && is_info_page(&sent.bytes);
+        first &= !lost;
+        lost
+    });
+    let back = || replaced.router.dispatch("GET", "/api/v1/cluster/channels/0", &[]).status == OK;
+    assert!(try_wait_until(back, ROUND), "{:?}", replaced.read("/api/v1/cluster/channels"));
+    took_its_block_back(&replaced, &keeper, &corridor);
+}
+
+fn took_its_block_back(replaced: &Node, keeper: &Node, corridor: &Value) {
     let taken = replaced.read("/api/v1/cluster/channels/0");
     assert_eq!((taken["name"].as_str(), taken["source"].as_str()), (Some("Corridor"), Some("own")), "{taken:?}");
     assert_eq!(taken["birth_mark"], corridor["birth_mark"]);

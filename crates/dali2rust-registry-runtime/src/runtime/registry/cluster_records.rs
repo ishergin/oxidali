@@ -212,7 +212,7 @@ pub(crate) enum TakeBackOutcome {
 fn taken_entry(block: &ClusterRecordBlock, index: u8, floor: u32, taken: &ClusterTakenRecord) -> Option<ClusterRecordEntry> {
     let mark = taken.mark;
     let empty = block.entry(index).is_none();
-    let newer = mark.generation > block.generation(index) && mark.generation >= floor;
+    let newer = mark.generation > block.generation(index) && mark.generation >= floor && mark.generation < u32::MAX;
     let free_nonce = !block.entries.iter().any(|held| held.mark.nonce == mark.nonce);
     let named = taken.name.as_str().len() <= MAX_CLUSTER_RECORD_NAME_BYTES;
     (empty && newer && free_nonce && named && taken.revision >= 1)
@@ -235,9 +235,8 @@ impl ClusterRecordBlock {
             self.put(entry);
             return TakeBackOutcome::Refreshed;
         }
-        let empty = self.entry(index).is_none();
         match self.generations.get_mut(usize::from(index)) {
-            Some(memory) if *memory < floor && empty => {
+            Some(memory) if *memory < floor && floor < u32::MAX => {
                 *memory = floor;
                 TakeBackOutcome::Raised
             }
@@ -629,10 +628,26 @@ mod tests {
         assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 1, "Same"))), TakeBackOutcome::Unchanged);
         assert_eq!(take(&store, 2, 0, Some(taken(1, 78, 9, "Other"))), TakeBackOutcome::Unchanged);
         assert_eq!(take(&store, 2, 0, Some(taken(7, 78, 9, "Newer"))), TakeBackOutcome::Unchanged, "never over a live one");
-        assert_eq!(take(&store, 2, 9, None), TakeBackOutcome::Unchanged, "a live record keeps its memory");
         assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 4, "Corridor"))), TakeBackOutcome::Refreshed);
         let view = held(&store, CHANNEL, 2);
         assert_eq!((view.name.as_str(), view.revision, store.cluster_generation(CHANNEL, 2)), ("Corridor", 4, 1));
+    }
+
+    #[test]
+    fn a_floor_above_a_live_record_raises_its_memory_and_leaves_the_record() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![create_with(CHANNEL, Some(2), 77), record_name("Hall")]).expect("created");
+        assert_eq!(take(&store, 2, 9, None), TakeBackOutcome::Raised);
+        let view = held(&store, CHANNEL, 2);
+        assert_eq!((view.mark.generation, view.name.as_str(), store.cluster_generation(CHANNEL, 2)), (1, "Hall", 9));
+    }
+
+    #[test]
+    fn the_last_generation_is_never_taken_so_a_number_is_never_burnt() {
+        let store = RegistryStore::with_adapter_count(1);
+        assert_eq!(take(&store, 2, 0, Some(taken(u32::MAX, 77, 1, "Burnt"))), TakeBackOutcome::Unchanged);
+        assert_eq!(take(&store, 3, u32::MAX, None), TakeBackOutcome::Unchanged);
+        assert_eq!((store.cluster_generation(CHANNEL, 2), store.cluster_generation(CHANNEL, 3)), (0, 0));
     }
 
     #[test]

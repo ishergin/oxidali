@@ -1,11 +1,11 @@
-use dali2rust_contracts::msg::{ClusterRecordKind, ClusterRecordTakeBackCommand, ClusterTakenRecord};
+use dali2rust_contracts::msg::{ClusterBirthMark, ClusterRecordKind, ClusterRecordTakeBackCommand, ClusterTakenRecord};
 use dali2rust_domain::registry::{cluster_block, ClusterRecordReadPort, CLUSTER_RECORD_KINDS};
 
 use crate::frame::NODE_COUNT;
-use crate::info::{ClusterInfo, HeldRecord, InfoSet, BLOCK_SLOTS};
+use crate::info::{ClusterInfo, HeldNode, HeldRecord, InfoSet, BLOCK_SLOTS};
 use crate::presence::{elapsed_ms, PresenceTiming};
 
-use super::shared::{ClusterPresence, ClusterPresenceReadPort};
+use super::shared::{BlockState, ClusterPresence, ClusterPresenceReadPort, NodeView};
 
 #[cfg(test)]
 mod tests;
@@ -39,6 +39,12 @@ pub(crate) struct RoundTurn {
     pub(crate) now_ms: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refresh {
+    Allowed,
+    Withheld,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Offer {
     pub(crate) best: Option<HeldRecord>,
@@ -46,15 +52,15 @@ pub(crate) struct Offer {
 }
 
 impl Offer {
-    fn take(&mut self, copy: Option<&HeldRecord>, referenced: impl Iterator<Item = u32>) {
+    fn take(&mut self, copy: Option<&HeldRecord>, floor: u32, live: Option<ClusterBirthMark>) {
+        self.floor = self.floor.max(floor);
+        let Some(copy) = copy.filter(|copy| live.is_none_or(|mark| mark == copy.mark)) else {
+            return;
+        };
         let rank = |held: &HeldRecord| (held.mark.generation, held.revision);
-        if let Some(copy) = copy {
-            self.floor = self.floor.max(copy.mark.generation);
-            if self.best.as_ref().is_none_or(|best| rank(best) < rank(copy)) {
-                self.best = Some(copy.clone());
-            }
+        if self.best.as_ref().is_none_or(|best| rank(best) < rank(copy)) {
+            self.best = Some(copy.clone());
         }
-        self.floor = referenced.fold(self.floor, u32::max);
     }
 }
 
@@ -73,7 +79,14 @@ impl BlockRound {
             _ => turn.now_ms,
         };
         let heard = turn.running && every_member_heard(turn, since_ms, reads);
-        self.step(turn, (heard, reads.timing), || take_back_intents(turn.own, turn.now_ms, reads))
+        self.step(turn, (heard, reads.timing), || take_back_intents(turn, reads, Refresh::Allowed))
+    }
+
+    pub(crate) fn late(&self, turn: RoundTurn, reads: RoundReads<'_>) -> Vec<ClusterRecordTakeBackCommand> {
+        if !turn.running || !self.settled() {
+            return Vec::new();
+        }
+        take_back_intents(turn, reads, Refresh::Withheld)
     }
 
     pub(crate) fn step(
@@ -127,42 +140,70 @@ impl BlockRound {
     }
 }
 
+pub(crate) fn takes_block(running: bool, block: BlockState) -> bool {
+    running && block != BlockState::Contested
+}
+
+pub(crate) fn speaks_for_itself(view: &NodeView, held: &HeldNode) -> bool {
+    view.live && view.mac == held.mac
+}
+
 fn every_member_heard(turn: RoundTurn, since_ms: u32, reads: RoundReads<'_>) -> bool {
     let waited_ms = elapsed_ms(turn.now_ms, since_ms);
     (0..NODE_COUNT).filter(|node| *node != turn.own).all(|node| {
         let Some(view) = reads.presence.heard_node(node).filter(|view| view.live) else {
             return true;
         };
-        let heard = reads.info.with_shown(node, turn.now_ms, |_, held| held.mac == view.mac && held.age_ms < waited_ms);
+        let heard = reads.info.with_shown(node, turn.now_ms, |_, held| speaks_for_itself(&view, &held) && held.age_ms < waited_ms);
         heard.unwrap_or(false)
     })
 }
 
-pub(crate) fn offers(own: u8, now_ms: u32, info: &ClusterInfo, kind: ClusterRecordKind) -> [Offer; BLOCK_SLOTS] {
+fn offers(turn: RoundTurn, reads: RoundReads<'_>, kind: ClusterRecordKind) -> [Offer; BLOCK_SLOTS] {
+    let first = *cluster_block(turn.own).start();
+    let live: [Option<ClusterBirthMark>; BLOCK_SLOTS] =
+        core::array::from_fn(|index| reads.records.cluster_record(kind, first.saturating_add(index as u8)).map(|view| view.mark));
     let mut offers: [Offer; BLOCK_SLOTS] = Default::default();
-    for node in (0..NODE_COUNT).filter(|node| *node != own) {
-        info.with_shown(node, now_ms, |set, _| offer_of(set, own, kind, &mut offers));
+    for node in (0..NODE_COUNT).filter(|node| *node != turn.own) {
+        let Some(view) = reads.presence.heard_node(node) else {
+            continue;
+        };
+        reads.info.with_shown(node, turn.now_ms, |set, held| {
+            if speaks_for_itself(&view, &held) {
+                offer_of(set, (turn.own, kind), &live, &mut offers);
+            }
+        });
     }
     offers
 }
 
-fn offer_of(set: &InfoSet, own: u8, kind: ClusterRecordKind, offers: &mut [Offer; BLOCK_SLOTS]) {
+pub(crate) fn offer_of(
+    set: &InfoSet,
+    (own, kind): (u8, ClusterRecordKind),
+    live: &[Option<ClusterBirthMark>; BLOCK_SLOTS],
+    offers: &mut [Offer; BLOCK_SLOTS],
+) {
     if set.own() != own {
         return;
     }
     let numbers = *cluster_block(own).start()..;
-    for ((number, offer), copy) in numbers.zip(offers.iter_mut()).zip(set.takeback(kind)) {
-        let referenced = set.parts(kind).iter().flatten().filter(|part| part.record.number == number);
-        offer.take(copy.as_ref(), referenced.map(|part| part.record.mark.generation));
+    for (((number, offer), copy), live) in numbers.zip(offers.iter_mut()).zip(set.takeback(kind)).zip(live) {
+        let named = set.parts(kind).iter().flatten().map(|part| part.record).filter(|record| record.number == number);
+        let named = named.filter(|record| record.mark.generation < u32::MAX);
+        let (floor, vouched) = named.fold((0, false), |(floor, vouched), record| {
+            let names_copy = copy.as_ref().is_some_and(|copy| copy.mark == record.mark);
+            (floor.max(record.mark.generation), vouched || names_copy)
+        });
+        offer.take(copy.as_ref().filter(|_| vouched), floor, *live);
     }
 }
 
-fn take_back_intents(own: u8, now_ms: u32, reads: RoundReads<'_>) -> Vec<ClusterRecordTakeBackCommand> {
-    let first = *cluster_block(own).start();
+fn take_back_intents(turn: RoundTurn, reads: RoundReads<'_>, refresh: Refresh) -> Vec<ClusterRecordTakeBackCommand> {
+    let first = *cluster_block(turn.own).start();
     let mut intents = Vec::new();
     for kind in CLUSTER_RECORD_KINDS {
-        for (number, offer) in (first..).zip(offers(own, now_ms, reads.info, kind)) {
-            intents.extend(intent(reads.records, kind, number, offer));
+        for (number, offer) in (first..).zip(offers(turn, reads, kind)) {
+            intents.extend(intent(reads.records, (kind, number), offer, refresh));
         }
     }
     intents
@@ -170,19 +211,17 @@ fn take_back_intents(own: u8, now_ms: u32, reads: RoundReads<'_>) -> Vec<Cluster
 
 pub(crate) fn intent(
     records: &dyn ClusterRecordReadPort,
-    kind: ClusterRecordKind,
-    number: u8,
+    (kind, number): (ClusterRecordKind, u8),
     offer: Offer,
+    refresh: Refresh,
 ) -> Option<ClusterRecordTakeBackCommand> {
     let memory = records.cluster_generation(kind, number);
-    let wanted = match (records.cluster_record(kind, number), &offer.best) {
-        (Some(live), Some(best)) => best.mark == live.mark && best.revision > live.revision,
-        (Some(_), None) => false,
-        (None, best) => {
-            let adopts = best.as_ref().is_some_and(|best| best.mark.generation > memory && best.mark.generation >= offer.floor);
-            adopts || offer.floor > memory
-        }
+    let takes = match (records.cluster_record(kind, number), &offer.best) {
+        (Some(live), Some(best)) => refresh == Refresh::Allowed && best.mark == live.mark && best.revision > live.revision,
+        (None, Some(best)) => best.mark.generation > memory && best.mark.generation >= offer.floor,
+        (_, None) => false,
     };
-    let record = offer.best.map(|best| ClusterTakenRecord { mark: best.mark, revision: best.revision, name: best.name });
-    wanted.then_some(ClusterRecordTakeBackCommand { kind, number, generation_floor: offer.floor, record })
+    let raises = offer.floor > memory;
+    let record = offer.best.filter(|_| takes).map(|best| ClusterTakenRecord { mark: best.mark, revision: best.revision, name: best.name });
+    (takes || raises).then_some(ClusterRecordTakeBackCommand { kind, number, generation_floor: offer.floor, record })
 }

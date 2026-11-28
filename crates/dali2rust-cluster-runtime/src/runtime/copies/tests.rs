@@ -13,6 +13,10 @@ const NUMBER: u8 = 20;
 const OWN_NUMBER: u8 = 83;
 const KIND: ClusterRecordKind = ClusterRecordKind::Channel;
 const MAC: [u8; 6] = [2, 0, 0, 0, 0, 1];
+const TIMING: PresenceTiming = PresenceTiming::every_ms(100);
+const NOW_MS: u32 = 100_000;
+const HELD_AGE_MS: u32 = 10;
+const SETTLED_FOR_MS: u32 = 1_000;
 
 fn mark(generation: u32, nonce: u32) -> ClusterBirthMark {
     ClusterBirthMark { generation, nonce }
@@ -52,7 +56,7 @@ impl ClusterPresenceReadPort for World {
             age_ms: 0,
             sequence_gaps: 0,
             split: false,
-            settled_for_ms: self.judged.then_some(1_000),
+            settled_for_ms: self.judged.then_some(SETTLED_FOR_MS),
         })
     }
 
@@ -65,7 +69,7 @@ impl ClusterInfoReadPort for World {
     fn info_held(&self, node: u8) -> Option<InfoHeldView> {
         let (channels, scenes, channel_parts, scene_parts, skipped) = (0, 0, 0, 0, 0);
         (node == HOME)
-            .then_some(InfoHeldView { node, mac: MAC, set: 1, age_ms: 10, skipped, channels, scenes, channel_parts, scene_parts })
+            .then_some(InfoHeldView { node, mac: MAC, set: 1, age_ms: HELD_AGE_MS, skipped, channels, scenes, channel_parts, scene_parts })
     }
 
     fn info_record(&self, node: u8, kind: ClusterRecordKind, number: u8) -> Option<ClusterRecordView> {
@@ -114,9 +118,21 @@ impl ClusterCopyReadPort for World {
     }
 }
 
-fn actions(world: &World) -> Vec<(u8, ClusterCopyAction)> {
-    let reads = CopyReads { home: HomeReads { presence: world, info: world }, parts: world, copies: world };
+fn sent_ago(earlier_ms: u32, last_ms: u32) -> Announced {
+    Announced { sets_sent: [Some(NOW_MS - earlier_ms), Some(NOW_MS - last_ms)], now_ms: NOW_MS, timing: TIMING }
+}
+
+fn answered() -> Announced {
+    sent_ago(SETTLED_FOR_MS, SETTLED_FOR_MS / 2)
+}
+
+fn actions_after(world: &World, announced: Announced) -> Vec<(u8, ClusterCopyAction)> {
+    let reads = CopyReads { home: HomeReads { presence: world, info: world }, parts: world, copies: world, announced };
     copy_commands(OWN, reads).into_iter().map(|command| (command.record.number, command.action)).collect()
+}
+
+fn actions(world: &World) -> Vec<(u8, ClusterCopyAction)> {
+    actions_after(world, answered())
 }
 
 fn store(revision: u32) -> ClusterCopyAction {
@@ -156,6 +172,28 @@ fn a_copy_is_dropped_only_once_its_part_is_judged_an_orphan() {
     assert_eq!(actions(&gone), [(NUMBER, ClusterCopyAction::Drop)]);
     let reissued = World { home: Some((mark(3, 1), 1)), parts: vec![(0, record(NUMBER, 2))], copies: held(), ..base() };
     assert_eq!(actions(&reissued), [(NUMBER, ClusterCopyAction::Drop)]);
+}
+
+#[test]
+fn a_copy_its_home_holds_nothing_for_is_dropped_only_once_two_sets_carrying_it_reached_that_home() {
+    let world = World { parts: vec![(0, record(NUMBER, 2))], copies: Mutex::new(vec![(record(NUMBER, 2), 3)]), ..base() };
+    let holding_ms = SETTLED_FOR_MS + TIMING.settled_after_ms();
+    let answer_ms = TIMING.info_coalesce_ms() + 2 * TIMING.pulse_period_ms();
+    let drop = [(NUMBER, ClusterCopyAction::Drop)];
+    assert_eq!(actions_after(&world, sent_ago(holding_ms - 1, HELD_AGE_MS + answer_ms)), drop);
+    let once = Announced { sets_sent: [None, Some(NOW_MS - 500)], ..answered() };
+    assert!(actions_after(&world, once).is_empty(), "one set may have been lost");
+    assert!(actions_after(&world, sent_ago(holding_ms, 500)).is_empty(), "a set before this home was heard proves nothing");
+    let unanswered = sent_ago(holding_ms - 1, HELD_AGE_MS + answer_ms - 1);
+    assert!(actions_after(&world, unanswered).is_empty(), "the home had no time to take it back");
+    let reissued = World { home: Some((mark(3, 1), 1)), ..world };
+    assert_eq!(actions_after(&reissued, Announced { sets_sent: [None; 2], ..answered() }), drop, "a newer generation needs no answer");
+}
+
+#[test]
+fn a_home_showing_revision_zero_writes_no_copy() {
+    let world = World { home: Some((mark(2, 7), 0)), parts: vec![(0, record(NUMBER, 2))], ..base() };
+    assert!(actions(&world).is_empty());
 }
 
 #[test]

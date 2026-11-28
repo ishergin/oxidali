@@ -8,7 +8,7 @@ use dali2rust_domain::registry::{
 
 use crate::frame::{DatagramBuffer, EncodeError, Header, PageCursor, NODE_COUNT};
 use crate::info::{placed_copy_set, placed_set, CopySet, InfoSet};
-use crate::presence::{PresenceTiming, HALF_CLOCK_MS};
+use crate::presence::{in_reach, PresenceTiming, HALF_CLOCK_MS};
 
 #[cfg(test)]
 mod tests;
@@ -46,6 +46,7 @@ pub(crate) struct Announcer {
     refresh_ms: Option<u32>,
     paging: Option<Paging>,
     next_set: u32,
+    sets_sent: [Option<u32>; 2],
 }
 
 impl Announcer {
@@ -59,6 +60,7 @@ impl Announcer {
             refresh_ms: None,
             paging: None,
             next_set: 0,
+            sets_sent: [None; 2],
         }
     }
 
@@ -70,7 +72,12 @@ impl Announcer {
         self.announced
     }
 
+    pub(crate) fn sets_sent(&self, now_ms: u32) -> [Option<u32>; 2] {
+        self.sets_sent.map(|sent_ms| sent_ms.map(|sent_ms| in_reach(now_ms, sent_ms)))
+    }
+
     pub(crate) fn plan(&mut self, turn: Turn, own: OwnInfo<'_>) {
+        self.sets_sent = self.sets_sent(turn.now_ms);
         if !turn.running {
             self.stand_down();
             return;
@@ -144,6 +151,9 @@ impl Announcer {
         let written = paging.cursor.write_next(buffer, header, self.snapshot.elements().chain(self.copies.elements()));
         let closes_set = paging.cursor.finished();
         paging.next_ms = now_ms.wrapping_add(PAGE_GAP_MS);
+        if closes_set && written.is_ok() {
+            self.sets_sent = [self.sets_sent[1], Some(now_ms)];
+        }
         if closes_set || written.is_err() {
             self.paging = None;
         }

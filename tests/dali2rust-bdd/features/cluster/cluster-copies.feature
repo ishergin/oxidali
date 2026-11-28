@@ -154,7 +154,7 @@ Feature: Cluster — copies of the records this node's parts name, orphans and w
     When the board "02:00:00:0a:0b:02" sends info page 0 of set 1 as the last page with [{"channel":32,"mark":[1,7],"name":"Forged","revision":9},{"channel":32,"mark":[1,7],"name":"Same","revision":1},{"channel":32,"mark":[2,8],"name":"Other mark","revision":9},{"channel":3,"mark":[5,1],"name":"Into this block","revision":9}]
     Then the JSON pointer "/nodes/1/skipped" at "/api/v1/cluster/info" should eventually be "3"
     And the JSON pointer "/cluster/copies_stored_total" at "/api/v1/stats" should stay "1" for 1000 ms
-    And the JSON pointer "/cluster/records_taken_back_total" at "/api/v1/stats" should eventually be "0"
+    And the JSON pointer "/cluster/records_taken_back_total" at "/api/v1/stats" should stay "0" for 1000 ms
     When I send a GET request to "/api/v1/cluster/channels/3"
     Then the response status should be 404
     When I send a GET request to "/api/v1/cluster/channels/32"
@@ -165,3 +165,19 @@ Feature: Cluster — copies of the records this node's parts name, orphans and w
     And I send a GET request to "/api/v1/cluster/channels/32"
     Then the JSON pointer "/name" should be "Porch"
     And the JSON pointer "/source" should be "copy"
+
+  @id:CLU-147
+  Scenario: A copy of this node's record that its sender's own part names is taken back after the round, never renamed
+    When a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 of cluster "hall" for installation "site-b"
+    Then the JSON pointer "/nodes/0/heard" at "/api/v1/cluster/status" should eventually be "true"
+    When the board "02:00:00:0a:0b:02" sends info page 0 of set 1 as the last page with [{"channel":3,"mark":[5,1],"name":"Lobby","revision":4},{"channel_part":[0,5],"record":3,"mark":[5,1],"send":true,"accept":true}]
+    Then the JSON pointer "/cluster/records_taken_back_total" at "/api/v1/stats" should eventually be "1"
+    When I send a GET request to "/api/v1/cluster/channels/3"
+    Then the response status should be 200
+    And the JSON pointer "/name" should be "Lobby"
+    And the JSON pointer "/revision" should be 4
+    And the JSON pointer "/birth_mark/generation" should be 5
+    And the JSON pointer "/source" should be "own"
+    When the board "02:00:00:0a:0b:02" sends info page 0 of set 2 as the last page with [{"channel":3,"mark":[5,1],"name":"Renamed","revision":9},{"channel_part":[0,5],"record":3,"mark":[5,1],"send":true,"accept":true}]
+    Then the JSON pointer "/nodes/1/set" at "/api/v1/cluster/info" should eventually be "2"
+    And the JSON pointer "/name" at "/api/v1/cluster/channels/3" should stay "Lobby" for 1000 ms

@@ -102,15 +102,22 @@ pub trait ClusterInfoHttpState: Send + Sync {
 pub struct ClusterView<'a> {
     state: &'a dyn ClusterInfoHttpState,
     sources: [Option<ClusterInfoSource>; NODES],
+    wires: [Option<u8>; NODES],
 }
 
 impl<'a> ClusterView<'a> {
     pub fn read(state: &'a dyn ClusterInfoHttpState) -> Self {
         let mut sources = [None; NODES];
-        for (node, source) in (0..CLUSTER_NODE_COUNT).zip(sources.iter_mut()) {
+        let mut wires = [None; NODES];
+        for ((node, source), wire) in (0..CLUSTER_NODE_COUNT).zip(sources.iter_mut()).zip(wires.iter_mut()) {
             *source = state.node_info(node).map(|info| info.source);
+            *wire = state.wire(node);
         }
-        Self { state, sources }
+        Self { state, sources, wires }
+    }
+
+    fn wire(&self, node: u8) -> Option<u8> {
+        self.wires.get(usize::from(node)).copied().flatten()
     }
 
     pub fn source(&self, node: u8) -> Option<ClusterInfoSource> {
@@ -171,12 +178,12 @@ impl<'a> ClusterView<'a> {
     }
 
     fn wire_fault(&self, kind: ClusterRecordKind, held: &ClusterNodePartDto) -> Option<ClusterWireFaultDto> {
-        let wire = self.state.wire(held.node)?;
+        let wire = self.wire(held.node)?;
         let (adapter, local) = (held.part.adapter, held.part.group.or(held.part.scene)?);
         let neighbours = self.known_nodes().filter(|(node, source)| {
             *node != held.node && matches!(source, ClusterInfoSource::Own | ClusterInfoSource::Cached)
         });
-        neighbours.filter(|(node, _)| self.state.wire(*node) == Some(wire)).find_map(|(node, _)| {
+        neighbours.filter(|(node, _)| self.wire(*node) == Some(wire)).find_map(|(node, _)| {
             let holds = match self.state.part(node, kind, adapter, local) {
                 None => ClusterWireHolding::Nothing,
                 Some(other) if other.record.number != held.part.record.number => ClusterWireHolding::OtherRecord,

@@ -1768,11 +1768,17 @@ impl ClusterInfoHttpState for ClusterInfoBridge {
     }
 
     fn record_write_refusal(&self) -> Option<&'static str> {
-        match self.presence.own_status().block {
-            BlockState::Listening => Some(CLUSTER_BLOCK_UNSETTLED),
-            BlockState::Contested => Some(CLUSTER_NODE_CONTESTED),
-            BlockState::Off | BlockState::Passive | BlockState::Settled => None,
-        }
+        let status = self.presence.own_status();
+        record_write_refusal(status.block, status.node, self.own_node())
+    }
+}
+
+const fn record_write_refusal(block: BlockState, block_node: u8, numbered: u8) -> Option<&'static str> {
+    match block {
+        BlockState::Listening => Some(CLUSTER_BLOCK_UNSETTLED),
+        BlockState::Contested => Some(CLUSTER_NODE_CONTESTED),
+        BlockState::Settled if block_node != numbered => Some(CLUSTER_BLOCK_UNSETTLED),
+        BlockState::Off | BlockState::Passive | BlockState::Settled => None,
     }
 }
 
@@ -1782,8 +1788,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        arbitration_dto, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
+        arbitration_dto, record_write_refusal, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
     };
+    use dali2rust_api::http::cluster_info_state::{CLUSTER_BLOCK_UNSETTLED, CLUSTER_NODE_CONTESTED};
+    use dali2rust_cluster_runtime::BlockState;
     use dali2rust_api::http::handlers::config_transfer::ConfigTransferPort;
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
@@ -1805,6 +1813,15 @@ mod tests {
     const SHORT: u8 = 4;
     const GROUP: u8 = 3;
     const ADAPTERS: u8 = 1;
+
+    #[test]
+    fn a_block_settled_for_another_node_number_issues_no_number() {
+        assert_eq!(record_write_refusal(BlockState::Settled, 2, 2), None);
+        assert_eq!(record_write_refusal(BlockState::Settled, 2, 3), Some(CLUSTER_BLOCK_UNSETTLED));
+        assert_eq!(record_write_refusal(BlockState::Listening, 3, 3), Some(CLUSTER_BLOCK_UNSETTLED));
+        assert_eq!(record_write_refusal(BlockState::Contested, 3, 3), Some(CLUSTER_NODE_CONTESTED));
+        assert_eq!(record_write_refusal(BlockState::Passive, 2, 3), None);
+    }
     const KNOWN_SLICE: &str = "poller_settings";
     const OTHER_KNOWN_SLICE: &str = "hcl_schedules";
     const SLICE_BYTES: [u8; 3] = [1, 2, 3];
