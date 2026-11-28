@@ -245,6 +245,26 @@ filtered: they address one device.
   twice on one adapter breaks its slice; a reset erases that kind's parts and nothing
   else. Liveness is checked when a part is written, not kept: after a node-number change
   a stored part may name a number of the new block with a mark no live record carries.
+- A copy of another node's record that one of this node's parts names — home number,
+  birth mark, name and revision — lives in two slices of their own,
+  `cluster_channel_copies` and `cluster_scene_copies`, each at version 1. The registry
+  worker writes a copy only on the cluster worker's command, after the cluster worker has
+  taken the home node's whole set: it stores a number of another node's block that a part
+  names by that mark, with a higher revision than the one held, and drops one on command.
+  A copy no part names any more is pruned when a part is unlinked, when the node number
+  moves the copy's number into the own block, and on hydration. A slice is bounded by the
+  parts that can name a copy (`MAX_CLUSTER_COPIES_PER_KIND`, one per part), and its widest
+  case fits the slots after the installed tail, which a test holds. A copy out of order, of
+  a number past the last, with generation or revision `0` or a name past 64 bytes breaks
+  its slice; an older image does not know the slices and leaves them unread. A reset or a
+  bump erases that kind's copies and nothing else: a record whose home is not heard is then
+  not listed, and a replaced home node cannot take that record back until its home is
+  heard again.
+- The registry takes a record of its own block back only on the cluster worker's command,
+  and never on the standby: it adopts a copy into an empty position whose generation memory
+  is below the copy's generation, raises the memory of an empty position to the highest
+  generation its peers name there, and refreshes a live record only at the same mark with a
+  higher revision. A live record is never replaced.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it
