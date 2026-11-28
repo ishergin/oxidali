@@ -2,10 +2,12 @@ use core::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 use dali2rust_bsp::psram::PsramBox;
-use dali2rust_domain::registry::{ClusterPartReadPort, ClusterRecordReadPort, CLUSTER_RECORD_KINDS};
+use dali2rust_domain::registry::{
+    ClusterCopyReadPort, ClusterPartReadPort, ClusterRecordReadPort, CLUSTER_RECORD_KINDS, MAX_CLUSTER_COPIES_PER_KIND,
+};
 
 use crate::frame::{DatagramBuffer, EncodeError, Header, PageCursor, NODE_COUNT};
-use crate::info::{placed_set, InfoSet};
+use crate::info::{placed_copy_set, placed_set, CopySet, InfoSet};
 use crate::presence::{PresenceTiming, HALF_CLOCK_MS};
 
 #[cfg(test)]
@@ -17,6 +19,7 @@ pub(crate) const PAGE_GAP_MS: u32 = 10;
 pub(crate) struct OwnInfo<'a> {
     pub(crate) records: &'a dyn ClusterRecordReadPort,
     pub(crate) parts: &'a dyn ClusterPartReadPort,
+    pub(crate) copies: &'a dyn ClusterCopyReadPort,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +39,7 @@ struct Paging {
 
 pub(crate) struct Announcer {
     snapshot: PsramBox<InfoSet>,
+    copies: PsramBox<CopySet>,
     announced: Option<u64>,
     dirty: bool,
     due_ms: Option<u32>,
@@ -48,6 +52,7 @@ impl Announcer {
     pub(crate) fn new() -> Self {
         Self {
             snapshot: placed_set(),
+            copies: placed_copy_set(),
             announced: None,
             dirty: false,
             due_ms: None,
@@ -114,6 +119,7 @@ impl Announcer {
         self.due_ms = None;
         self.announced = Some(fingerprint(turn.node, own));
         self.snapshot.fill(turn.node, own.records, own.parts);
+        self.copies.fill(own.copies);
         self.paging = Some(Paging { cursor: PageCursor::new(self.next_set), next_ms: turn.now_ms });
         self.next_set = self.next_set.wrapping_add(1);
     }
@@ -135,7 +141,7 @@ impl Announcer {
         let Some(paging) = self.paging.as_mut() else {
             return Err(EncodeError::TooManyPages);
         };
-        let written = paging.cursor.write_next(buffer, header, self.snapshot.elements());
+        let written = paging.cursor.write_next(buffer, header, self.snapshot.elements().chain(self.copies.elements()));
         let closes_set = paging.cursor.finished();
         paging.next_ms = now_ms.wrapping_add(PAGE_GAP_MS);
         if closes_set || written.is_err() {
@@ -191,6 +197,10 @@ fn fingerprint(node: u8, own: OwnInfo<'_>) -> u64 {
                 (record, view.send, view.accept, view.revision)
             });
             (adapter, local, held).hash(&mut hasher);
+        }
+        let copies = (0..MAX_CLUSTER_COPIES_PER_KIND).map_while(|index| own.copies.cluster_copy_at(kind, index));
+        for view in copies {
+            (view.number, view.mark.generation, view.mark.nonce, view.revision).hash(&mut hasher);
         }
     }
     hasher.finish()

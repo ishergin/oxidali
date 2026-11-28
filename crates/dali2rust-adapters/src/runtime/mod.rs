@@ -217,6 +217,7 @@ fn spawn_cluster_slice(
         counters: Arc::clone(&seams.counters),
         records: Arc::clone(store) as _,
         parts: Arc::clone(store) as _,
+        copies: Arc::clone(store) as _,
         adapters: Arc::clone(store) as _,
         info: Arc::clone(&seams.info),
     };

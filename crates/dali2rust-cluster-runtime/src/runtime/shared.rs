@@ -11,7 +11,7 @@ use dali2rust_contracts::msg::{FixedText32, FixedText64};
 use crate::frame::{decode, Command, Decoded, Frame, Header, WireNote, NODE_COUNT};
 use crate::info::{Arrival, ClusterInfo};
 use crate::presence::{
-    claim_mode, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
+    claim_mode, elapsed_ms, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
     PresenceTiming, Roster, Taken, WireOwner, MAX_HEARD_BOARDS,
 };
 
@@ -21,6 +21,23 @@ use super::forwarding::ForeignStanding;
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum BlockState {
+    #[default]
+    Off,
+    Passive,
+    Listening,
+    Contested,
+    Settled,
+}
+
+impl BlockState {
+    #[must_use]
+    pub const fn issues_numbers(self) -> bool {
+        matches!(self, Self::Off | Self::Passive | Self::Settled)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OwnStatus {
@@ -32,6 +49,7 @@ pub struct OwnStatus {
     pub wire_owner: WireOwner,
     pub faults: OwnFaults,
     pub held_by: Option<[u8; 6]>,
+    pub block: BlockState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +65,7 @@ pub struct NodeView {
     pub age_ms: u32,
     pub sequence_gaps: u32,
     pub split: bool,
+    pub settled_for_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +174,7 @@ pub struct ClusterPresence {
     epoch_source: EpochSource,
     boot_epoch: OnceLock<u32>,
     hello_heard: AtomicBool,
+    block_settled: AtomicBool,
 }
 
 impl ClusterPresence {
@@ -165,6 +185,7 @@ impl ClusterPresence {
             epoch_source,
             boot_epoch: OnceLock::new(),
             hello_heard: AtomicBool::new(false),
+            block_settled: AtomicBool::new(false),
         }
     }
 
@@ -202,7 +223,7 @@ impl ClusterPresence {
                 return None;
             }
         };
-        let (admitted, era) = self.admit(&decoded, delivery, counters, info)?;
+        let (admitted, era, own_node) = self.admit(&decoded, delivery, counters, info)?;
         if let Some(taken) = admitted.taken {
             counters.count_taken(taken);
         }
@@ -212,7 +233,7 @@ impl ClusterPresence {
             _ => {}
         }
         if admitted.feeds_info() {
-            self.hear_member(&decoded, (delivery.now_ms, era), counters, info);
+            self.hear_member(&decoded, Heard { now_ms: delivery.now_ms, era, own_node }, counters, info);
         } else if matches!(decoded.frame, Frame::ChannelSceneInfo(_)) {
             counters.count_unfed_page(admitted.member, admitted.taken);
         }
@@ -225,7 +246,7 @@ impl ClusterPresence {
         delivery: Delivery,
         counters: &ClusterCounters,
         info: &ClusterInfo,
-    ) -> Option<(Admitted, u32)> {
+    ) -> Option<(Admitted, u32, u8)> {
         let mut state = self.lock();
         if state.link != delivery.link {
             drop(state);
@@ -233,15 +254,23 @@ impl ClusterPresence {
             return None;
         }
         let admitted = state.take(decoded, delivery, self.timing, counters);
-        Some((admitted, info.era()))
+        Some((admitted, info.era(), state.own.node_no))
     }
 
-    fn hear_member(&self, decoded: &Decoded<'_>, at: (u32, u32), counters: &ClusterCounters, info: &ClusterInfo) {
+    fn hear_member(&self, decoded: &Decoded<'_>, at: Heard, counters: &ClusterCounters, info: &ClusterInfo) {
         match &decoded.frame {
             Frame::Hello(_) => self.hello_heard.store(true, Relaxed),
             Frame::ChannelSceneInfo(page) => feed_info(info, &decoded.header, page, at, counters),
             _ => {}
         }
+    }
+
+    pub(crate) fn note_block_settled(&self, settled: bool) {
+        self.block_settled.store(settled, Relaxed);
+    }
+
+    fn block_settled(&self) -> bool {
+        self.block_settled.load(Relaxed)
     }
 
     pub(crate) fn take_hello_heard(&self) -> bool {
@@ -307,7 +336,7 @@ impl ClusterPresence {
         let state = self.lock();
         let roster = state.roster(now_ms, self.timing);
         let mut hasher = DefaultHasher::new();
-        state.status(&roster, self.drawn_boot_epoch()).hash(&mut hasher);
+        state.status(&roster, self.drawn_boot_epoch(), self.block_settled()).hash(&mut hasher);
         for board in state.table.iter() {
             (board.mac, board.node_no, roster.standing(board), roster.live(board)).hash(&mut hasher);
             (&board.pulse, board.ha_face).hash(&mut hasher);
@@ -365,8 +394,9 @@ impl PresenceState {
         })
     }
 
-    fn status(&self, roster: &Roster<'_>, boot_epoch: Option<u32>) -> OwnStatus {
+    fn status(&self, roster: &Roster<'_>, boot_epoch: Option<u32>, settled: bool) -> OwnStatus {
         let waiting = self.mode == OwnMode::Waiting;
+        let faults = roster.faults();
         OwnStatus {
             mode: self.mode,
             node: self.own.node_no,
@@ -374,8 +404,9 @@ impl PresenceState {
             mac: self.mac_known.then_some(self.own.mac),
             boot_epoch,
             wire_owner: roster.wire_owner(),
-            faults: roster.faults(),
+            faults,
             held_by: roster.rival().filter(|_| waiting).map(|board| board.mac),
+            block: block_state(self.mode, faults.split_pair, settled),
         }
     }
 }
@@ -384,13 +415,13 @@ impl ClusterPresenceReadPort for ClusterPresence {
     fn own_status(&self) -> OwnStatus {
         let state = self.lock();
         let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
-        state.status(&roster, self.drawn_boot_epoch())
+        state.status(&roster, self.drawn_boot_epoch(), self.block_settled())
     }
 
     fn heard_node(&self, node: u8) -> Option<NodeView> {
         let state = self.lock();
         let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
-        roster.displayed(node).map(|board| node_view(&roster, board))
+        roster.displayed(node).map(|board| node_view(&roster, board, self.timing))
     }
 
     fn ignored_board(&self, index: usize) -> Option<IgnoredView> {
@@ -407,7 +438,23 @@ impl ClusterPresenceReadPort for ClusterPresence {
     }
 }
 
-fn node_view(roster: &Roster<'_>, board: &HeardBoard) -> NodeView {
+const fn block_state(mode: OwnMode, split_pair: bool, settled: bool) -> BlockState {
+    match mode {
+        OwnMode::Off => BlockState::Off,
+        OwnMode::Standby => BlockState::Passive,
+        OwnMode::Waiting => BlockState::Contested,
+        _ if split_pair => BlockState::Contested,
+        OwnMode::Running if settled => BlockState::Settled,
+        _ => BlockState::Listening,
+    }
+}
+
+fn settled_for_ms(roster: &Roster<'_>, board: &HeardBoard, timing: PresenceTiming) -> Option<u32> {
+    let holding_ms = elapsed_ms(roster.now_ms, board.holding_since_ms?);
+    holding_ms.checked_sub(timing.settled_after_ms())
+}
+
+fn node_view(roster: &Roster<'_>, board: &HeardBoard, timing: PresenceTiming) -> NodeView {
     NodeView {
         node: board.node_no,
         mac: board.mac,
@@ -420,6 +467,7 @@ fn node_view(roster: &Roster<'_>, board: &HeardBoard) -> NodeView {
         age_ms: board.age_ms(roster.now_ms),
         sequence_gaps: board.sequence_gaps,
         split: roster.split(board.node_no),
+        settled_for_ms: settled_for_ms(roster, board, timing),
     }
 }
 
@@ -435,14 +483,22 @@ fn ignored_view(roster: &Roster<'_>, board: &HeardBoard, reason: IgnoredReason) 
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Heard {
+    now_ms: u32,
+    era: u32,
+    own_node: u8,
+}
+
 fn feed_info(
     info: &ClusterInfo,
     header: &Header,
     page: &crate::frame::InfoPage<'_>,
-    (now_ms, era): (u32, u32),
+    heard: Heard,
     counters: &ClusterCounters,
 ) {
-    let at = Arrival { node: header.node_no, mac: header.sender_mac, epoch: header.boot_epoch, now_ms };
+    let Heard { now_ms, era, own_node } = heard;
+    let at = Arrival { node: header.node_no, own_node, mac: header.sender_mac, epoch: header.boot_epoch, now_ms };
     counters.count_page(info.take_page(at, page, era));
 }
 

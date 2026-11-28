@@ -145,6 +145,7 @@ mod tests {
                 wire_owner: WireOwner::Nobody,
                 faults: OwnFaults::default(),
                 held_by: None,
+                block: dali2rust_cluster_runtime::BlockState::Off,
             };
             Self { own, nodes: Vec::new(), node_reads: AtomicU32::new(0) }
         }
@@ -168,6 +169,7 @@ mod tests {
             age_ms: 0,
             sequence_gaps: 0,
             split: false,
+            settled_for_ms: None,
         }
     }
 

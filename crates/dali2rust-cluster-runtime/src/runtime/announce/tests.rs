@@ -1,6 +1,6 @@
 use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_domain::registry::{
-    cluster_block, ClusterPartKeys, ClusterPartReadPort, ClusterPartView, ClusterRecordNumbers,
+    cluster_block, ClusterCopyReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterPartView, ClusterRecordNumbers,
     ClusterRecordReadPort, ClusterRecordView,
 };
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
@@ -44,6 +44,16 @@ impl ClusterPartReadPort for FullBlock {
     }
 }
 
+impl ClusterCopyReadPort for FullBlock {
+    fn cluster_copy(&self, _kind: ClusterRecordKind, _record: crate::frame::RecordRef) -> Option<ClusterRecordView> {
+        None
+    }
+
+    fn cluster_copy_at(&self, _kind: ClusterRecordKind, _index: usize) -> Option<ClusterRecordView> {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Sent {
     at_ms: u32,
@@ -71,7 +81,7 @@ impl Rig {
     fn turn(&mut self, now_ms: u32, running: bool, hello: bool) {
         let node = self.block.node;
         let turn = Turn { running, node, now_ms, hello, timing: self.timing };
-        let own = OwnInfo { records: &self.block, parts: &self.block };
+        let own = OwnInfo { records: &self.block, parts: &self.block, copies: &self.block };
         self.announcer.plan(turn, own);
         if self.announcer.page_due(now_ms) {
             let tag = cluster_tag("hall");

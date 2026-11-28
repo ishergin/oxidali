@@ -31,6 +31,7 @@ impl SetId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Arrival {
     pub node: u8,
+    pub own_node: u8,
     pub mac: [u8; 6],
     pub epoch: u32,
     pub now_ms: u32,
@@ -66,6 +67,7 @@ pub struct NodeInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldNode {
+    pub mac: [u8; 6],
     pub set: u32,
     pub age_ms: u32,
     pub skipped: u16,
@@ -91,11 +93,11 @@ impl NodeInfo {
         after_staging && after_shown
     }
 
-    fn open(&mut self, id: SetId, node: u8, tally: &mut PageTally) {
+    fn open(&mut self, id: SetId, (node, own): (u8, u8), tally: &mut PageTally) {
         tally.abandoned = self.staging.take().is_some();
         let at = self.staging_at();
         if let Some(set) = self.sets.get_mut(at) {
-            set.clear(node);
+            set.clear_for(node, own);
         }
         self.staging = Some(Staging { id, next_page: 0 });
     }
@@ -108,7 +110,7 @@ impl NodeInfo {
             if !self.admits_first_page(id) {
                 return PageTally { stale: true, ..tally };
             }
-            self.open(id, at.node, &mut tally);
+            self.open(id, (at.node, at.own_node), &mut tally);
         }
         let Some(staging) = self.staging.filter(|staging| staging.id == id && staging.next_page == meta.page) else {
             tally.stale = true;
@@ -199,7 +201,7 @@ impl InfoCache {
         let info = self.nodes.get(usize::from(node))?;
         let shown = info.shown?;
         let skipped = info.shown_set().map_or(0, |set| set.skipped);
-        Some(HeldNode { set: shown.id.set, age_ms: elapsed_ms(now_ms, shown.heard_ms), skipped })
+        Some(HeldNode { mac: shown.id.mac, set: shown.id.set, age_ms: elapsed_ms(now_ms, shown.heard_ms), skipped })
     }
 
     pub fn counts(&self, node: u8, kind: ClusterRecordKind) -> Option<(u8, u8)> {
