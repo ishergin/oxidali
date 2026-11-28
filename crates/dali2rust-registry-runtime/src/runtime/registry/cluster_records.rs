@@ -211,10 +211,11 @@ pub(crate) enum TakeBackOutcome {
 
 fn taken_entry(block: &ClusterRecordBlock, index: u8, floor: u32, taken: &ClusterTakenRecord) -> Option<ClusterRecordEntry> {
     let mark = taken.mark;
+    let empty = block.entry(index).is_none();
     let newer = mark.generation > block.generation(index) && mark.generation >= floor;
-    let free_nonce = !block.entries.iter().any(|held| held.index != index && held.mark.nonce == mark.nonce);
+    let free_nonce = !block.entries.iter().any(|held| held.mark.nonce == mark.nonce);
     let named = taken.name.as_str().len() <= MAX_CLUSTER_RECORD_NAME_BYTES;
-    (newer && free_nonce && named && taken.revision >= 1)
+    (empty && newer && free_nonce && named && taken.revision >= 1)
         .then(|| ClusterRecordEntry { index, mark, name: taken.name.clone(), revision: taken.revision })
 }
 
@@ -234,8 +235,9 @@ impl ClusterRecordBlock {
             self.put(entry);
             return TakeBackOutcome::Refreshed;
         }
+        let empty = self.entry(index).is_none();
         match self.generations.get_mut(usize::from(index)) {
-            Some(memory) if *memory < floor && self.entries.iter().all(|held| held.index != index) => {
+            Some(memory) if *memory < floor && empty => {
                 *memory = floor;
                 TakeBackOutcome::Raised
             }
@@ -626,6 +628,7 @@ mod tests {
         commit(&store, vec![create_with(CHANNEL, Some(2), 77), record_name("Hall")]).expect("created");
         assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 1, "Same"))), TakeBackOutcome::Unchanged);
         assert_eq!(take(&store, 2, 0, Some(taken(1, 78, 9, "Other"))), TakeBackOutcome::Unchanged);
+        assert_eq!(take(&store, 2, 0, Some(taken(7, 78, 9, "Newer"))), TakeBackOutcome::Unchanged, "never over a live one");
         assert_eq!(take(&store, 2, 9, None), TakeBackOutcome::Unchanged, "a live record keeps its memory");
         assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 4, "Corridor"))), TakeBackOutcome::Refreshed);
         let view = held(&store, CHANNEL, 2);

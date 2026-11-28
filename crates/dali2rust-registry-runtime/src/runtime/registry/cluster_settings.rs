@@ -185,12 +185,9 @@ enum Written {
     Parts(Option<ClusterRecordKind>),
 }
 
-fn apply_stage(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
+fn apply_stage(g: &mut Inner, patches: &[ClusterPatch]) -> Result<(Written, [bool; 2]), ClusterRefusal> {
     let written = apply_patches(g, patches)?;
-    for kind in CLUSTER_RECORD_KINDS {
-        prune_copies(g, kind);
-    }
-    Ok(written)
+    Ok((written, CLUSTER_RECORD_KINDS.map(|kind| prune_copies(g, kind))))
 }
 
 fn apply_patches(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
@@ -247,10 +244,13 @@ impl RegistryStore {
         if stage.patches.len() != usize::from(frames) {
             return Err(ClusterRefusal::FrameCountMismatch);
         }
-        let written = apply_stage(&mut g, &stage.patches)?;
+        let (written, pruned) = apply_stage(&mut g, &stage.patches)?;
         let applied = g.cluster_settings.clone();
         drop(g);
         self.mark_cluster_written(written);
+        for (kind, _) in CLUSTER_RECORD_KINDS.into_iter().zip(pruned).filter(|(_, pruned)| *pruned) {
+            self.mark_cluster_copies_dirty(kind);
+        }
         Ok(applied)
     }
 

@@ -337,8 +337,10 @@ mod tests {
         registry.apply_cluster_copy(&store(CHANNEL, reissued, 7, "New")).expect("answered");
         assert_eq!(held(&registry, CHANNEL, reissued), None, "no part names the new mark");
         assert_eq!(held(&registry, CHANNEL, old), Some(("Old".to_owned(), 1)));
+        let _ = registry.dirty.take_cluster_channel_copies_dirty();
         link(&registry, 3, Some(reissued));
         assert_eq!(held(&registry, CHANNEL, old), None, "the old copy goes with its last part");
+        assert!(registry.dirty.take_cluster_channel_copies_dirty(), "and the slice is written without it");
         registry.apply_cluster_copy(&store(CHANNEL, reissued, 7, "New")).expect("stored");
         assert_eq!(held(&registry, CHANNEL, reissued), Some(("New".to_owned(), 7)));
     }
