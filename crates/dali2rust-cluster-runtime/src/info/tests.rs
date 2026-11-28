@@ -234,6 +234,10 @@ impl ClusterRecordReadPort for OwnPorts {
         };
         ClusterRecordNumbers { first: 32, live }
     }
+
+    fn cluster_generation(&self, kind: ClusterRecordKind, number: u8) -> u32 {
+        self.cluster_record(kind, number).map_or(0, |record| record.mark.generation)
+    }
 }
 
 impl ClusterPartReadPort for OwnPorts {

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::bounded::FixedText64;
 use super::kinds::LevelTransition;
 use super::state::LightSetpoint;
 
@@ -104,6 +105,19 @@ pub enum ClusterSourceClass {
 pub enum ClusterSubject {
     Status,
     Info,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterCopyAction {
+    Store { revision: u32, name: FixedText64 },
+    Drop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClusterTakenRecord {
+    pub mark: ClusterBirthMark,
+    pub revision: u32,
+    pub name: FixedText64,
 }
 
 #[cfg(test)]

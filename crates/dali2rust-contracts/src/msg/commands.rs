@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::cluster::{
-    ClusterAction, ClusterForwarding, ClusterPartLink, ClusterRecordAction, ClusterRecordKind, ClusterSourceClass,
-    ClusterTextField,
+    ClusterAction, ClusterCopyAction, ClusterForwarding, ClusterPartLink, ClusterRecordAction, ClusterRecordKind,
+    ClusterSourceClass, ClusterTakenRecord, ClusterTextField,
 };
 use super::bounded::{FixedItems, FixedText32, FixedText48, FixedText60, FixedText64, FixedText96};
 use super::kinds::{
@@ -1352,6 +1352,40 @@ declare_bus_payloads! {
         group_id: 15,
         step: StepKind::DownAndOff,
         hold_hcl: true,
+    };
+
+    pub struct ClusterRecordCopyCommand {
+        pub kind: ClusterRecordKind,
+        pub record: crate::msg::ClusterRecordRef,
+        pub action: ClusterCopyAction,
+    }
+    budget = ClusterRecordCopyCommand {
+        kind: ClusterRecordKind::Scene,
+        record: crate::msg::ClusterRecordRef {
+            number: u8::MAX,
+            mark: crate::msg::ClusterBirthMark { generation: u32::MAX, nonce: u32::MAX },
+        },
+        action: ClusterCopyAction::Store {
+            revision: u32::MAX,
+            name: crate::msg::payload_test_samples::worst_text64(),
+        },
+    };
+
+    pub struct ClusterRecordTakeBackCommand {
+        pub kind: ClusterRecordKind,
+        pub number: u8,
+        pub generation_floor: u32,
+        pub record: Option<ClusterTakenRecord>,
+    }
+    budget = ClusterRecordTakeBackCommand {
+        kind: ClusterRecordKind::Scene,
+        number: u8::MAX,
+        generation_floor: u32::MAX,
+        record: Some(ClusterTakenRecord {
+            mark: crate::msg::ClusterBirthMark { generation: u32::MAX, nonce: u32::MAX },
+            revision: u32::MAX,
+            name: crate::msg::payload_test_samples::worst_text64(),
+        }),
     };
 }
 

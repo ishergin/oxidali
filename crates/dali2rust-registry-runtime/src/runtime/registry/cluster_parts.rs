@@ -248,6 +248,7 @@ pub(crate) fn decode_scene_parts(bytes: &[u8]) -> Result<PersistableClusterParts
 
 fn hydrate_parts(inner: &mut Inner, kind: ClusterRecordKind, slice: &PersistableClusterPartsSlice) {
     *inner.cluster_parts.set_mut(kind) = stored_parts(slice).unwrap_or_else(ClusterPartSet::preallocated);
+    super::cluster_copies::prune_copies(inner, kind);
 }
 
 pub(crate) fn hydrate_channel_parts_inner(inner: &mut Inner, slice: &PersistableClusterPartsSlice) {

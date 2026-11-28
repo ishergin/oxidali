@@ -77,6 +77,8 @@ pub(crate) struct DirtyFlags {
     pub cluster_settings: AtomicBool,
     pub cluster_channel_parts: AtomicBool,
     pub cluster_scene_parts: AtomicBool,
+    pub cluster_channel_copies: AtomicBool,
+    pub cluster_scene_copies: AtomicBool,
     pub policies: AtomicBool,
     pub home_assistant_settings: AtomicBool,
     pub input_devices: AtomicBool,
@@ -103,6 +105,8 @@ impl DirtyFlags {
             cluster_settings: AtomicBool::new(false),
             cluster_channel_parts: AtomicBool::new(false),
             cluster_scene_parts: AtomicBool::new(false),
+            cluster_channel_copies: AtomicBool::new(false),
+            cluster_scene_copies: AtomicBool::new(false),
             policies: AtomicBool::new(false),
             home_assistant_settings: AtomicBool::new(false),
             input_devices: AtomicBool::new(false),
@@ -129,6 +133,8 @@ impl DirtyFlags {
             (&self.cluster_settings, withheld::CLUSTER_SETTINGS),
             (&self.cluster_channel_parts, withheld::CLUSTER_CHANNEL_PARTS),
             (&self.cluster_scene_parts, withheld::CLUSTER_SCENE_PARTS),
+            (&self.cluster_channel_copies, withheld::CLUSTER_CHANNEL_COPIES),
+            (&self.cluster_scene_copies, withheld::CLUSTER_SCENE_COPIES),
             (&self.policies, withheld::POLICIES),
             (&self.home_assistant_settings, withheld::HOME_ASSISTANT_SETTINGS),
             (&self.input_devices, withheld::INPUT_DEVICES),
@@ -265,6 +271,18 @@ impl DirtyFlags {
         cluster_scene_parts,
         withheld::CLUSTER_SCENE_PARTS
     );
+    global_dirty_flag!(
+        mark_cluster_channel_copies_dirty,
+        take_cluster_channel_copies_dirty,
+        cluster_channel_copies,
+        withheld::CLUSTER_CHANNEL_COPIES
+    );
+    global_dirty_flag!(
+        mark_cluster_scene_copies_dirty,
+        take_cluster_scene_copies_dirty,
+        cluster_scene_copies,
+        withheld::CLUSTER_SCENE_COPIES
+    );
     global_dirty_flag!(mark_policies_dirty, take_policies_dirty, policies, withheld::POLICIES);
     global_dirty_flag!(
         mark_poller_settings_dirty,
@@ -397,6 +415,7 @@ pub(crate) struct Inner {
     pub(crate) cluster_stage: Option<super::cluster_settings::ClusterStage>,
     pub(crate) cluster_records: super::cluster_records::ClusterRecords,
     pub(crate) cluster_parts: super::cluster_parts::ClusterParts,
+    pub(crate) cluster_copies: super::cluster_copies::ClusterCopies,
     pub(crate) policies: super::policies::PoliciesRecord,
     pub(crate) home_assistant_settings:
         super::home_assistant_settings::HomeAssistantSettingsRecord,
@@ -439,6 +458,7 @@ impl Inner {
             input_devices: HashMap::with_capacity(psram_capacity::SMALL_ROWS),
             cluster_records: super::cluster_records::ClusterRecords::preallocated(),
             cluster_parts: super::cluster_parts::ClusterParts::preallocated(),
+            cluster_copies: super::cluster_copies::ClusterCopies::preallocated(),
             config_write_stage: HashMap::with_capacity(
                 super::config_write_stage::MAX_CONFIG_WRITE_STAGES,
             ),

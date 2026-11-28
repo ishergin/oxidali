@@ -8,6 +8,10 @@ const _: () = assert!(GROUP_COUNT == SCENE_COUNT, "a part key is one group or on
 
 const ADAPTER_SLOTS: usize = MAX_ADAPTERS as usize;
 
+pub const MAX_CLUSTER_PARTS_PER_KIND: usize = ADAPTER_SLOTS * CLUSTER_PART_LOCALS as usize;
+
+pub const MAX_CLUSTER_COPIES_PER_KIND: usize = MAX_CLUSTER_PARTS_PER_KIND;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClusterPartView {
     pub kind: ClusterRecordKind,

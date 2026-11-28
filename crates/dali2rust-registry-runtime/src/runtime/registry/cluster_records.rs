@@ -1,5 +1,6 @@
 use dali2rust_contracts::msg::{
-    ClusterBirthMark, ClusterRecordAction, ClusterRecordKind, ClusterRecordUpdateCommand, FixedText64,
+    ClusterBirthMark, ClusterRecordAction, ClusterRecordKind, ClusterRecordTakeBackCommand, ClusterRecordUpdateCommand,
+    ClusterTakenRecord, FixedText64,
 };
 use dali2rust_domain::registry::{
     block_index, cluster_block, default_record_name, is_cluster_record_number, next_record_index,
@@ -7,7 +8,7 @@ use dali2rust_domain::registry::{
     CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_RECORD_NAME_BYTES,
 };
 
-use super::cluster_settings::ClusterRefusal;
+use super::cluster_settings::{ClusterRefusal, ClusterSettingsRecord};
 use super::persistence_slices::PersistableClusterRecord;
 use super::store::RegistryStore;
 
@@ -200,7 +201,86 @@ fn record_view(kind: ClusterRecordKind, node: u8, entry: &ClusterRecordEntry) ->
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TakeBackOutcome {
+    Adopted,
+    Refreshed,
+    Raised,
+    Unchanged,
+}
+
+fn taken_entry(block: &ClusterRecordBlock, index: u8, floor: u32, taken: &ClusterTakenRecord) -> Option<ClusterRecordEntry> {
+    let mark = taken.mark;
+    let newer = mark.generation > block.generation(index) && mark.generation >= floor;
+    let free_nonce = !block.entries.iter().any(|held| held.index != index && held.mark.nonce == mark.nonce);
+    let named = taken.name.as_str().len() <= MAX_CLUSTER_RECORD_NAME_BYTES;
+    (newer && free_nonce && named && taken.revision >= 1)
+        .then(|| ClusterRecordEntry { index, mark, name: taken.name.clone(), revision: taken.revision })
+}
+
+fn refreshed_entry(block: &ClusterRecordBlock, index: u8, taken: &ClusterTakenRecord) -> Option<ClusterRecordEntry> {
+    let held = block.entry(index)?;
+    (held.mark == taken.mark && held.revision < taken.revision)
+        .then(|| ClusterRecordEntry { name: taken.name.clone(), revision: taken.revision, ..held.clone() })
+}
+
+impl ClusterRecordBlock {
+    fn take_back(&mut self, index: u8, floor: u32, taken: Option<&ClusterTakenRecord>) -> TakeBackOutcome {
+        if let Some(entry) = taken.and_then(|taken| taken_entry(self, index, floor, taken)) {
+            self.put(entry);
+            return TakeBackOutcome::Adopted;
+        }
+        if let Some(entry) = taken.and_then(|taken| refreshed_entry(self, index, taken)) {
+            self.put(entry);
+            return TakeBackOutcome::Refreshed;
+        }
+        match self.generations.get_mut(usize::from(index)) {
+            Some(memory) if *memory < floor && self.entries.iter().all(|held| held.index != index) => {
+                *memory = floor;
+                TakeBackOutcome::Raised
+            }
+            _ => TakeBackOutcome::Unchanged,
+        }
+    }
+}
+
+pub(crate) fn take_back(
+    records: &mut ClusterRecords,
+    node: u8,
+    command: &ClusterRecordTakeBackCommand,
+) -> Option<TakeBackOutcome> {
+    let index = block_index(node, command.number)?;
+    let block = records.block_mut(command.kind);
+    Some(block.take_back(index, command.generation_floor, command.record.as_ref()))
+}
+
+impl RegistryStore {
+    pub(crate) fn apply_cluster_take_back(
+        &self,
+        command: &ClusterRecordTakeBackCommand,
+    ) -> Result<(TakeBackOutcome, ClusterSettingsRecord), ClusterRefusal> {
+        let mut g = self.write_inner();
+        if !g.dali_settings.application_active {
+            return Err(ClusterRefusal::Standby);
+        }
+        let node = g.cluster_settings.0.node_number;
+        let outcome = take_back(&mut g.cluster_records, node, command).ok_or(ClusterRefusal::OutOfRange)?;
+        let record = g.cluster_settings.clone();
+        drop(g);
+        if outcome != TakeBackOutcome::Unchanged {
+            self.dirty.mark_cluster_settings_dirty();
+        }
+        Ok((outcome, record))
+    }
+}
+
 impl ClusterRecordReadPort for RegistryStore {
+    fn cluster_generation(&self, kind: ClusterRecordKind, number: u8) -> u32 {
+        let g = self.read_inner();
+        let node = g.cluster_settings.0.node_number;
+        block_index(node, number).map_or(0, |index| g.cluster_records.block(kind).generation(index))
+    }
+
     fn cluster_record(&self, kind: ClusterRecordKind, number: u8) -> Option<ClusterRecordView> {
         let g = self.read_inner();
         let node = g.cluster_settings.0.node_number;
@@ -496,5 +576,90 @@ mod tests {
             break_it(&mut broken);
             assert!(decoded(&broken).is_none(), "{what}");
         }
+    }
+
+    fn taken(generation: u32, nonce: u32, revision: u32, name: &str) -> ClusterTakenRecord {
+        ClusterTakenRecord { mark: ClusterBirthMark { generation, nonce }, revision, name: fixed_text_64(name) }
+    }
+
+    fn take(store: &RegistryStore, number: u8, floor: u32, record: Option<ClusterTakenRecord>) -> TakeBackOutcome {
+        let command = ClusterRecordTakeBackCommand { kind: CHANNEL, number, generation_floor: floor, record };
+        store.apply_cluster_take_back(&command).expect("answered").0
+    }
+
+    #[test]
+    fn a_record_newer_than_the_memory_is_taken_back_and_the_next_number_goes_above_it() {
+        let store = RegistryStore::with_adapter_count(1);
+        assert_eq!(take(&store, 2, 0, Some(taken(3, 77, 5, "Hall"))), TakeBackOutcome::Adopted);
+        let view = held(&store, CHANNEL, 2);
+        assert_eq!((view.mark.generation, view.mark.nonce, view.name.as_str(), view.revision), (3, 77, "Hall", 5));
+        assert_eq!(store.cluster_generation(CHANNEL, 2), 3);
+        commit(&store, vec![create(CHANNEL, None)]).expect("created");
+        assert!(store.cluster_record(CHANNEL, 0).is_some(), "a never issued number goes first");
+        commit(&store, vec![record(CHANNEL, ClusterRecordAction::Delete { number: 2, revision: 5 })]).expect("gone");
+        commit(&store, vec![create_with(CHANNEL, Some(2), NONCE)]).expect("again");
+        assert_eq!(held(&store, CHANNEL, 2).mark.generation, 4, "never under the taken mark");
+    }
+
+    #[test]
+    fn a_record_no_newer_than_the_memory_stays_deleted() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![create_with(CHANNEL, Some(2), 77)]).expect("created");
+        commit(&store, vec![record(CHANNEL, ClusterRecordAction::Delete { number: 2, revision: 1 })]).expect("gone");
+        assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 9, "Back"))), TakeBackOutcome::Unchanged);
+        assert_eq!(store.cluster_record(CHANNEL, 2), None);
+    }
+
+    #[test]
+    fn a_floor_above_the_record_raises_the_memory_and_takes_nothing() {
+        let store = RegistryStore::with_adapter_count(1);
+        assert_eq!(take(&store, 2, 5, Some(taken(3, 77, 1, "Old"))), TakeBackOutcome::Raised);
+        assert_eq!(store.cluster_record(CHANNEL, 2), None);
+        assert_eq!(store.cluster_generation(CHANNEL, 2), 5);
+        assert_eq!(take(&store, 3, 4, None), TakeBackOutcome::Raised);
+        assert_eq!(store.cluster_generation(CHANNEL, 3), 4);
+    }
+
+    #[test]
+    fn a_live_record_is_refreshed_by_a_higher_revision_of_its_mark_only() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![create_with(CHANNEL, Some(2), 77), record_name("Hall")]).expect("created");
+        assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 1, "Same"))), TakeBackOutcome::Unchanged);
+        assert_eq!(take(&store, 2, 0, Some(taken(1, 78, 9, "Other"))), TakeBackOutcome::Unchanged);
+        assert_eq!(take(&store, 2, 9, None), TakeBackOutcome::Unchanged, "a live record keeps its memory");
+        assert_eq!(take(&store, 2, 0, Some(taken(1, 77, 4, "Corridor"))), TakeBackOutcome::Refreshed);
+        let view = held(&store, CHANNEL, 2);
+        assert_eq!((view.name.as_str(), view.revision, store.cluster_generation(CHANNEL, 2)), ("Corridor", 4, 1));
+    }
+
+    #[test]
+    fn a_taken_record_never_shares_a_nonce_and_never_lands_outside_the_block() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![create_with(CHANNEL, Some(1), 77)]).expect("created");
+        assert_eq!(take(&store, 2, 0, Some(taken(3, 77, 1, "Twin"))), TakeBackOutcome::Unchanged);
+        assert_eq!(take(&store, 2, 0, Some(taken(3, 78, 0, "Unrevised"))), TakeBackOutcome::Unchanged);
+        let outside = ClusterRecordTakeBackCommand { kind: CHANNEL, number: 20, generation_floor: 0, record: None };
+        assert_eq!(store.apply_cluster_take_back(&outside).map(|(outcome, _)| outcome), Err(ClusterRefusal::OutOfRange));
+    }
+
+    #[test]
+    fn the_standby_takes_nothing_back() {
+        let store = RegistryStore::with_adapter_count(1);
+        store.write_inner().dali_settings.application_active = false;
+        let command = ClusterRecordTakeBackCommand { kind: CHANNEL, number: 2, generation_floor: 3, record: None };
+        assert_eq!(store.apply_cluster_take_back(&command).map(|(outcome, _)| outcome), Err(ClusterRefusal::Standby));
+        assert_eq!(store.cluster_generation(CHANNEL, 2), 0);
+    }
+
+    #[test]
+    fn a_taken_record_survives_the_stored_slice() {
+        let store = RegistryStore::with_adapter_count(1);
+        take(&store, 2, 0, Some(taken(3, 77, 5, "Hall")));
+        take(&store, 4, 6, None);
+        let slice = persistable_snapshot(&store.read_inner());
+        let mut restored = Inner::default();
+        hydrate_cluster_settings_inner(&mut restored, &decoded(&slice).expect("decodes"));
+        assert_eq!(restored.cluster_records.channels.entry(2).expect("taken").mark.generation, 3);
+        assert_eq!(restored.cluster_records.channels.generations[4], 6);
     }
 }

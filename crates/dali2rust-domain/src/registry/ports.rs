@@ -59,6 +59,22 @@ pub trait ClusterRecordReadPort: Send + Sync {
         &self,
         kind: dali2rust_contracts::msg::ClusterRecordKind,
     ) -> super::cluster_records::ClusterRecordNumbers;
+
+    fn cluster_generation(&self, kind: dali2rust_contracts::msg::ClusterRecordKind, number: u8) -> u32;
+}
+
+pub trait ClusterCopyReadPort: Send + Sync {
+    fn cluster_copy(
+        &self,
+        kind: dali2rust_contracts::msg::ClusterRecordKind,
+        record: dali2rust_contracts::msg::ClusterRecordRef,
+    ) -> Option<super::cluster_records::ClusterRecordView>;
+
+    fn cluster_copy_at(
+        &self,
+        kind: dali2rust_contracts::msg::ClusterRecordKind,
+        index: usize,
+    ) -> Option<super::cluster_records::ClusterRecordView>;
 }
 
 pub trait ClusterPartReadPort: Send + Sync {

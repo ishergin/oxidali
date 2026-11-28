@@ -5,10 +5,11 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_domain::registry::{
     ClusterRecordConflict, ClusterSettingsConflict, ClusterSettingsReadPort, ClusterSettingsView,
-    ClusterWire,
+    ClusterWire, CLUSTER_RECORD_KINDS,
 };
 use dali2rust_platform::slice_store::StoreError;
 
+use super::cluster_copies::prune_copies;
 use super::cluster_parts::plan_part_edit;
 use super::cluster_records::{
     persistable_records, plan_record_edit, stored_block, ClusterRecords, RecordEdit, RecordRequest,
@@ -185,6 +186,14 @@ enum Written {
 }
 
 fn apply_stage(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
+    let written = apply_patches(g, patches)?;
+    for kind in CLUSTER_RECORD_KINDS {
+        prune_copies(g, kind);
+    }
+    Ok(written)
+}
+
+fn apply_patches(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
     if let Some(command) = part_request(patches)? {
         let edit = plan_part_edit(g, command)?;
         return Ok(Written::Parts(g.cluster_parts.apply(edit)));
@@ -321,6 +330,9 @@ pub(crate) fn decode_cluster_settings(bytes: &[u8]) -> Result<PersistableCluster
 pub(crate) fn hydrate_cluster_settings_inner(inner: &mut Inner, slice: &PersistableClusterSettingsSlice) {
     inner.cluster_settings = ClusterSettingsRecord(stored_view(slice));
     inner.cluster_records = stored_records(slice).unwrap_or_else(ClusterRecords::preallocated);
+    for kind in CLUSTER_RECORD_KINDS {
+        prune_copies(inner, kind);
+    }
 }
 
 #[cfg(test)]

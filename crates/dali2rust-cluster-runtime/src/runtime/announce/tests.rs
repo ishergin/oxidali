@@ -28,6 +28,10 @@ impl ClusterRecordReadPort for FullBlock {
     fn cluster_record_numbers(&self, _kind: ClusterRecordKind) -> ClusterRecordNumbers {
         ClusterRecordNumbers { first: *cluster_block(self.node).start(), live: ALL_NUMBERS }
     }
+
+    fn cluster_generation(&self, _kind: ClusterRecordKind, _number: u8) -> u32 {
+        MARK.generation
+    }
 }
 
 impl ClusterPartReadPort for FullBlock {

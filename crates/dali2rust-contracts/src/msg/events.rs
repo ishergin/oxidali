@@ -20,7 +20,7 @@ use super::state::{
 };
 use super::wire::DaliEventPayload;
 
-pub const MAX_PERSISTENCE_SLICES: usize = 155;
+pub const MAX_PERSISTENCE_SLICES: usize = 157;
 pub const MAX_PERSISTENCE_ERRORS: usize = 150;
 
 pub const MQTT_RULE_PAYLOAD_BYTES: usize = 48;
@@ -47,6 +47,8 @@ pub enum PersistenceSliceKind {
     ClusterSettings,
     ClusterChannelParts,
     ClusterSceneParts,
+    ClusterChannelCopies,
+    ClusterSceneCopies,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

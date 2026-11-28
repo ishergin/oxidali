@@ -5,7 +5,7 @@ use crate::msg::{
     RuntimeRegistryUpdateEntry, RuntimeSource, SceneRow, StatusFlags,
 };
 
-const FROZEN_COMMAND_ORDER: [&str; 87] = [
+const FROZEN_COMMAND_ORDER: [&str; 89] = [
     "DaliCommandPayload",
     "AdapterSettingsUpdateCommand",
     "GroupMetadataUpdateCommand",
@@ -93,6 +93,8 @@ const FROZEN_COMMAND_ORDER: [&str; 87] = [
     "ClusterPartUpdateCommand",
     "ClusterCommandCommand",
     "DaliStepCommand",
+    "ClusterRecordCopyCommand",
+    "ClusterRecordTakeBackCommand",
 ];
 
 #[test]
