@@ -312,7 +312,8 @@ mod tests {
     }
 
     fn own_record(store: &RegistryStore, kind: ClusterRecordKind, number: u8) -> ClusterRecordRef {
-        let action = ClusterRecordAction::Create { number: Some(number), nonce: OWN_NONCE };
+        let node = store.cluster_settings_view().node_number;
+        let action = ClusterRecordAction::Create { number: Some(number), nonce: OWN_NONCE, node };
         let create = ClusterPatch::Record(ClusterRecordUpdateCommand { series: SERIES, kind, action });
         commit(store, vec![create]).expect("record created");
         reference(number, 1, OWN_NONCE)

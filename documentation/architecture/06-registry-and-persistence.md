@@ -266,7 +266,8 @@ filtered: they address one device.
   is below the copy's generation, raises the memory of a position, live or empty, to the
   highest generation its peers name there, and refreshes a live record only at the same mark
   with a higher revision. A live record is never replaced, and generation `u32::MAX` is never
-  taken, so no position is left without a next generation.
+  taken, so one part naming it cannot use a position up; a member naming generations just
+  below it still can, which ADR-035's trust in the members of one cluster name allows.
 - Data one read restores — live measurements, memory-bank content beyond the persisted
   attributes — lives beside `attributes` on the record and is not persisted, so it costs
   no version. It is blank after a reboot until re-read, and the provenance shown with it

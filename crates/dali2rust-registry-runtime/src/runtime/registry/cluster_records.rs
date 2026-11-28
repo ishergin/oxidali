@@ -118,7 +118,10 @@ pub(crate) fn plan_record_edit(
     let kind = request.command.kind;
     let block = records.block(kind);
     match request.command.action {
-        ClusterRecordAction::Create { number, nonce } => {
+        ClusterRecordAction::Create { number, nonce, node: settled } => {
+            if settled != node {
+                return Err(ClusterRefusal::Record(ClusterRecordConflict::BlockUnsettled));
+            }
             let entry = created(block, node, number, nonce, request)?;
             Ok(RecordEdit::Put { kind, entry })
         }
@@ -357,6 +360,7 @@ mod tests {
     const NONCE: u32 = 0x5eed;
     const CHANNEL: ClusterRecordKind = ClusterRecordKind::Channel;
     const SCENE: ClusterRecordKind = ClusterRecordKind::Scene;
+    const UNSET_NODE: u8 = u8::MAX;
 
     fn record(kind: ClusterRecordKind, action: ClusterRecordAction) -> ClusterPatch {
         ClusterPatch::Record(ClusterRecordUpdateCommand { series: SERIES, kind, action })
@@ -369,7 +373,7 @@ mod tests {
     }
 
     fn create_with(kind: ClusterRecordKind, number: Option<u8>, nonce: u32) -> ClusterPatch {
-        record(kind, ClusterRecordAction::Create { number, nonce })
+        record(kind, ClusterRecordAction::Create { number, nonce, node: UNSET_NODE })
     }
 
     fn record_name(text: &str) -> ClusterPatch {
@@ -399,6 +403,27 @@ mod tests {
     }
 
     fn commit(store: &RegistryStore, patches: Vec<ClusterPatch>) -> Result<(), ClusterRefusal> {
+        let moved = patches.iter().find_map(|patch| match patch {
+            ClusterPatch::Settings(body) => Some(body.node_number),
+            _ => None,
+        });
+        let node = moved.unwrap_or(store.cluster_settings_view().node_number);
+        commit_staged(store, patches.into_iter().map(|patch| settled_for(patch, node)).collect())
+    }
+
+    fn settled_for(patch: ClusterPatch, node: u8) -> ClusterPatch {
+        match patch {
+            ClusterPatch::Record(mut body) => {
+                if let ClusterRecordAction::Create { node: settled, .. } = &mut body.action {
+                    *settled = node;
+                }
+                ClusterPatch::Record(body)
+            }
+            other => other,
+        }
+    }
+
+    fn commit_staged(store: &RegistryStore, patches: Vec<ClusterPatch>) -> Result<(), ClusterRefusal> {
         let frames = u8::try_from(patches.len()).expect("frames");
         for patch in patches {
             store.stage_cluster_patch(SERIES, patch)?;
@@ -519,6 +544,17 @@ mod tests {
         commit(&store, vec![node_number(1)]).expect("moved");
         commit(&store, vec![create(CHANNEL, Some(19))]).expect("created");
         assert_eq!(held(&store, CHANNEL, 19).mark.generation, 2);
+    }
+
+    #[test]
+    fn a_create_made_for_another_node_number_issues_no_number() {
+        let store = RegistryStore::with_adapter_count(1);
+        commit(&store, vec![node_number(3)]).expect("node 3");
+        let stale = commit_staged(&store, vec![record(CHANNEL, ClusterRecordAction::Create { number: None, nonce: NONCE, node: 2 })]);
+        assert_eq!(stale, conflict(ClusterRecordConflict::BlockUnsettled));
+        assert!(!store.cluster_record_numbers(CHANNEL).any(), "the number stays unissued");
+        let settled = commit_staged(&store, vec![record(CHANNEL, ClusterRecordAction::Create { number: None, nonce: NONCE, node: 3 })]);
+        settled.expect("created for the node it settled for");
     }
 
     #[test]

@@ -1293,7 +1293,7 @@ declare_bus_payloads! {
     budget = ClusterRecordUpdateCommand {
         series: u64::MAX,
         kind: ClusterRecordKind::Scene,
-        action: ClusterRecordAction::Create { number: Some(u8::MAX), nonce: u32::MAX },
+        action: ClusterRecordAction::Create { number: Some(u8::MAX), nonce: u32::MAX, node: u8::MAX },
     };
 
     pub struct ClusterPartUpdateCommand {

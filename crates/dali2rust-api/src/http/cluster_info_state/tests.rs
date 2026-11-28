@@ -69,8 +69,8 @@ impl ClusterInfoHttpState for Cluster {
         self.sources.get(&node).map(|(_, wire)| *wire)
     }
 
-    fn record_write_refusal(&self) -> Option<&'static str> {
-        None
+    fn record_write_block(&self) -> Result<u8, &'static str> {
+        Ok(0)
     }
 }
 

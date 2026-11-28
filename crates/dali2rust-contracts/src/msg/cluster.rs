@@ -54,7 +54,7 @@ pub enum ClusterRecordKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClusterRecordAction {
-    Create { number: Option<u8>, nonce: u32 },
+    Create { number: Option<u8>, nonce: u32, node: u8 },
     Rename { number: u8, revision: u32 },
     Delete { number: u8, revision: u32 },
 }
@@ -135,7 +135,7 @@ mod tests {
         assert_eq!(encode(&ClusterTextField::RecordName), [1]);
         assert_eq!(encode(&ClusterRecordKind::Channel), [0]);
         assert_eq!(encode(&ClusterRecordKind::Scene), [1]);
-        assert_eq!(encode(&ClusterRecordAction::Create { number: None, nonce: 0 }), [0, 0, 0]);
+        assert_eq!(encode(&ClusterRecordAction::Create { number: None, nonce: 0, node: 2 }), [0, 0, 0, 2]);
         assert_eq!(encode(&ClusterRecordAction::Rename { number: 3, revision: 2 }), [1, 3, 2]);
         assert_eq!(encode(&ClusterRecordAction::Delete { number: 3, revision: 2 }), [2, 3, 2]);
     }

@@ -133,7 +133,7 @@ impl ClusterRecordHandler {
         let number = optional_number(&obj)?;
         let name = optional_name(&obj)?;
         let nonce = record_nonce();
-        self.commit(ClusterRecordAction::Create { number, nonce }, name)?;
+        self.commit(|node| ClusterRecordAction::Create { number, nonce, node }, name)?;
         let created = self.created(nonce).ok_or_else(|| json_err(404, "not_found"))?;
         let mut response = json_stream_dto(created);
         response.status = CREATED;
@@ -145,14 +145,14 @@ impl ClusterRecordHandler {
         let obj = parse_body_object(body, RENAME_KEYS, EDIT_READ_ONLY)?;
         let name = required_name(&obj)?;
         let revision = required_revision(&obj)?;
-        self.commit(ClusterRecordAction::Rename { number, revision }, Some(name))?;
+        self.commit(|_| ClusterRecordAction::Rename { number, revision }, Some(name))?;
         Ok(json_stream_dto(self.held(number)?))
     }
 
     fn delete(&self, params: &HashMap<String, String>, body: &[u8]) -> Answer {
         let number = path_number(params)?;
         let revision = required_revision(&parse_body_object(body, DELETE_KEYS, EDIT_READ_ONLY)?)?;
-        self.commit(ClusterRecordAction::Delete { number, revision }, None)?;
+        self.commit(|_| ClusterRecordAction::Delete { number, revision }, None)?;
         Ok(HttpResponse::no_content())
     }
 
@@ -166,11 +166,10 @@ impl ClusterRecordHandler {
         numbers.filter_map(|n| state.cluster_record_dto(self.kind, n)).find(|record| record.birth_mark.nonce == nonce)
     }
 
-    fn commit(&self, action: ClusterRecordAction, name: Option<String>) -> Result<(), HttpResponse> {
+    fn commit(&self, action: impl FnOnce(u8) -> ClusterRecordAction, name: Option<String>) -> Result<(), HttpResponse> {
         let deps = &self.deps;
-        if let Some(refusal) = deps.cluster.record_write_refusal() {
-            return Err(json_err_with_message(409, "conflict", refusal));
-        }
+        let node = deps.cluster.record_write_block().map_err(|refusal| json_err_with_message(409, "conflict", refusal))?;
+        let action = action(node);
         let before = deps.apply_watch.cluster_settings_applied_load();
         publish_batch_and_wait_for_success(&deps.publisher, &deps.slots, deps.timeout_ms, self.batch(action, name))?;
         let watch = Arc::clone(&deps.apply_watch);

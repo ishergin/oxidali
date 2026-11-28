@@ -168,8 +168,8 @@ mod tests {
             ClusterPartKeys::default()
         }
 
-        fn record_write_refusal(&self) -> Option<&'static str> {
-            None
+        fn record_write_block(&self) -> Result<u8, &'static str> {
+            Ok(0)
         }
     }
 

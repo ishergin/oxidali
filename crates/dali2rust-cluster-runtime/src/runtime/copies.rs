@@ -3,6 +3,7 @@ use dali2rust_domain::registry::{cluster_node_of, ClusterCopyReadPort, ClusterPa
 
 use crate::presence::{elapsed_ms, PresenceTiming};
 
+use super::shared::BlockState;
 use super::standing::{HomeReads, RecordStanding};
 
 #[cfg(test)]
@@ -28,6 +29,11 @@ pub(crate) struct Announced {
 }
 
 impl Announced {
+    pub(crate) fn of(sets_sent: [Option<u32>; 2], own_block: BlockState, now_ms: u32, timing: PresenceTiming) -> Self {
+        let sets_sent = if own_block == BlockState::Contested { [None; 2] } else { sets_sent };
+        Self { sets_sent, now_ms, timing }
+    }
+
     fn reached(&self, home: HomeReads<'_>, node: u8) -> bool {
         let (Some(view), Some(held)) = (home.presence.heard_node(node), home.info.info_held(node)) else {
             return false;

@@ -1767,18 +1767,19 @@ impl ClusterInfoHttpState for ClusterInfoBridge {
         self.presence.heard_node(node).map(|view| view.wire)
     }
 
-    fn record_write_refusal(&self) -> Option<&'static str> {
+    fn record_write_block(&self) -> Result<u8, &'static str> {
         let status = self.presence.own_status();
-        record_write_refusal(status.block, status.node, self.own_node())
+        record_write_block(status.block, status.node, self.own_node())
     }
 }
 
-const fn record_write_refusal(block: BlockState, block_node: u8, numbered: u8) -> Option<&'static str> {
+const fn record_write_block(block: BlockState, block_node: u8, numbered: u8) -> Result<u8, &'static str> {
     match block {
-        BlockState::Listening => Some(CLUSTER_BLOCK_UNSETTLED),
-        BlockState::Contested => Some(CLUSTER_NODE_CONTESTED),
-        BlockState::Settled if block_node != numbered => Some(CLUSTER_BLOCK_UNSETTLED),
-        BlockState::Off | BlockState::Passive | BlockState::Settled => None,
+        BlockState::Listening => Err(CLUSTER_BLOCK_UNSETTLED),
+        BlockState::Contested => Err(CLUSTER_NODE_CONTESTED),
+        BlockState::Settled if block_node != numbered => Err(CLUSTER_BLOCK_UNSETTLED),
+        BlockState::Settled => Ok(block_node),
+        BlockState::Off | BlockState::Passive => Ok(numbered),
     }
 }
 
@@ -1788,7 +1789,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        arbitration_dto, record_write_refusal, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
+        arbitration_dto, record_write_block, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
     };
     use dali2rust_api::http::cluster_info_state::{CLUSTER_BLOCK_UNSETTLED, CLUSTER_NODE_CONTESTED};
     use dali2rust_cluster_runtime::BlockState;
@@ -1816,11 +1817,11 @@ mod tests {
 
     #[test]
     fn a_block_settled_for_another_node_number_issues_no_number() {
-        assert_eq!(record_write_refusal(BlockState::Settled, 2, 2), None);
-        assert_eq!(record_write_refusal(BlockState::Settled, 2, 3), Some(CLUSTER_BLOCK_UNSETTLED));
-        assert_eq!(record_write_refusal(BlockState::Listening, 3, 3), Some(CLUSTER_BLOCK_UNSETTLED));
-        assert_eq!(record_write_refusal(BlockState::Contested, 3, 3), Some(CLUSTER_NODE_CONTESTED));
-        assert_eq!(record_write_refusal(BlockState::Passive, 2, 3), None);
+        assert_eq!(record_write_block(BlockState::Settled, 2, 2), Ok(2));
+        assert_eq!(record_write_block(BlockState::Settled, 2, 3), Err(CLUSTER_BLOCK_UNSETTLED));
+        assert_eq!(record_write_block(BlockState::Listening, 3, 3), Err(CLUSTER_BLOCK_UNSETTLED));
+        assert_eq!(record_write_block(BlockState::Contested, 3, 3), Err(CLUSTER_NODE_CONTESTED));
+        assert_eq!(record_write_block(BlockState::Passive, 2, 3), Ok(3));
     }
     const KNOWN_SLICE: &str = "poller_settings";
     const OTHER_KNOWN_SLICE: &str = "hcl_schedules";

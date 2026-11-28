@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use dali2rust_contracts::msg::{ClusterBirthMark, ClusterRecordKind, ClusterRecordRef};
 use dali2rust_domain::registry::{
-    ClusterPartKeys, ClusterRecordNumbers, CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_COPIES_PER_KIND,
+    ClusterPartKeys, ClusterRecordConflict, ClusterRecordNumbers, CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_COPIES_PER_KIND,
 };
 use serde::Serialize;
 
@@ -15,7 +15,7 @@ mod tests;
 
 const NODES: usize = CLUSTER_NODE_COUNT as usize;
 
-pub const CLUSTER_BLOCK_UNSETTLED: &str = "cluster_block_unsettled";
+pub const CLUSTER_BLOCK_UNSETTLED: &str = ClusterRecordConflict::BlockUnsettled.message();
 
 pub const CLUSTER_NODE_CONTESTED: &str = "cluster_node_contested";
 
@@ -95,7 +95,7 @@ pub trait ClusterInfoHttpState: Send + Sync {
         None
     }
 
-    fn record_write_refusal(&self) -> Option<&'static str>;
+    fn record_write_block(&self) -> Result<u8, &'static str>;
 }
 
 #[derive(Clone, Copy)]

@@ -45,6 +45,7 @@ pub enum ClusterRecordConflict {
     NonceTaken,
     RecordNotLive,
     RecordLinked,
+    BlockUnsettled,
 }
 
 impl ClusterRecordConflict {
@@ -59,6 +60,7 @@ impl ClusterRecordConflict {
             Self::NonceTaken => "cluster_nonce_taken",
             Self::RecordNotLive => "cluster_record_not_live",
             Self::RecordLinked => "cluster_record_linked",
+            Self::BlockUnsettled => "cluster_block_unsettled",
         }
     }
 }
