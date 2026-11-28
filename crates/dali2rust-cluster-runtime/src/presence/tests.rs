@@ -431,6 +431,22 @@ fn this_node_without_protection_on_a_wire_a_pulse_shows_shared_is_a_fault() {
 }
 
 #[test]
+fn the_owner_at_the_head_of_a_chain_forwards_no_foreign_master() {
+    let mut table = BoardTable::default();
+    let mut beside = Board::holding(LOW_MAC, 1, BARN);
+    beside.wire = 0;
+    beside.pulse_into(&mut table, START_MS);
+    let head = OwnFacts { wire: 0, ..forwarding_foreign(0) };
+    assert!(roster(&table, &head, START_MS).forwards_foreign());
+    let mut behind = Board::holding(HIGH_MAC, 3, BARN);
+    behind.wire = 1;
+    behind.pulse_into(&mut table, START_MS);
+    let view = roster(&table, &head, START_MS);
+    assert_eq!(view.wire_owner(), WireOwner::ThisNode, "the head still owns its wire");
+    assert!(!view.forwards_foreign(), "node 3 reaches this wire through node 1");
+}
+
+#[test]
 fn a_node_that_does_not_own_its_wire_or_sits_in_a_chain_never_forwards_the_foreign_master() {
     let mut table = BoardTable::default();
     let mut owner = Board::holding(LOW_MAC, 1, BARN);

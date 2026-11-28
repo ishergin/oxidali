@@ -4,6 +4,7 @@ use dali2rust_contracts::msg::{BusEventPayload, ClusterCommandCommand};
 use dali2rust_contracts::CORRELATION_NONE;
 use dali2rust_platform::liveness::monotonic_ms;
 
+use crate::frame::{encode, Frame};
 use crate::presence::OwnMode;
 
 use super::super::counters::bump;
@@ -11,6 +12,8 @@ use super::super::forwarding::{forwarding, Fact, ForeignStanding};
 use super::super::hold::Held;
 use super::super::outgoing::{is_relative, Queued};
 use super::{NodeSender, Reading};
+
+const NOTE_COPIES: usize = 2;
 
 impl NodeSender<'_> {
     pub(super) fn forward(&mut self, payload: &BusEventPayload) {
@@ -21,12 +24,26 @@ impl NodeSender<'_> {
             return;
         };
         let now_ms = monotonic_ms();
-        let wire = if fact.foreign() { self.ports.presence.foreign_standing(now_ms) } else { ForeignStanding::default() };
+        let wire = self.ports.presence.foreign_standing(now_ms);
         let reading = Reading::of(self.ports);
         match forwarding(&fact, &reading.settings, &*self.ports.parts, wire) {
             Ok(request) if fact.foreign() => self.hold_foreign(&reading, request, wire.shared, now_ms),
             Ok(request) => self.send_forwarded(&reading, request),
-            Err(skip) => bump(self.ports.counters.skipped(skip)),
+            Err(skip) => {
+                bump(self.ports.counters.skipped(skip));
+                self.note_wire(&reading, &fact, wire);
+            }
+        }
+    }
+
+    fn note_wire(&mut self, reading: &Reading, fact: &Fact, wire: ForeignStanding) {
+        if fact.foreign() || !wire.shared || wire.forwards {
+            return;
+        }
+        let header = self.next_header(reading);
+        let written = encode(&header, &Frame::WireNote(fact.note(reading.wire())), &mut self.buffer).ok();
+        for _ in 0..NOTE_COPIES {
+            self.transmit(written);
         }
     }
 

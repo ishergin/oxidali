@@ -103,6 +103,7 @@ pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) 
     let intake = CommandIntake {
         execution: Arc::clone(&execution),
         settings,
+        parts: Arc::clone(&ports.parts),
         confirmations: inboxes.confirmations,
         hold: Arc::clone(&hold),
     };
@@ -460,11 +461,16 @@ impl<'a> NodeSender<'a> {
         match frame {
             BusFrame::Command(command) => dispatch_cluster_command(&command.payload, self, command.meta.correlation_id),
             BusFrame::Event(event) => match &event.payload {
-                BusEventPayload::ClusterSettingsChangedEvent(_) => self.announcer.note_settings_changed(),
+                BusEventPayload::ClusterSettingsChangedEvent(_) => self.on_settings_changed(),
                 fact => self.forward(fact),
             },
             _ => {}
         }
+    }
+
+    fn on_settings_changed(&mut self) {
+        self.announcer.note_settings_changed();
+        self.next_slot_ms = monotonic_ms();
     }
 
     fn on_forget(&mut self, correlation_id: u64, forget: &ClusterForgetNodeCommand) {

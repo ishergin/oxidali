@@ -302,7 +302,7 @@ fn every_transition_but_go_to_last_active_level_is_forwarded_as_its_own_verb() {
         let wanted = Action::Light { target: Target::Channel(CHANNEL), verb: LightVerb::Transition(verb) };
         assert_eq!(action, Some(wanted), "{verb:?}");
     }
-    assert_eq!(forwarded(LevelTransition::GoToLastActiveLevel), None);
+    assert_eq!(forwarded(LevelTransition::GoToLastActiveLevel), Some(Err(Skip::NotSent)));
 }
 
 fn stopped(scope: DaliTargetScope, source: RuntimeSource) -> BusEventPayload {
@@ -371,4 +371,27 @@ fn a_scene_recall_that_failed_on_the_wire_is_no_trigger() {
         ..recalled(DaliTargetScope::Broadcast, RuntimeSource::Api)
     };
     assert_eq!(decide(&failed.into(), &settings(), &linked(true)), None);
+}
+
+#[test]
+fn a_note_of_an_own_frame_names_what_the_owner_forwards_on_hearing_that_frame() {
+    let mut foreign_on = settings();
+    foreign_on.forwarding.foreign_master = true;
+    let mut setpoint = observed(ObservedKind::TargetStateObserved, DaliTargetScope::Group);
+    setpoint.setpoint = Some(level(200));
+    let mut last_active = observed(ObservedKind::LevelTransitionObserved, DaliTargetScope::Group);
+    last_active.level_transition = Some(LevelTransition::GoToLastActiveLevel);
+    let own_and_heard: [(BusEventPayload, BusEventPayload); 3] = [
+        (applied(DaliTargetScope::Group, RuntimeSource::Rules), setpoint.into()),
+        (transition_by(DaliTargetScope::Group, LevelTransition::GoToLastActiveLevel, RuntimeSource::Api), last_active.into()),
+        (recalled(DaliTargetScope::Group, RuntimeSource::Rules).into(), recalled(DaliTargetScope::Group, RuntimeSource::Sniffer).into()),
+    ];
+    for (own, heard) in own_and_heard {
+        let note = Fact::of(&own).expect("an own fact").note(1);
+        let forwarded = Fact::of(&heard).and_then(|fact| forwarding(&fact, &foreign_on, &linked(true), OWNER).ok());
+        let forwarded = forwarded.map(|request| request.action);
+        assert!(forwarded.is_some(), "{heard:?}");
+        assert_eq!(Fact::noted(&note, false, &linked(true)), forwarded, "{own:?}");
+        assert_eq!(Fact::noted(&note, false, &linked(false)), None, "a part that does not send forwards nothing to cancel");
+    }
 }

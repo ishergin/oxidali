@@ -10,7 +10,7 @@ const COMMAND_KIND: u8 = 0;
 const PULSE_KIND: u8 = 1;
 const HELLO_KIND: u8 = 2;
 const INFO_KIND: u8 = 3;
-const FIRST_UNKNOWN_KIND: u8 = 4;
+const FIRST_UNKNOWN_KIND: u8 = 5;
 
 const GOLDEN_HEADER: [u8; 17] = [
     0x8e, 0x85, 0xa3, 0x96, 0x0d, 0x30, 0xed, 0xa0, 0x7b, 0x90, 0xe4, 0x84, 0x86, 0x88, 0x08,
@@ -131,6 +131,10 @@ fn widest_command() -> Command {
         hold_hcl: true,
         executed_on_wire: Some(LAST_NODE),
     }
+}
+
+fn wire_note() -> WireNote {
+    WireNote { wire: 1, adapter: 0, reach: NoteReach::Group(5), deed: NoteDeed::Light(LightVerb::Transition(LevelTransition::Up)) }
 }
 
 fn pulse() -> Pulse<'static> {
@@ -400,6 +404,7 @@ fn every_frame_kind_decodes_to_what_was_encoded() {
     round_trip(&Frame::Command(channel_command()));
     round_trip(&Frame::Pulse(pulse()));
     round_trip(&Frame::Hello(Hello { ha_face: true }));
+    round_trip(&Frame::WireNote(wire_note()));
     let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
     let len = sample_page(&mut buffer, true);
     let page = decode(&buffer[..len]).expect("decode").frame;
@@ -686,3 +691,21 @@ fn an_element_out_of_range_inside_a_received_page_rejects_the_page() {
         assert_eq!(decode(&bytes), Err(Rejection::Malformed));
     }
 }
+
+#[test]
+fn every_variant_of_a_wire_note_keeps_its_index_and_a_note_out_of_range_is_refused() {
+    assert_wire_order(&[NoteReach::Group(0), NoteReach::Broadcast]);
+    assert_wire_order(&[NoteDeed::Light(LightVerb::StopFade), NoteDeed::Scene(0)]);
+    let mut buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let out_of_range = [
+        WireNote { wire: NODE_COUNT, ..wire_note() },
+        WireNote { adapter: ADAPTER_COUNT, ..wire_note() },
+        WireNote { reach: NoteReach::Group(GROUP_COUNT), ..wire_note() },
+        WireNote { deed: NoteDeed::Scene(SCENE_COUNT), ..wire_note() },
+    ];
+    for note in out_of_range {
+        assert_eq!(encode(&header(), &Frame::WireNote(note.clone()), &mut buffer), Err(EncodeError::OutOfRange), "{note:?}");
+        assert_eq!(decode(&unchecked(FrameKind::WireNote, &note)), Err(Rejection::Malformed), "{note:?}");
+    }
+}
+

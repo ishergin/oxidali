@@ -1,4 +1,4 @@
-use dali2rust_contracts::msg::{ClusterCommandCommand, LevelTransition, LightSetpoint, PowerState};
+use dali2rust_contracts::msg::{ClusterCommandCommand, ColorMode, ColorValue, LevelTransition, LightSetpoint, PowerState};
 
 use super::*;
 use crate::runtime::outgoing::TARGET_SPACING_MS;
@@ -17,6 +17,11 @@ fn light(number: u8, verb: LightVerb) -> Action {
 
 fn level(value: u8) -> LightVerb {
     LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: Some(value), color: None })
+}
+
+fn warm() -> LightVerb {
+    let color = ColorValue { mode: ColorMode::Cct, color_temperature_kelvin: 2700, x: 0, y: 0, r: 0, g: 0, b: 0, w: 0, a: 0, f: 0 };
+    LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: None, color: Some(color) })
 }
 
 fn up() -> LightVerb {
@@ -254,3 +259,35 @@ fn a_slider_on_a_neighbour_leaves_the_other_wires_at_the_wire_s_last_value() {
     arrivals.sort_by_key(|(at, _)| *at);
     assert_eq!(arrivals.last().map(|(_, action)| action.clone()), Some(light(3, level(100))));
 }
+
+#[test]
+fn a_neighbour_colour_without_a_level_leaves_an_earlier_foreign_level_to_leave() {
+    let mut line = HoldLine::new();
+    line.hold(foreign(light(3, level(50))), true, START_MS);
+    line.hold(foreign(light(3, warm())), true, START_MS + 20);
+    assert_eq!(line.cancel(&light(3, warm()), START_MS + 25), (1, false));
+    assert_eq!(drain(&mut line, START_MS + 20 + ABSOLUTE_HOLD_MS), [light(3, level(50))]);
+}
+
+#[test]
+fn a_neighbour_level_supersedes_an_earlier_foreign_step_on_its_target_but_not_a_scene() {
+    let mut line = HoldLine::new();
+    let recall = Action::RecallScene { scene: channel(9), scope: RecallScope::Channel(channel(3)) };
+    line.hold(foreign(recall.clone()), true, START_MS);
+    line.hold(foreign(light(3, up())), true, START_MS + 10);
+    line.hold(foreign(light(3, level(200))), true, START_MS + 20);
+    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 25), (2, false));
+    assert_eq!(drain(&mut line, START_MS + 10 + RELATIVE_HOLD_MS), [recall]);
+}
+
+#[test]
+fn an_echo_is_forgotten_once_another_command_on_its_target_is_heard() {
+    let mut line = HoldLine::new();
+    let recall = Action::RecallScene { scene: channel(9), scope: RecallScope::Channel(channel(3)) };
+    line.cancel(&light(3, level(50)), START_MS);
+    assert_eq!(line.hold(foreign(light(3, level(50))), true, START_MS + 10), Held::Cancelled);
+    line.hold(foreign(recall.clone()), true, START_MS + 20);
+    assert_ne!(line.hold(foreign(light(3, level(50))), true, START_MS + 30), Held::Cancelled);
+    assert_eq!(drain(&mut line, START_MS + 30 + ABSOLUTE_HOLD_MS), [recall, light(3, level(50))]);
+}
+

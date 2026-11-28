@@ -3,7 +3,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use dali2rust_contracts::msg::{ClusterCommandCommand, LightSetpoint};
 
-use crate::frame::{Action, LightVerb, Target};
+use crate::frame::{Action, LightVerb, RecallScope, Target};
 
 use super::announce::reached;
 use super::outgoing::{is_relative, RELATIVE_LINE, RELATIVE_SPACING_MS};
@@ -56,6 +56,7 @@ impl HoldLine {
         if self.take_echo(&request.action) {
             return Held::Cancelled;
         }
+        self.forget_echoes_on(&request.action);
         let pushed_out = (self.waiting.len() >= HOLD_DEPTH).then(|| self.waiting.pop_front()).flatten();
         let due_ms = if shared { now_ms.wrapping_add(hold_ms(&request.action)) } else { now_ms };
         self.waiting.push_back(Waiting { request, due_ms });
@@ -107,15 +108,12 @@ impl HoldLine {
     }
 
     fn supersede(&mut self, before: usize, by: &Action) -> u32 {
-        let Some(target) = setpoint_target(by) else {
-            return 0;
-        };
         let mut index = 0;
         let mut removed = 0;
         self.waiting.retain(|waiting| {
             let earlier = index < before;
             index += 1;
-            let gone = earlier && setpoint_target(&waiting.request.action) == Some(target);
+            let gone = earlier && covers(by, &waiting.request.action);
             removed += u32::from(gone);
             !gone
         });
@@ -132,6 +130,11 @@ impl HoldLine {
             self.supersede(self.waiting.len(), observed);
         }
         true
+    }
+
+    fn forget_echoes_on(&mut self, observed: &Action) {
+        let target = target_of(observed);
+        self.echoes.retain(|echo| is_relative(&echo.action) || target_of(&echo.action) != target);
     }
 
     fn expire(&mut self, now_ms: u32) {
@@ -163,10 +166,25 @@ fn agrees(observed: &LightSetpoint, command: &LightSetpoint) -> bool {
     level && power && colour
 }
 
-const fn setpoint_target(action: &Action) -> Option<Target> {
+fn covers(by: &Action, earlier: &Action) -> bool {
+    let Action::Light { target, verb: LightVerb::Setpoint(setpoint) } = by else {
+        return false;
+    };
+    if setpoint.dapc_level().is_none() || target_of(earlier) != *target {
+        return false;
+    }
+    match earlier {
+        Action::Light { verb: LightVerb::Setpoint(held), .. } => !held.states_color() || setpoint.states_color(),
+        Action::Light { verb: LightVerb::Transition(_) | LightVerb::StopFade, .. } => true,
+        Action::RecallScene { .. } => setpoint.states_color(),
+    }
+}
+
+const fn target_of(action: &Action) -> Target {
     match action {
-        Action::Light { target, verb: LightVerb::Setpoint(_) } => Some(*target),
-        Action::Light { .. } | Action::RecallScene { .. } => None,
+        Action::Light { target, .. } => *target,
+        Action::RecallScene { scope: RecallScope::Channel(channel), .. } => Target::Channel(*channel),
+        Action::RecallScene { scope: RecallScope::Node, .. } => Target::All,
     }
 }
 

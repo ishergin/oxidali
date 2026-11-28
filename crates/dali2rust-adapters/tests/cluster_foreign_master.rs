@@ -13,6 +13,7 @@ use dali2rust_test_support::{try_wait_until, ClusterHub, ClusterHubBinder, MockN
 use serde_json::{json, Value};
 
 const PULSE_PERIOD_MS: u32 = 250;
+const SLOW_PULSE_PERIOD_MS: u32 = 1_000;
 const SETTLE: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_secs(1);
 const OK: u16 = 200;
@@ -23,7 +24,6 @@ const GROUP_5_STEP_UP: u16 = 0x8B03;
 const GROUP_5_UP: u16 = 0x8B01;
 const STEPS: usize = 3;
 const HELD_KEY_UPS: usize = 20;
-const HELD_KEY_REPEAT: Duration = Duration::from_millis(40);
 
 type Wire = Arc<SharedWire<SimDaliTransport>>;
 
@@ -48,10 +48,10 @@ fn shared_wire() -> Wire {
     SharedWire::new(SimDaliTransport::inject_foreign_frame)
 }
 
-fn node_on(hub: &Arc<ClusterHub>, board: &Board, wire: &Wire) -> Node {
+fn node_on(hub: &Arc<ClusterHub>, board: &Board, wire: &Wire, period_ms: u32) -> Node {
     let cluster = ClusterComposition {
         binder: Arc::new(ClusterHubBinder::new(Arc::clone(hub), board.address)),
-        timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
+        timing: PresenceTiming::every_ms(period_ms),
         boot_epoch: fixed_boot_epoch(board.epoch),
     };
     let link = MockNetworkLink::new(board.mac, Some(board.address), "cluster-node");
@@ -137,9 +137,9 @@ fn cluster_with(owner: &Value, beside: &Value) -> Cluster {
     let hub = Arc::new(ClusterHub::new());
     let (shared, apart) = (shared_wire(), shared_wire());
     let cluster = Cluster {
-        owner: node_on(&hub, &OWNER, &shared),
-        beside: node_on(&hub, &BESIDE, &shared),
-        third: node_on(&hub, &APART, &apart),
+        owner: node_on(&hub, &OWNER, &shared, PULSE_PERIOD_MS),
+        beside: node_on(&hub, &BESIDE, &shared, PULSE_PERIOD_MS),
+        third: node_on(&hub, &APART, &apart, PULSE_PERIOD_MS),
         hub,
         shared,
         apart,
@@ -181,6 +181,17 @@ impl Carried {
     fn from(&self, board: &Board) -> Vec<Command> {
         self.0.iter().filter(|(source, _)| *source == board.address).map(|(_, command)| command.clone()).collect()
     }
+}
+
+fn next_pulse_from(hub: &ClusterHub, board: &Board, within: Duration) -> Option<bool> {
+    let deadline = Instant::now() + within;
+    while let Some(sent) = hub.next_sent(deadline.saturating_duration_since(Instant::now())) {
+        let frame = decode(&sent.bytes).map(|decoded| decoded.frame);
+        if let (true, Ok(Frame::Pulse(pulse))) = (sent.source == board.address, frame) {
+            return Some(pulse.wire_protection);
+        }
+    }
+    None
 }
 
 fn foreign_frames(wire: &Wire) -> usize {
@@ -255,9 +266,10 @@ fn three_foreign_steps_on_the_shared_wire_arrive_as_three() {
 #[test]
 fn a_held_foreign_key_does_not_storm_and_every_up_reaches_the_third_node_or_is_counted() {
     let cluster = forwarding_cluster();
-    for _ in 0..HELD_KEY_UPS {
+    for sent in 1..=HELD_KEY_UPS {
         cluster.shared.foreign(GROUP_5_UP);
-        std::thread::sleep(HELD_KEY_REPEAT);
+        let heard = || cluster.owner.stat("foreign_held_total") >= u64::try_from(sent).unwrap_or(u64::MAX);
+        assert!(try_wait_until(heard, SETTLE), "the owner held UP {sent}");
     }
     let total = u64::try_from(HELD_KEY_UPS).unwrap_or(u64::MAX);
     let settled = || {
@@ -275,4 +287,39 @@ fn a_held_foreign_key_does_not_storm_and_every_up_reaches_the_third_node_or_is_c
     assert!(carried.from(&OWNER).iter().all(|command| command.source == SourceClass::ForeignMaster));
     assert_eq!(carried.from(&BESIDE), Vec::<Command>::new(), "the node beside the owner forwarded nothing");
     assert_eq!(Carried::during(&cluster.hub, QUIET).0.iter().filter(|(source, _)| *source != APART.address).count(), 0, "the cluster is quiet once the key is released");
+}
+
+#[test]
+fn protection_switched_off_beside_the_owner_is_pulsed_at_once() {
+    let hub = Arc::new(ClusterHub::new());
+    let shared = shared_wire();
+    let owner = node_on(&hub, &OWNER, &shared, SLOW_PULSE_PERIOD_MS);
+    let beside = node_on(&hub, &BESIDE, &shared, SLOW_PULSE_PERIOD_MS);
+    owner.join(&settings(0, &json!({ "forward_foreign_master": true })));
+    beside.join(&settings(1, &json!({ "wire_same_as": 0 })));
+    assert!(try_wait_until(|| owner.running() && beside.running(), SETTLE), "both nodes run");
+    while hub.next_sent(Duration::ZERO).is_some() {}
+    assert_eq!(next_pulse_from(&hub, &BESIDE, SETTLE), Some(true), "a fresh pulse opens the period");
+    beside.join(&json!({ "wire_protection": false }));
+    let half = Duration::from_millis(u64::from(SLOW_PULSE_PERIOD_MS / 2));
+    assert_eq!(next_pulse_from(&hub, &BESIDE, half), Some(false), "the changed pulse leaves before its period");
+    let faulted = || owner.read("/api/v1/cluster/status")["own"]["unprotected_wire"] == true;
+    assert!(try_wait_until(faulted, SETTLE), "{}", owner.read("/api/v1/cluster/status"));
+}
+
+#[test]
+fn a_command_beside_the_owner_that_the_cluster_does_not_carry_stays_on_the_shared_wire() {
+    let cluster = cluster_with(&json!({ "forward_foreign_master": true }), &json!({ "forward_operator": false }));
+    let owns = || cluster.owner.read("/api/v1/cluster/status")["own"]["wire_owner"]["this_node"] == true;
+    assert!(try_wait_until(owns, SETTLE), "{}", cluster.owner.read("/api/v1/cluster/status"));
+    cluster.beside.send("PUT", "/api/v1/adapters/0/groups/5/target-state", r#"{"power":"on","level":200}"#);
+    let ran = || cluster.beside.sent_frames() == [GROUP_5_DAPC_200];
+    assert!(try_wait_until(ran, SETTLE), "the node beside ran it: {:04X?}", cluster.shared.frames());
+    let cancelled = || cluster.owner.stat("foreign_cancelled_total") == 1;
+    assert!(try_wait_until(cancelled, SETTLE), "the owner took the note: {}", cluster.owner.read("/api/v1/stats")["cluster"]);
+    let carried = Carried::during(&cluster.hub, QUIET);
+    assert_eq!(carried.from(&OWNER), Vec::<Command>::new(), "the owner forwarded nothing");
+    assert_eq!(carried.from(&BESIDE), Vec::<Command>::new(), "the operator's commands stay home on the node beside");
+    assert!(cluster.apart.frames().is_empty(), "the third node's wire stays quiet: {:04X?}", cluster.apart.frames());
+    assert_eq!(cluster.owner.stat("foreign_forwarded_total"), 0);
 }

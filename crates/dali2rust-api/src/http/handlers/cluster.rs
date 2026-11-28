@@ -46,7 +46,7 @@ const WRITABLE_KEYS: &[&str] = &[
     "wire_protection",
 ];
 
-const WIRE_GUARD_FIELDS: [Field; 3] = [Field::Wire, Field::ForwardForeignMaster, Field::WireProtection];
+const WIRE_GUARD_FIELDS: [Field; 4] = [Field::Wire, Field::ForwardForeignMaster, Field::WireProtection, Field::NodeNumber];
 
 const FLAGS: [(&str, Field); 9] = [
     ("enabled", Field::Enabled),

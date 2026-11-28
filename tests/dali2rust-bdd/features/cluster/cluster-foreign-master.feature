@@ -9,10 +9,12 @@ Feature: Cluster — the cluster follows a foreign master
   foreign frame is not executed here again. With a neighbour on the wire the
   owner holds each observation for a while: the neighbour's cluster command
   executed on this wire with the same target and verb cancels it, one for one
-  for a relative verb. Alone on its wire a node holds nothing. A neighbour on
-  this wire without loop protection stops the foreign master here and is
-  reported in the status, and protection cannot be switched off while a
-  neighbour names this node's wire.
+  for a relative verb, and so does the neighbour's note of a frame it put on
+  the wire without sending it to the cluster. Alone on its wire a node holds
+  nothing. A neighbour on this wire without loop protection stops the foreign
+  master here and is reported in the status, and protection cannot be switched
+  off, nor this node renumbered onto an unprotected wire, while a neighbour
+  names that wire.
 
   Background:
     Given the controller runs on a cluster hub as board "02:00:00:0a:0b:01" at "10.0.0.1"
@@ -183,6 +185,20 @@ Feature: Cluster — the cluster follows a foreign master
     And the JSON pointer "/cluster/foreign_cancelled_total" at "/api/v1/stats" should eventually be "1"
     And the JSON pointer "/cluster/foreign_forwarded_total" at "/api/v1/stats" should eventually be "1"
 
+  @id:CLU-180
+  Scenario: A frame the neighbour noted as its own does not go to the cluster as the foreign master's
+    When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true,"forward_foreign_master":true} to "/api/v1/cluster"
+    And I PUT JSON {"record":{"number":16,"birth_mark":{"generation":1,"nonce":5}},"send":true,"accept":true} to "/api/v1/cluster/channel-parts/0/7"
+    And a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 on the wire of node 0 of cluster "hall" for installation "site-b"
+    Then the JSON pointer "/nodes/0/heard" at "/api/v1/cluster/status" should eventually be "true"
+    And the JSON pointer "/own/wire_owner/this_node" at "/api/v1/cluster/status" should eventually be "true"
+    When the cluster hub sets aside what this controller has sent so far
+    And a foreign raw forward frame 0x8F 0x01 is observed on the bus
+    And the board "02:00:00:0a:0b:02" notes the frame {"wire":0,"group":7,"dim":"up"} twice with one sequence number
+    Then the JSON pointer "/cluster/foreign_cancelled_total" at "/api/v1/stats" should eventually be "1"
+    And the cluster hub should carry no command from this controller within 1000 ms
+    And the JSON pointer "/cluster/foreign_forwarded_total" at "/api/v1/stats" should eventually be "0"
+
   @id:CLU-185
   Scenario: A neighbour on this wire without loop protection stops the foreign master here until it is gone
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true,"forward_foreign_master":true} to "/api/v1/cluster"
@@ -211,6 +227,18 @@ Feature: Cluster — the cluster follows a foreign master
     When I send a GET request to "/api/v1/cluster"
     Then the JSON boolean field "wire_protection" should be true
     When I PATCH JSON {"forward_foreign_master":false,"wire_protection":false} to "/api/v1/cluster"
+    Then the response status should be 200
+
+  @id:CLU-181
+  Scenario: A new node number that leaves this node unprotected on a wire a neighbour names is refused
+    When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true,"forward_foreign_master":true,"wire_protection":false} to "/api/v1/cluster"
+    Then the response status should be 200
+    When a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 on the wire of node 3 of cluster "hall" for installation "site-b"
+    Then the JSON pointer "/nodes/0/heard" at "/api/v1/cluster/status" should eventually be "true"
+    When I PATCH JSON {"node_number":3} to "/api/v1/cluster"
+    Then the response status should be 409
+    And the JSON field "message" should be "wire_protection_required"
+    When I PATCH JSON {"node_number":2} to "/api/v1/cluster"
     Then the response status should be 200
 
   @id:CLU-187

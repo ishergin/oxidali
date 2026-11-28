@@ -222,7 +222,19 @@ impl<'a> Roster<'a> {
 
     pub fn forwards_foreign(&self) -> bool {
         let faults = self.faults();
-        self.wire_owner() == WireOwner::ThisNode && !faults.wire_chain && !faults.unprotected_wire
+        let clear = !faults.wire_chain && !faults.unprotected_wire && !self.chain_ends_on(self.own.wire);
+        self.wire_owner() == WireOwner::ThisNode && clear
+    }
+
+    fn chain_ends_on(&self, wire: u8) -> bool {
+        self.table.iter().any(|board| {
+            let named = board.pulse.wire;
+            named != board.node_no
+                && named != wire
+                && self.live(board)
+                && self.standing(board) == Standing::Holder
+                && self.wire_of(named) == Some(wire)
+        })
     }
 
     pub fn wire_owner(&self) -> WireOwner {
