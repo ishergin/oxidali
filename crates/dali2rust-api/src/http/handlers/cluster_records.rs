@@ -19,7 +19,7 @@ use crate::http::handler::ApiHandler;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    json_err, json_stream_dto, parse_body_object, parse_resource_id_param, wait_apply_counter,
+    json_err, json_err_with_message, json_stream_dto, parse_body_object, parse_resource_id_param, wait_apply_counter,
     write_json_array_items, APPLY_WATCH_BUDGET_MS,
 };
 
@@ -169,7 +169,7 @@ impl ClusterRecordHandler {
     fn commit(&self, action: ClusterRecordAction, name: Option<String>) -> Result<(), HttpResponse> {
         let deps = &self.deps;
         if let Some(refusal) = deps.cluster.record_write_refusal() {
-            return Err(json_err(409, refusal));
+            return Err(json_err_with_message(409, "conflict", refusal));
         }
         let before = deps.apply_watch.cluster_settings_applied_load();
         publish_batch_and_wait_for_success(&deps.publisher, &deps.slots, deps.timeout_ms, self.batch(action, name))?;

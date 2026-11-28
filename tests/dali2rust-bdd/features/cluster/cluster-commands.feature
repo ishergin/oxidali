@@ -194,7 +194,8 @@ Feature: Cluster — commands to channels and cluster scenes between nodes
   @id:CLU-084
   Scenario: A second setpoint to a channel inside the spacing waits and goes out after the first
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the response status should be 201
     When I link "/api/v1/cluster/channel-parts/0/7" to the cluster record "/api/v1/cluster/channels/2" with send true and accept true
     Then the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "running"
@@ -242,7 +243,8 @@ Feature: Cluster — commands to channels and cluster scenes between nodes
   @id:CLU-086
   Scenario: A standby executes no neighbour's command and refuses to send one
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     And I PUT JSON {"record":{"number":16,"birth_mark":{"generation":1,"nonce":5}},"send":true,"accept":true} to "/api/v1/cluster/channel-parts/0/7"
     And I PATCH JSON {"application_active":false} to "/api/v1/settings/dali"
     Then the response status should be 200
