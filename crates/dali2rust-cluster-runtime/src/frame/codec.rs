@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::command::Command;
 use super::header::Header;
 use super::info::InfoPage;
+use super::lamps::{LampInfoPage, LampStatePage};
 use super::note::WireNote;
 use super::presence::{Hello, Pulse};
 
@@ -27,10 +28,20 @@ pub enum FrameKind {
     Hello = 2,
     ChannelSceneInfo = 3,
     WireNote = 4,
+    LampState = 5,
+    LampInfo = 6,
 }
 
 impl FrameKind {
-    const ALL: [Self; 5] = [Self::Command, Self::Pulse, Self::Hello, Self::ChannelSceneInfo, Self::WireNote];
+    const ALL: [Self; 7] = [
+        Self::Command,
+        Self::Pulse,
+        Self::Hello,
+        Self::ChannelSceneInfo,
+        Self::WireNote,
+        Self::LampState,
+        Self::LampInfo,
+    ];
 
     fn from_byte(byte: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| *kind as u8 == byte)
@@ -44,6 +55,8 @@ pub enum Frame<'a> {
     Hello(Hello),
     ChannelSceneInfo(InfoPage<'a>),
     WireNote(WireNote),
+    LampState(LampStatePage<'a>),
+    LampInfo(LampInfoPage<'a>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +89,8 @@ impl<'a> Frame<'a> {
             Self::Hello(_) => FrameKind::Hello,
             Self::ChannelSceneInfo(_) => FrameKind::ChannelSceneInfo,
             Self::WireNote(_) => FrameKind::WireNote,
+            Self::LampState(_) => FrameKind::LampState,
+            Self::LampInfo(_) => FrameKind::LampInfo,
         }
     }
 
@@ -84,7 +99,7 @@ impl<'a> Frame<'a> {
             Self::Command(command) => command.in_range(),
             Self::WireNote(note) => note.in_range(),
             Self::Pulse(pulse) => pulse.in_range(),
-            Self::Hello(_) | Self::ChannelSceneInfo(_) => true,
+            Self::Hello(_) | Self::ChannelSceneInfo(_) | Self::LampState(_) | Self::LampInfo(_) => true,
         }
     }
 
@@ -95,6 +110,8 @@ impl<'a> Frame<'a> {
             Self::Hello(hello) => put(hello, out),
             Self::ChannelSceneInfo(page) => page.write(out),
             Self::WireNote(note) => put(note, out),
+            Self::LampState(page) => page.write(out),
+            Self::LampInfo(page) => page.write(out),
         }
     }
 
@@ -105,6 +122,8 @@ impl<'a> Frame<'a> {
             FrameKind::Hello => Self::Hello(whole(body)?),
             FrameKind::ChannelSceneInfo => Self::ChannelSceneInfo(InfoPage::decode(body)?),
             FrameKind::WireNote => Self::WireNote(whole(body)?),
+            FrameKind::LampState => Self::LampState(LampStatePage::decode(body)?),
+            FrameKind::LampInfo => Self::LampInfo(LampInfoPage::decode(body)?),
         };
         if frame.in_range() {
             Ok(frame)

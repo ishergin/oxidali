@@ -2,16 +2,21 @@ use std::io::{self, Write};
 
 use dali2rust_contracts::msg::{ClusterBirthMark, ClusterRecordKind, ClusterRecordRef};
 use dali2rust_domain::registry::{
-    ClusterPartKeys, ClusterRecordConflict, ClusterRecordNumbers, CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_COPIES_PER_KIND,
+    channel_state, ChannelPartLit, ClusterPartKeys, ClusterRecordConflict, ClusterRecordNumbers, CLUSTER_NODE_COUNT,
+    CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_COPIES_PER_KIND,
 };
 use serde::Serialize;
 
+use crate::http::cluster_lamps_state::{channel_state_dto, part_state_dto, ClusterChannelStateDto, ClusterPartStateDto};
 use crate::http::cluster_parts_state::{ClusterPartDto, ClusterPartRecordDto};
 use crate::http::handlers::common::write_json_array_items;
 use crate::http::cluster_records_state::ClusterRecordDto;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod channel_state_tests;
 
 const NODES: usize = CLUSTER_NODE_COUNT as usize;
 
@@ -70,6 +75,18 @@ pub struct ClusterNodePartDto {
     pub part: ClusterPartDto,
     pub link: ClusterPartLink,
     pub wire_fault: Option<ClusterWireFaultDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ClusterPartStateDto>,
+    #[serde(skip)]
+    pub lit: Option<ChannelPartLit>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ClusterRecordItemDto {
+    #[serde(flatten)]
+    pub record: ClusterRecordDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ClusterChannelStateDto>,
 }
 
 pub trait ClusterInfoHttpState: Send + Sync {
@@ -96,6 +113,10 @@ pub trait ClusterInfoHttpState: Send + Sync {
     }
 
     fn record_write_block(&self) -> Result<u8, &'static str>;
+
+    fn part_lit(&self, _node: u8, _adapter: u8, _group: u8, _channel: ClusterRecordRef) -> ChannelPartLit {
+        ChannelPartLit::UNHEARD
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -156,16 +177,26 @@ impl<'a> ClusterView<'a> {
     }
 
     pub fn parts_of(&self, kind: ClusterRecordKind, record: &ClusterRecordDto) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
+        self.record_parts(kind, record).map(move |held| self.lit(kind, self.with_wire_fault(kind, held)))
+    }
+
+    fn record_parts(&self, kind: ClusterRecordKind, record: &ClusterRecordDto) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
         let number = record.number;
-        let all = self.known_nodes().flat_map(move |(node, _)| self.node_parts(node, kind));
-        all.filter(move |held| held.part.record.number == number)
+        let all = self.known_nodes().flat_map(move |(node, _)| self.held_parts(node, kind));
+        all.filter(move |held| held.part.record.number == number).map(move |held| self.linked(kind, held))
     }
 
     pub fn node_parts(&self, node: u8, kind: ClusterRecordKind) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
-        self.held_parts(node, kind).map(move |held| {
-            let link = self.state.link(kind, record_ref(held.part.record));
-            ClusterNodePartDto { link, wire_fault: self.wire_fault(kind, &held), ..held }
-        })
+        let linked = self.held_parts(node, kind).map(move |held| self.linked(kind, held));
+        linked.map(move |held| self.lit(kind, self.with_wire_fault(kind, held)))
+    }
+
+    fn linked(&self, kind: ClusterRecordKind, held: ClusterNodePartDto) -> ClusterNodePartDto {
+        ClusterNodePartDto { link: self.state.link(kind, record_ref(held.part.record)), ..held }
+    }
+
+    fn with_wire_fault(&self, kind: ClusterRecordKind, held: ClusterNodePartDto) -> ClusterNodePartDto {
+        ClusterNodePartDto { wire_fault: self.wire_fault(kind, &held), ..held }
     }
 
     fn held_parts(&self, node: u8, kind: ClusterRecordKind) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
@@ -173,7 +204,8 @@ impl<'a> ClusterView<'a> {
         let keys = source.map(|_| self.state.part_keys(node, kind)).unwrap_or_default();
         keys.iter().filter_map(move |(adapter, local)| {
             let part = self.state.part(node, kind, adapter, local)?;
-            Some(ClusterNodePartDto { node, source: source?, part, link: ClusterPartLink::Unknown, wire_fault: None })
+            let link = ClusterPartLink::Unknown;
+            Some(ClusterNodePartDto { node, source: source?, part, link, wire_fault: None, state: None, lit: None })
         })
     }
 
@@ -192,6 +224,40 @@ impl<'a> ClusterView<'a> {
             };
             Some(ClusterWireFaultDto { node, holds })
         })
+    }
+
+    fn lit(&self, kind: ClusterRecordKind, held: ClusterNodePartDto) -> ClusterNodePartDto {
+        let lit = self.part_lit(held.node, kind, &held.part);
+        ClusterNodePartDto { state: lit.map(part_state_dto), lit, ..held }
+    }
+
+    fn part_lit(&self, node: u8, kind: ClusterRecordKind, part: &ClusterPartDto) -> Option<ChannelPartLit> {
+        let group = part.group.filter(|_| kind == ClusterRecordKind::Channel)?;
+        Some(self.state.part_lit(node, part.adapter, group, record_ref(part.record)))
+    }
+
+    pub fn with_state(&self, kind: ClusterRecordKind, record: ClusterRecordDto) -> ClusterRecordItemDto {
+        let state = (kind == ClusterRecordKind::Channel).then(|| self.channel_state(&record));
+        ClusterRecordItemDto { record, state }
+    }
+
+    fn channel_state(&self, record: &ClusterRecordDto) -> ClusterChannelStateDto {
+        let kind = ClusterRecordKind::Channel;
+        let held = || self.record_parts(kind, record).filter(|held| held.link != ClusterPartLink::Orphan);
+        let live = held().filter(|held| held.link == ClusterPartLink::Live);
+        let nodes = live.fold(0_u32, |mask, held| mask | 1_u32.checked_shl(u32::from(held.node)).unwrap_or(0));
+        let counted = held().filter(move |held| !self.behind_wire_owner(held.node, nodes));
+        channel_state_dto(channel_state(counted.map(|held| self.counted_lit(kind, held))))
+    }
+
+    fn counted_lit(&self, kind: ClusterRecordKind, held: ClusterNodePartDto) -> ChannelPartLit {
+        let live = held.link == ClusterPartLink::Live;
+        live.then(|| self.lit(kind, held).lit).flatten().unwrap_or(ChannelPartLit::UNHEARD)
+    }
+
+    fn behind_wire_owner(&self, node: u8, nodes: u32) -> bool {
+        let owner_has_part = |wire: u8| nodes & 1_u32.checked_shl(u32::from(wire)).unwrap_or(0) != 0;
+        self.wire(node).is_some_and(|wire| wire != node && owner_has_part(wire))
     }
 }
 

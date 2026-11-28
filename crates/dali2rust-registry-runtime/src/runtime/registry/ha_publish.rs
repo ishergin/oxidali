@@ -7,7 +7,7 @@ use dali2rust_domain::registry::{
 use dali2rust_platform::small_sort::insertion_sort_by;
 
 use super::groups::{
-    group_capabilities, group_members, group_members_applied, group_record, GROUP_COUNT,
+    applied_member_devices, group_capabilities, group_members, group_record, GROUP_COUNT,
     VIRTUAL_LAMP_COUNT,
 };
 use super::scenes::{scene_record, SCENE_COUNT};
@@ -59,24 +59,13 @@ fn lamp_view(inner: &Inner, adapter_id: u8, virtual_lamp_id: u8) -> Option<HaLam
 }
 
 pub(crate) fn group_state_for_rules(inner: &Inner, adapter_id: u8, group_id: u8) -> (bool, u8) {
-    let members = super::groups::group_members_applied(inner, adapter_id, group_id);
+    let mut members = 0u8;
     let mut any_on = false;
-    for virtual_lamp_id in &members {
-        let Some(short) = inner
-            .lamps
-            .get(&(adapter_id, *virtual_lamp_id))
-            .and_then(|lamp| lamp.binding_short)
-        else {
-            continue;
-        };
-        if let Some(pd) = inner.physical_devices.get(&(adapter_id, short)) {
-            if pd.runtime.power == PowerState::On {
-                any_on = true;
-                break;
-            }
-        }
+    for device in applied_member_devices(inner, adapter_id, group_id) {
+        members = members.saturating_add(1);
+        any_on |= device.is_some_and(|pd| pd.runtime.power == PowerState::On);
     }
-    (any_on, u8::try_from(members.len()).unwrap_or(u8::MAX))
+    (any_on, members)
 }
 
 fn group_state(inner: &Inner, adapter_id: u8, group_id: u8) -> HaGroupStateView {
@@ -84,17 +73,7 @@ fn group_state(inner: &Inner, adapter_id: u8, group_id: u8) -> HaGroupStateView 
     let mut level_known = 0u32;
     let mut level_sum = 0u32;
     let mut colours = ColourAgreement::default();
-    for virtual_lamp_id in group_members_applied(inner, adapter_id, group_id) {
-        let Some(short) = inner
-            .lamps
-            .get(&(adapter_id, virtual_lamp_id))
-            .and_then(|l| l.binding_short)
-        else {
-            continue;
-        };
-        let Some(pd) = inner.physical_devices.get(&(adapter_id, short)) else {
-            continue;
-        };
+    for pd in applied_member_devices(inner, adapter_id, group_id).flatten() {
         if pd.runtime.power != PowerState::On {
             continue;
         }

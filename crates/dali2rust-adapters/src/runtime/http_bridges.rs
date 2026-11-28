@@ -10,6 +10,20 @@ use dali2rust_api::http::cluster_info_state::{
     ClusterInfoHttpState, ClusterInfoNodeDto, ClusterInfoSource, ClusterPartLink, CLUSTER_BLOCK_UNSETTLED,
     CLUSTER_NODE_CONTESTED,
 };
+use dali2rust_api::http::cluster_lamps_state::{
+    ha_identity_dto, ClusterLampAddressDto, ClusterLampDto, ClusterLampsHttpState, ClusterLampsNodeDto,
+};
+use dali2rust_api::http::physical_device_state::XY_FULL_SCALE;
+use dali2rust_api::http::virtual_lamp_state::virtual_lamp_view_to_dto;
+use dali2rust_cluster_runtime::frame::{LampCapabilities, LampState};
+use dali2rust_cluster_runtime::lamps::{observation_age_ms, CachedLampView, ClusterLampsReadPort, HeldLampInfo};
+use dali2rust_contracts::msg::ErrorCode;
+use dali2rust_domain::registry::{
+    lamp_device_type_name, override_source_name, CapabilityFlagsView, ChannelPartLit, ClusterGroupLitView,
+    ClusterLampReadPort, ColorTemperatureRangeView, LastDapcSourceView, PhysicalDeviceStateView, RuntimeErrorView,
+    VirtualLampReadPort, VirtualLampView,
+};
+use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_api::http::cluster_parts_state::{
     cluster_part_view_to_dto, ClusterPartDto, ClusterPartsHttpState, ClusterPartsHttpStateBridge,
 };
@@ -1634,6 +1648,7 @@ pub(crate) struct ClusterRegistryPorts {
 pub(crate) struct ClusterInfoBridge {
     registry: ClusterRegistryPorts,
     info: Arc<dyn ClusterInfoReadPort>,
+    lamps: Arc<dyn ClusterLampsHttpState>,
     presence: Arc<dyn ClusterPresenceReadPort>,
 }
 
@@ -1645,10 +1660,10 @@ enum Home {
 impl ClusterInfoBridge {
     pub(crate) fn new(
         registry: ClusterRegistryPorts,
-        info: Arc<dyn ClusterInfoReadPort>,
+        (info, lamps): (Arc<dyn ClusterInfoReadPort>, Arc<dyn ClusterLampsHttpState>),
         presence: Arc<dyn ClusterPresenceReadPort>,
     ) -> Self {
-        Self { registry, info, presence }
+        Self { registry, info, lamps, presence }
     }
 
     fn own_node(&self) -> u8 {
@@ -1771,6 +1786,10 @@ impl ClusterInfoHttpState for ClusterInfoBridge {
         let status = self.presence.own_status();
         record_write_block(status.block, status.node, self.own_node())
     }
+
+    fn part_lit(&self, node: u8, adapter: u8, group: u8, channel: ClusterRecordRef) -> ChannelPartLit {
+        self.lamps.part_lit(node, adapter, group, channel)
+    }
 }
 
 const fn record_write_block(block: BlockState, block_node: u8, numbered: u8) -> Result<u8, &'static str> {
@@ -1780,6 +1799,182 @@ const fn record_write_block(block: BlockState, block_node: u8, numbered: u8) -> 
         BlockState::Settled if block_node != numbered => Err(CLUSTER_BLOCK_UNSETTLED),
         BlockState::Settled => Ok(block_node),
         BlockState::Off | BlockState::Passive => Ok(numbered),
+    }
+}
+
+
+const LAMP_ADAPTER: u8 = dali2rust_cluster_runtime::lamps::LAMP_ADAPTERS - 1;
+
+const UNKNOWN_LAMP_TEXT: &str = "unknown";
+
+pub(crate) struct OwnLampPorts {
+    pub settings: Arc<dyn ClusterSettingsReadPort>,
+    pub lamps: Arc<dyn ClusterLampReadPort>,
+    pub virtual_lamps: Arc<dyn VirtualLampReadPort>,
+}
+
+pub(crate) struct ClusterLampsBridge {
+    own: OwnLampPorts,
+    cache: Arc<dyn ClusterLampsReadPort>,
+    presence: Arc<dyn ClusterPresenceReadPort>,
+}
+
+impl ClusterLampsBridge {
+    pub(crate) fn new(
+        own: OwnLampPorts,
+        cache: Arc<dyn ClusterLampsReadPort>,
+        presence: Arc<dyn ClusterPresenceReadPort>,
+    ) -> Self {
+        Self { own, cache, presence }
+    }
+
+    fn own_node(&self) -> u8 {
+        self.own.settings.cluster_settings_view().node_number
+    }
+
+    fn source(&self, node: u8, mac: [u8; 6], fresh: bool) -> ClusterInfoSource {
+        let heard = self.presence.heard_node(node).is_some_and(|view| view.live && view.mac == mac);
+        if heard && fresh {
+            ClusterInfoSource::Cached
+        } else {
+            ClusterInfoSource::Stale
+        }
+    }
+
+    fn own_lamp(&self, node: u8, lamp: u8) -> Option<ClusterLampDto> {
+        let state = self.own.lamps.cluster_lamp_state(LAMP_ADAPTER, lamp)?;
+        let dto = virtual_lamp_view_to_dto(self.own.virtual_lamps.virtual_lamp_view(LAMP_ADAPTER, lamp));
+        let identity = self.own.lamps.cluster_ha_identity();
+        let home_assistant = dto.ha_entity_enabled.then(|| {
+            ha_identity_dto(&identity.controller_id, &identity.discovery_prefix, LAMP_ADAPTER, lamp)
+        });
+        Some(ClusterLampDto {
+            cluster_address: ClusterLampAddressDto { node, adapter: LAMP_ADAPTER, lamp },
+            source: ClusterInfoSource::Own,
+            bound: dto.binding.is_some(),
+            observation_age_ms: state.observed_at_ms.map(|at_ms| observation_age_ms(monotonic_ms(), at_ms)),
+            home_assistant,
+            lamp: dto,
+        })
+    }
+
+    fn cached_lamp(&self, view: CachedLampView) -> Option<ClusterLampDto> {
+        let source = self.source(view.node, view.mac, view.fresh);
+        let shown = view.state.filter(|_| source == ClusterInfoSource::Cached);
+        let info = view.info.as_ref()?;
+        let identity = self.cache.cached_identity(view.node).filter(|_| info.ha_entity);
+        let home_assistant = identity.map(|identity| {
+            ha_identity_dto(&identity.controller_id, &identity.discovery_prefix, view.adapter, view.lamp)
+        });
+        Some(ClusterLampDto {
+            cluster_address: ClusterLampAddressDto { node: view.node, adapter: view.adapter, lamp: view.lamp },
+            source,
+            lamp: virtual_lamp_view_to_dto(cached_virtual_lamp(&view, info, shown)),
+            bound: info.bound,
+            observation_age_ms: shown.and_then(|state| state.age_ms),
+            home_assistant,
+        })
+    }
+
+    fn cached_node(&self, node: u8) -> Option<ClusterLampsNodeDto> {
+        let held = self.cache.lamps_held(node)?;
+        let heard = self.presence.heard_node(node);
+        Some(ClusterLampsNodeDto {
+            node,
+            source: self.source(node, held.mac, held.fresh),
+            lamps: held.lamps,
+            state_set: held.state_set,
+            info_set: held.info_set,
+            age_ms: held.state_heard_ms_ago,
+            sequence_gaps: heard.filter(|view| view.mac == held.mac).map(|view| view.sequence_gaps),
+        })
+    }
+}
+
+fn cached_virtual_lamp(view: &CachedLampView, info: &HeldLampInfo, shown: Option<LampState>) -> VirtualLampView {
+    VirtualLampView {
+        adapter_id: view.adapter,
+        virtual_lamp_id: view.lamp,
+        name: info.name.as_str().to_owned(),
+        device_type_effective: lamp_device_type_name(info.device_type).to_owned(),
+        device_type_source: override_source_name(info.device_type_overridden).to_owned(),
+        color_mode_effective: info.color_mode.rest_name().to_owned(),
+        color_mode_source: override_source_name(info.color_mode_overridden).to_owned(),
+        binding_short: None,
+        ha_entity_enabled: info.ha_entity,
+        state: shown.map_or_else(unknown_lamp_state, cached_state_view),
+        capabilities: cached_capabilities(info.capabilities),
+        color_temperature_range: cached_kelvin_range(info),
+    }
+}
+
+fn unknown_lamp_state() -> PhysicalDeviceStateView {
+    PhysicalDeviceStateView { power: UNKNOWN_LAMP_TEXT.to_owned(), color_mode: UNKNOWN_LAMP_TEXT.to_owned(), ..PhysicalDeviceStateView::default() }
+}
+
+fn cached_state_view(state: LampState) -> PhysicalDeviceStateView {
+    let colour = state.colour;
+    PhysicalDeviceStateView {
+        power: state.power.rest_name().to_owned(),
+        level: state.level,
+        color_mode: colour.mode.rest_name().to_owned(),
+        color_temperature_kelvin: colour.kelvin,
+        xy: colour.xy.map(|[x, y]| (f64::from(x) / XY_FULL_SCALE, f64::from(y) / XY_FULL_SCALE)),
+        rgb: colour.rgb.map(|[r, g, b]| (r, g, b)),
+        waf: colour.waf.map(|[w, a, f]| (w, a, f)),
+        status: None,
+        failure_status: None,
+        value_source: state.source,
+        last_seen_ms: None,
+        last_dapc_source: LastDapcSourceView::Unknown,
+        error: state.absent.then_some(RuntimeErrorView { code: ErrorCode::DeviceAbsent }),
+    }
+}
+
+const fn cached_capabilities(caps: LampCapabilities) -> CapabilityFlagsView {
+    let LampCapabilities { brightness, cct, xy, rgb, rgbwaf, scenes, groups } = caps;
+    CapabilityFlagsView { brightness, cct, xy, rgb, rgbwaf, scenes, groups }
+}
+
+fn cached_kelvin_range(info: &HeldLampInfo) -> Option<ColorTemperatureRangeView> {
+    info.kelvin_range.map(|range| ColorTemperatureRangeView { min_kelvin: range.min, max_kelvin: range.max })
+}
+
+impl ClusterLampsHttpState for ClusterLampsBridge {
+    fn lamps_node(&self, node: u8) -> Option<ClusterLampsNodeDto> {
+        if node != self.own_node() {
+            return self.cached_node(node);
+        }
+        let lamps = u8::try_from(self.own.lamps.cluster_lamp_ids(LAMP_ADAPTER).count_ones()).unwrap_or(u8::MAX);
+        let source = ClusterInfoSource::Own;
+        Some(ClusterLampsNodeDto { node, source, lamps, state_set: None, info_set: None, age_ms: None, sequence_gaps: None })
+    }
+
+    fn lamp_ids(&self, node: u8) -> u64 {
+        if node == self.own_node() {
+            self.own.lamps.cluster_lamp_ids(LAMP_ADAPTER)
+        } else {
+            self.cache.cached_lamp_ids(node, LAMP_ADAPTER)
+        }
+    }
+
+    fn lamp(&self, node: u8, lamp: u8) -> Option<ClusterLampDto> {
+        if node == self.own_node() {
+            return self.own_lamp(node, lamp);
+        }
+        self.cache.cached_lamp(node, LAMP_ADAPTER, lamp).and_then(|view| self.cached_lamp(view))
+    }
+
+    fn part_lit(&self, node: u8, adapter: u8, group: u8, channel: ClusterRecordRef) -> ChannelPartLit {
+        if node == self.own_node() {
+            return ChannelPartLit::own(self.own.lamps.cluster_group_lit(adapter, group));
+        }
+        let Some(part) = self.cache.cached_part(node, adapter, group).filter(|part| part.state.channel == channel) else {
+            return ChannelPartLit::UNHEARD;
+        };
+        let state = part.state;
+        let lit = ClusterGroupLitView { commanded: state.commanded, lit: state.lit, known: state.known, members: state.members };
+        ChannelPartLit { lit: Some(lit), fresh: self.source(node, part.mac, part.fresh) == ClusterInfoSource::Cached }
     }
 }
 

@@ -57,6 +57,8 @@ use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_api::http::cluster_info_state::ClusterInfoHttpState;
 use dali2rust_api::http::handlers::cluster_commands::{ClusterCommandDeps, ClusterCommandHandler, ClusterCommandRoute};
 use dali2rust_api::http::handlers::cluster_info::{ClusterInfoGetHandler, ClusterNodePartsHandler};
+use dali2rust_api::http::cluster_lamps_state::ClusterLampsHttpState;
+use dali2rust_api::http::handlers::cluster_lamps::{ClusterLampsHandler, ClusterLampsRoute};
 use dali2rust_api::http::handlers::cluster_parts::{ClusterPartDeps, ClusterPartHandler, ClusterPartRoute};
 use dali2rust_api::http::handlers::cluster_records::{
     ClusterRecordDeps, ClusterRecordHandler, ClusterRecordRoute,
@@ -105,6 +107,7 @@ pub(crate) struct ReadModelPorts {
     pub firmware: Arc<dyn dali2rust_api::http::firmware_state::FirmwareHttpState>,
     pub cluster: Arc<dyn dali2rust_api::http::cluster_status_state::ClusterStatusHttpState>,
     pub cluster_info: Arc<dyn ClusterInfoHttpState>,
+    pub cluster_lamps: Arc<dyn ClusterLampsHttpState>,
     pub uptime: Uptime,
 }
 
@@ -353,6 +356,7 @@ fn wire_read_models(
     let builder = wire_firmware(builder, bus, &read_models.firmware);
     let builder = wire_cluster_status(builder, bus, &read_models.cluster);
     let builder = wire_cluster_info(builder, bus, &read_models.cluster_info);
+    let builder = wire_cluster_lamps(builder, &read_models.cluster_lamps);
     builder
         .with_handler(
             RouteKey::Diagnostics,
@@ -936,6 +940,15 @@ fn wire_cluster_info(builder: AppBuilder, bus: &HttpBusDispatch, info: &Arc<dyn 
         .with_handler(RouteKey::ClusterNodeChannelPartsList, parts(ClusterRecordKind::Channel))
         .with_handler(RouteKey::ClusterNodeScenePartsList, parts(ClusterRecordKind::Scene));
     wire_cluster_commands(builder, bus, info)
+}
+
+#[inline(never)]
+fn wire_cluster_lamps(builder: AppBuilder, lamps: &Arc<dyn ClusterLampsHttpState>) -> AppBuilder {
+    let route = |route| -> Box<dyn ApiHandler> { Box::new(ClusterLampsHandler::new(Arc::clone(lamps), route)) };
+    builder
+        .with_handler(RouteKey::ClusterLampsList, route(ClusterLampsRoute::Nodes))
+        .with_handler(RouteKey::ClusterNodeLampsList, route(ClusterLampsRoute::NodeLamps))
+        .with_handler(RouteKey::ClusterNodeLampGet, route(ClusterLampsRoute::NodeLamp))
 }
 
 #[inline(never)]

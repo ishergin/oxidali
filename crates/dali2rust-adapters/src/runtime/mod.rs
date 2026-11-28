@@ -220,6 +220,8 @@ fn spawn_cluster_slice(
         copies: Arc::clone(store) as _,
         adapters: Arc::clone(store) as _,
         info: Arc::clone(&seams.info),
+        lamps: Arc::clone(store) as _,
+        lamp_cache: Arc::clone(&seams.lamps),
     };
     spawn_cluster_worker(inboxes, ports)
 }
@@ -402,6 +404,7 @@ fn spawn_websocket_worker(
             health: Arc::clone(&read_models.health),
             cluster: Arc::clone(&read_models.cluster),
             cluster_info: Arc::clone(&read_models.cluster_info),
+            cluster_lamps: Arc::clone(&read_models.cluster_lamps),
         },
         Arc::new(dali2rust_platform::dali::wall_clock_millis),
     )
@@ -669,7 +672,8 @@ struct ReadModelArgs {
 
 fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
     let uptime = dali2rust_platform::clock::Uptime::start(args.clock);
-    let cluster_info = cluster_info_bridge(&args.store, &args.cluster);
+    let cluster_lamps = cluster_lamps_bridge(&args.store, &args.cluster);
+    let cluster_info = cluster_info_bridge(&args.store, &args.cluster, Arc::clone(&cluster_lamps));
     ReadModelPorts {
         diagnostics: Arc::new(http_bridges::DiagnosticsBridge::new(
             uptime.clone(),
@@ -693,6 +697,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
         )),
         cluster: Arc::new(http_bridges::ClusterStatusBridge::new(args.cluster.presence)),
         cluster_info,
+        cluster_lamps,
         firmware: Arc::new(http_bridges::FirmwareBridge::new(
             args.ota.state,
             args.firmware_port,
@@ -708,6 +713,7 @@ fn read_model_ports(args: ReadModelArgs) -> ReadModelPorts {
 fn cluster_info_bridge(
     store: &Arc<RegistryStore>,
     seams: &ClusterSeams,
+    lamps: Arc<dyn dali2rust_api::http::cluster_lamps_state::ClusterLampsHttpState>,
 ) -> Arc<dyn dali2rust_api::http::cluster_info_state::ClusterInfoHttpState> {
     let registry = http_bridges::ClusterRegistryPorts {
         settings: Arc::clone(store) as _,
@@ -716,7 +722,20 @@ fn cluster_info_bridge(
         copies: Arc::clone(store) as _,
     };
     let (info, presence) = (Arc::clone(&seams.info) as _, Arc::clone(&seams.presence) as _);
-    Arc::new(http_bridges::ClusterInfoBridge::new(registry, info, presence))
+    Arc::new(http_bridges::ClusterInfoBridge::new(registry, (info, lamps), presence))
+}
+
+fn cluster_lamps_bridge(
+    store: &Arc<RegistryStore>,
+    seams: &ClusterSeams,
+) -> Arc<dyn dali2rust_api::http::cluster_lamps_state::ClusterLampsHttpState> {
+    let own = http_bridges::OwnLampPorts {
+        settings: Arc::clone(store) as _,
+        lamps: Arc::clone(store) as _,
+        virtual_lamps: Arc::clone(store) as _,
+    };
+    let (cache, presence) = (Arc::clone(&seams.lamps) as _, Arc::clone(&seams.presence) as _);
+    Arc::new(http_bridges::ClusterLampsBridge::new(own, cache, presence))
 }
 
 #[derive(Default)]

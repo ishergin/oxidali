@@ -22,6 +22,7 @@ pub mod settings_home_assistant;
 pub mod cluster;
 pub mod cluster_commands;
 pub mod cluster_info;
+pub mod cluster_lamps;
 pub mod cluster_status;
 pub mod cluster_parts;
 pub mod cluster_records;

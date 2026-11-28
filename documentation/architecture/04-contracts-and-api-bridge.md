@@ -86,6 +86,13 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   late; a page admitted before the cache was cleared never lands after the clear. Records and parts are what a page carries now; a receiver counts and skips a record
   outside the sender's block, a part's lamp maps and taken flag, group maps and names, and
   never fails the set over them.
+- A node's lamp state and its lamp info are two more sets, each per adapter, under the same
+  set rules. A state set is complete in itself — every lamp and every channel part — and
+  goes again whole on a change, never as a delta, so a lost page costs only that set. A
+  lamp's level that the registry does not know travels as absent, never as 0. The
+  announcer reads its own lamps when it sends, through `ClusterLampReadPort`, which copies
+  one lamp's state or info or one group's lit counts under the read lock; the events it
+  takes only wake it, so there is no second projector.
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
   it heard last with a new frame, each judged by its own window: sequence numbers compare
   by wrapping arithmetic, and a frame of any other epoch starts a window in place of the

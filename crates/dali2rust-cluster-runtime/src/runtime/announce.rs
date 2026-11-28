@@ -184,15 +184,19 @@ pub(crate) const fn reached(now_ms: u32, at_ms: u32) -> bool {
 fn refresh_phase(turn: Turn) -> u32 {
     let period_ms = turn.timing.info_refresh_ms().max(1);
     let offset_ms = period_ms / u32::from(NODE_COUNT) * u32::from(turn.node);
-    let start_ms = turn.now_ms.wrapping_sub(turn.now_ms % period_ms).wrapping_add(offset_ms);
-    if reached(turn.now_ms, start_ms) {
+    next_phase(turn.now_ms, period_ms, offset_ms)
+}
+
+pub(crate) const fn next_phase(now_ms: u32, period_ms: u32, offset_ms: u32) -> u32 {
+    let start_ms = now_ms.wrapping_sub(now_ms % period_ms).wrapping_add(offset_ms);
+    if reached(now_ms, start_ms) {
         start_ms.wrapping_add(period_ms)
     } else {
         start_ms
     }
 }
 
-const fn hello_delay_ms(turn: Turn) -> u32 {
+pub(crate) const fn hello_delay_ms(turn: Turn) -> u32 {
     turn.timing.info_coalesce_ms().saturating_mul(1 + turn.node as u32)
 }
 

@@ -20,6 +20,7 @@ pub(crate) mod redundancy_settings;
 pub mod transfer;
 pub(crate) mod poller_settings;
 pub(crate) mod cluster_copies;
+mod cluster_lamps;
 pub(crate) mod cluster_parts;
 pub(crate) mod cluster_records;
 pub(crate) mod cluster_settings;

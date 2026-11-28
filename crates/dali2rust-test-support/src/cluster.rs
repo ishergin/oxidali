@@ -1,7 +1,7 @@
 use std::io::ErrorKind;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dali2rust_platform::cluster_link::{
     ClusterLink, ClusterLinkBinder, ClusterLinkError, ClusterReceiveBuffer, Received,
@@ -15,6 +15,7 @@ const FIRST_HUB_HOST: u8 = 1;
 pub struct HubDatagram {
     pub source: [u8; 4],
     pub bytes: Vec<u8>,
+    pub at: Instant,
 }
 
 struct EndQueue {
@@ -76,7 +77,7 @@ impl ClusterHub {
     }
 
     pub fn inject(&self, source: [u8; 4], bytes: &[u8]) {
-        lock(&self.state).deliver(&HubDatagram { source, bytes: bytes.to_vec() });
+        lock(&self.state).deliver(&HubDatagram { source, bytes: bytes.to_vec(), at: Instant::now() });
     }
 
     pub fn refuse_sends(&self, refusing: bool) {
@@ -109,7 +110,7 @@ impl ClusterLink for HubEnd {
         if datagram.len() > MAX_CLUSTER_DATAGRAM_BYTES {
             return Err(ClusterLinkError::TooLarge);
         }
-        let datagram = HubDatagram { source: self.source, bytes: datagram.to_vec() };
+        let datagram = HubDatagram { source: self.source, bytes: datagram.to_vec(), at: Instant::now() };
         let mut state = lock(&self.state);
         if state.refusing {
             return Err(ClusterLinkError::Io(ErrorKind::ConnectionRefused));
@@ -237,8 +238,8 @@ mod tests {
         b.send(b"second").expect("send");
         let first = hub.next_sent(PATIENCE).expect("first");
         let second = hub.next_sent(PATIENCE).expect("second");
-        assert_eq!(first, HubDatagram { source: a.source(), bytes: b"first".to_vec() });
-        assert_eq!(second, HubDatagram { source: b.source(), bytes: b"second".to_vec() });
+        assert_eq!((first.source, first.bytes), (a.source(), b"first".to_vec()));
+        assert_eq!((second.source, second.bytes), (b.source(), b"second".to_vec()));
     }
 
     #[test]

@@ -288,7 +288,9 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15901: eight nodes and 24 ignored boards, every text at its widest. The per-node
   summary of announced channel and scene info goes out in one `ClusterInfo` frame, whose
-  ceiling is 2048 against a measured worst case of 1277. The floor of
+  ceiling is 2048 against a measured worst case of 1277. The per-node summary of announced
+  lamps goes out in one `ClusterLamps` frame, whose ceiling is 1216 against a measured worst
+  case of 1158 — the smallest 64·k that holds it, k = 19. The floor of
   internal SRAM moves only by a census on the board.
 - Input-device events and rule targets across nodes are later stages, and the rule targets
   get a record of their own. The stages are in the

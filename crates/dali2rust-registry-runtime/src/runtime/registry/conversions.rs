@@ -6,12 +6,7 @@ use dali2rust_domain::registry::{
 use super::runtime_fields::{FailureStatusData, StatusFlagsData};
 
 pub(crate) fn device_type_str(dt: DeviceType) -> &'static str {
-    match dt {
-        DeviceType::Dt8Color => "dt8_color",
-        DeviceType::Dt6Led => "dt6_led",
-        DeviceType::Unknown => "unknown",
-        _ => "unknown",
-    }
+    dali2rust_domain::registry::lamp_device_type_name(dt)
 }
 
 pub(crate) fn color_mode_str(cm: ColorMode) -> &'static str {
@@ -84,11 +79,7 @@ pub(crate) fn power_state_str(
 }
 
 pub(crate) fn override_source_str(manual_override: bool) -> &'static str {
-    if manual_override {
-        "manual_override"
-    } else {
-        "discovered"
-    }
+    dali2rust_domain::registry::override_source_name(manual_override)
 }
 
 pub(crate) fn effective_color_mode(

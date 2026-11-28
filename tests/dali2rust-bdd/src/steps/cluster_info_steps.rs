@@ -113,7 +113,7 @@ fn page_datagram(header: &Header, (set, page, last): (u32, u8, bool), specs: &[E
     buffer.get(..len).expect("the encoded length").to_vec()
 }
 
-// CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-083 CLU-140 CLU-141 CLU-142 CLU-143 CLU-144 CLU-145 CLU-146 CLU-147
+// CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-083 CLU-140 CLU-141 CLU-142 CLU-143 CLU-144 CLU-145 CLU-146 CLU-147 CLU-209
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends info page (\d+) of set (\d+) as (the last page|a page before the last) with (\[.*\])$"#)]
 async fn board_sends_page(world: &mut DaliWorld, mac: String, page: u8, set: u32, last: String, json: String) {
     let specs = parse_elements(&json);
@@ -197,7 +197,7 @@ async fn ws_cluster_info(world: &mut DaliWorld, node: u64, source: String, chann
     assert!(frame.is_some(), "no ClusterInfo frame showed node {node} as {source} with {channels} channels");
 }
 
-// CLU-074 CLU-075
+// CLU-074 CLU-075 CLU-204
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should eventually be absent$"#)]
 async fn json_pointer_eventually_absent(world: &mut DaliWorld, pointer: String, path: String) {
     let port = world.server_port();
