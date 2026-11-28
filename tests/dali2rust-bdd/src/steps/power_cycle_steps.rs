@@ -286,7 +286,7 @@ async fn then_two_frame_probe(world: &mut DaliWorld) {
     assert_each_probe_is(world, &probe_frames()[..2]);
 }
 
-// PWR-006
+// PWR-006 CLU-170 CLU-172
 #[then(regex = r"^no DALI frame should reach the bus within (\d+) ms$")]
 async fn then_bus_silent(world: &mut DaliWorld, window_ms: u64) {
     let sent_any = || !world.dali_mock().lock().expect("mock lock").sent_frames().is_empty();

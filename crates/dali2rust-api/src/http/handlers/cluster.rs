@@ -283,6 +283,7 @@ fn parse_cluster_name(obj: &JsonObject) -> Result<Option<String>, HttpResponse> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn parsed(body: serde_json::Value) -> Result<ClusterPatchData, HttpResponse> {
         parse_cluster_patch(body.as_object().expect("object"))
@@ -306,7 +307,7 @@ mod tests {
     fn every_flag_names_its_own_field_and_only_that_field() {
         assert_eq!(READERS.map(|(key, field, _)| (key, field)), FLAGS);
         for (key, field, read) in READERS {
-            let settings = parsed(serde_json::json!({ key: true })).ok().expect("parses").settings;
+            let settings = parsed(json!({ key: true })).ok().expect("parses").settings;
             assert_eq!(settings.patch_mask, field.bit(), "{key}");
             assert!(read(&settings), "{key} did not land in its field");
             let set = READERS.iter().filter(|(_, _, other)| other(&settings)).count();
@@ -331,7 +332,6 @@ mod tests {
 
     #[test]
     fn only_an_own_wire_with_the_foreign_master_forwarded_and_protection_off_is_unprotected() {
-        use serde_json::json;
         assert!(unprotects(&stored(true, true), json!({ "wire_protection": false })));
         assert!(!unprotects(&stored(false, true), json!({ "wire_protection": false })), "the foreign master stays home");
         assert!(!unprotects(&stored(true, true), json!({ "wire_same_as": 1, "wire_protection": false })), "another node's wire");
@@ -342,7 +342,6 @@ mod tests {
 
     #[test]
     fn the_wire_asked_about_is_the_one_the_patch_leaves_this_node_on() {
-        use serde_json::json;
         let mut on_another = stored(true, false);
         on_another.wire_same_as = Some(1);
         on_another.node_number = 3;

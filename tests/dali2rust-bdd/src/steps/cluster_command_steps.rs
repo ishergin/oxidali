@@ -112,7 +112,7 @@ fn command_datagram(header: &Header, command: &Command) -> Vec<u8> {
     buffer.get(..len).expect("the encoded length").to_vec()
 }
 
-// CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-086 CLU-087 CLU-088 CLU-089 CLU-098 CLU-100 CLU-102 CLU-103 CLU-109 CLU-111
+// CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-086 CLU-087 CLU-088 CLU-089 CLU-098 CLU-100 CLU-102 CLU-103 CLU-109 CLU-111 CLU-178 CLU-179 CLU-187
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends the command (\{.*\}) twice with one sequence number$"#)]
 async fn board_sends_command_twice(world: &mut DaliWorld, mac: String, json: String) {
     let command = CommandSpec::parse(&json).command();
@@ -165,7 +165,7 @@ fn colour_stated_or_none(mut command: Command) -> Command {
     command
 }
 
-// CLU-083 CLU-090 CLU-092 CLU-094 CLU-095 CLU-097 CLU-099 CLU-101
+// CLU-083 CLU-090 CLU-092 CLU-094 CLU-095 CLU-097 CLU-099 CLU-101 CLU-170 CLU-171 CLU-172 CLU-173 CLU-176 CLU-177 CLU-178 CLU-179 CLU-185
 #[then(regex = r"^the cluster hub should carry from this controller the command (\{.*\}) twice with one sequence number$")]
 async fn hub_carries_command_twice(world: &mut DaliWorld, json: String) {
     let wanted = CommandSpec::parse(&json).command();
@@ -179,7 +179,7 @@ async fn hub_carries_command_twice(world: &mut DaliWorld, json: String) {
     assert_eq!(first_bytes.bytes, second_bytes.bytes, "the copies are the same datagram");
 }
 
-// CLU-076 CLU-081 CLU-091 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-102 CLU-108 CLU-109 CLU-110
+// CLU-076 CLU-081 CLU-091 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-102 CLU-108 CLU-109 CLU-110 CLU-171 CLU-173 CLU-174 CLU-175 CLU-177 CLU-178 CLU-179 CLU-185 CLU-187
 #[then(regex = r"^the cluster hub should carry no command from this controller within (\d+) ms$")]
 async fn hub_carries_no_command(world: &mut DaliWorld, window_ms: u64) {
     let sent = sent_commands(rig(world), Duration::from_millis(window_ms), 1);

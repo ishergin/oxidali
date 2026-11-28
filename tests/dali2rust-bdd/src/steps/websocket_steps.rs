@@ -476,7 +476,7 @@ async fn then_batch_has_query(world: &mut DaliWorld) {
     );
 }
 
-// WS-043
+// WS-043 CLU-170 CLU-171 CLU-173 CLU-174 CLU-175 CLU-176 CLU-177 CLU-178 CLU-179 CLU-185
 #[when(regex = r"^a foreign raw forward frame 0x([0-9A-Fa-f]{2}) 0x([0-9A-Fa-f]{2}) is observed on the bus$")]
 async fn when_foreign_raw_frame(world: &mut DaliWorld, address: String, command: String) {
     let address = u8::from_str_radix(&address, 16).expect("hex address");

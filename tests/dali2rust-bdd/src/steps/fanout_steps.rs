@@ -110,7 +110,7 @@ async fn when_foreign_unaddressed_off_observed(world: &mut DaliWorld) {
     inject_forward16(world, [UNADDRESSED_BROADCAST_INDIRECT, OFF_OPCODE]);
 }
 
-// RULE-035 RULE-040 CLU-095
+// RULE-035 RULE-040 CLU-095 CLU-172
 #[when(regex = r"^a foreign group (\d+) recall of scene (\d+) is observed on the bus$")]
 async fn when_foreign_group_recall_observed(world: &mut DaliWorld, group: u8, scene: u8) {
     inject_forward16(world, [group_command_address(group), go_to_scene(scene)]);
