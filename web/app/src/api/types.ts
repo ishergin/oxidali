@@ -1388,6 +1388,8 @@ export type StatsCluster = {
   foreign_hold_full_total: number
   wire_notes_sent_total: number
   wire_notes_taken_total: number
+  copies_stored_total: number
+  records_taken_back_total: number
 }
 
 export type InputDeviceSummary = {

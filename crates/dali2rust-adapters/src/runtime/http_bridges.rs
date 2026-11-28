@@ -391,6 +391,7 @@ declare_counter_mapping! {
         forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
         forwards_skipped_wire_total, foreign_forwarded_total, foreign_held_total, foreign_cancelled_total,
         foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
+        copies_stored_total = 0, records_taken_back_total = 0,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,
@@ -797,6 +798,9 @@ impl StatsHttpState for StatsBridge {
         out.hcl = stats_hcl_dto(&self.counters.hcl_scheduler);
         out.rules = stats_rules_dto(&self.counters);
         out.cluster = stats_cluster_dto(&self.cluster);
+        let registry = &self.counters.registry.command;
+        out.cluster.copies_stored_total = registry.cluster_copies_stored.load(Relaxed);
+        out.cluster.records_taken_back_total = registry.cluster_records_taken_back.load(Relaxed);
         out.network = self.link.as_ref().map(|l| stats_network_dto(l.stats()));
     }
 }
