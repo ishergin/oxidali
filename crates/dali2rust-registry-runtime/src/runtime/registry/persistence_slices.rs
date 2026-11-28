@@ -20,6 +20,8 @@ pub const DISPLAY_SETTINGS_SLICE_VERSION: u32 = 1;
 pub const CLUSTER_SETTINGS_SLICE_VERSION: u32 = 2;
 pub const CLUSTER_CHANNEL_PARTS_SLICE_VERSION: u32 = 1;
 pub const CLUSTER_SCENE_PARTS_SLICE_VERSION: u32 = 1;
+pub const CLUSTER_CHANNEL_COPIES_SLICE_VERSION: u32 = 1;
+pub const CLUSTER_SCENE_COPIES_SLICE_VERSION: u32 = 1;
 
 
 
@@ -195,6 +197,20 @@ pub struct PersistableClusterSettingsSlice {
     pub channel_generations: [u32; CLUSTER_BLOCK_SIZE],
     pub scenes: Vec<PersistableClusterRecord>,
     pub scene_generations: [u32; CLUSTER_BLOCK_SIZE],
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct PersistableClusterCopiesSlice {
+    pub copies: Vec<PersistableClusterCopy>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PersistableClusterCopy {
+    pub number: u8,
+    pub generation: u32,
+    pub nonce: u32,
+    pub name: String,
+    pub revision: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]

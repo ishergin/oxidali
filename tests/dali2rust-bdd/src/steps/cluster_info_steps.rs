@@ -6,7 +6,7 @@ use dali2rust_cluster_runtime::frame::{
     PartFlags, Record, RecordRef, ScenePart,
 };
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
-use dali2rust_test_support::wait_until;
+use dali2rust_test_support::{remains_false_for, try_wait_until, wait_until};
 use serde::Deserialize;
 
 use crate::steps::cluster_steps::{hardware_address, rig};
@@ -14,6 +14,9 @@ use crate::steps::polling::fetch_json;
 use crate::DaliWorld;
 
 const INFO_TIMEOUT: Duration = Duration::from_secs(4);
+const JUDGED_TIMEOUT: Duration = Duration::from_secs(20);
+const ANNOUNCE_GAP: Duration = Duration::from_millis(400);
+const FIRST_REVISION: u32 = 1;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +39,7 @@ struct ElementSpec {
     accept: bool,
     #[serde(default)]
     lamps: u64,
+    revision: Option<u32>,
 }
 
 impl ElementSpec {
@@ -45,7 +49,7 @@ impl ElementSpec {
     }
 
     fn record(&self, number: u8) -> Record<'_> {
-        Record { id: self.reference(number), name: &self.name, revision: 1 }
+        Record { id: self.reference(number), name: &self.name, revision: self.revision.unwrap_or(FIRST_REVISION) }
     }
 
     fn named(&self) -> RecordRef {
@@ -109,7 +113,7 @@ fn page_datagram(header: &Header, (set, page, last): (u32, u8, bool), specs: &[E
     buffer.get(..len).expect("the encoded length").to_vec()
 }
 
-// CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-083
+// CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-083 CLU-140 CLU-141 CLU-142 CLU-143 CLU-144 CLU-145 CLU-146 CLU-147
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends info page (\d+) of set (\d+) as (the last page|a page before the last) with (\[.*\])$"#)]
 async fn board_sends_page(world: &mut DaliWorld, mac: String, page: u8, set: u32, last: String, json: String) {
     let specs = parse_elements(&json);
@@ -201,4 +205,43 @@ async fn json_pointer_eventually_absent(world: &mut DaliWorld, pointer: String, 
     wait_until(|| matches!(read(), Some(None)), INFO_TIMEOUT);
     let found = read();
     assert!(matches!(found, Some(None)), "{path}{pointer} is still there: {found:?}");
+}
+
+fn pointer_text(port: u16, path: &str, pointer: &str) -> Option<String> {
+    let value = fetch_json(port, path)?.pointer(pointer).cloned()?;
+    Some(value.as_str().map_or_else(|| value.to_string(), str::to_owned))
+}
+
+// CLU-072 CLU-144
+#[when(regex = r#"^the board "([0-9a-f:]{17})" announces one-page sets from (\d+) with (\[.*\]) until the JSON pointer "([^"]*)" at "([^"]+)" is "([^"]*)"$"#)]
+async fn board_announces_until(
+    world: &mut DaliWorld,
+    mac: String,
+    first: u32,
+    json: String,
+    pointer: String,
+    path: String,
+    expected: String,
+) {
+    let specs = parse_elements(&json);
+    let port = world.server_port();
+    let speaker = hardware_address(&mac);
+    let mut set = first;
+    let reached = try_wait_until(
+        || {
+            rig(world).speaker(speaker).speak(|header| page_datagram(header, (set, 0, true), &specs));
+            set = set.wrapping_add(1);
+            try_wait_until(|| pointer_text(port, &path, &pointer).as_deref() == Some(expected.as_str()), ANNOUNCE_GAP)
+        },
+        JUDGED_TIMEOUT,
+    );
+    assert!(reached, "{path}{pointer} never became {expected:?}: {:?}", pointer_text(port, &path, &pointer));
+}
+
+// CLU-140 CLU-142 CLU-144 CLU-146 CLU-147
+#[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should stay "([^"]*)" for (\d+) ms$"#)]
+async fn json_pointer_stays(world: &mut DaliWorld, pointer: String, path: String, expected: String, window_ms: u64) {
+    let port = world.server_port();
+    let moved = || pointer_text(port, &path, &pointer).as_deref() != Some(expected.as_str());
+    assert!(remains_false_for(moved, Duration::from_millis(window_ms)), "{path}{pointer}: {:?}", pointer_text(port, &path, &pointer));
 }

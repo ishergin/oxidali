@@ -41,6 +41,14 @@ impl PresenceTiming {
     pub const fn info_refresh_ms(self) -> u32 {
         self.pulse_period_ms.saturating_mul(REFRESH_PERIODS)
     }
+
+    pub const fn block_round_ms(self) -> u32 {
+        self.info_refresh_ms()
+    }
+
+    pub const fn settled_after_ms(self) -> u32 {
+        self.block_round_ms().saturating_add(self.listen_ms())
+    }
 }
 
 pub(crate) const HALF_CLOCK_MS: u32 = 1 << 31;

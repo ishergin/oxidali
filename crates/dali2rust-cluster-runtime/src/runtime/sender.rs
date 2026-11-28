@@ -23,7 +23,7 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_contracts::{CORRELATION_NONE, SOURCE_ID_UNSPECIFIED};
 use dali2rust_domain::registry::{
-    ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort, ClusterSettingsView, ClusterWire,
+    ClusterCopyReadPort, ClusterPartReadPort, ClusterRecordReadPort, ClusterSettingsReadPort, ClusterSettingsView, ClusterWire,
     AdapterReadPort, DaliSettingsReadPort, HomeAssistantSettingsReadPort,
 };
 use dali2rust_platform::cluster_link::{ClusterLink, ClusterLinkBinder, MAX_CLUSTER_DATAGRAM_BYTES};
@@ -41,8 +41,10 @@ use super::hold::ForeignHold;
 use super::incoming::CommandIntake;
 use super::outgoing::{placed_outgoing, Outgoing};
 use super::receiver::{run_receiver, LinkHandoff};
-use super::shared::{ClusterPresence, Forgotten, Settled};
+use super::round::BlockRound;
+use super::shared::{BlockState, ClusterPresence, ClusterPresenceReadPort, Forgotten, Settled};
 
+mod block;
 mod command;
 mod forward;
 
@@ -79,6 +81,7 @@ pub struct ClusterWorkerPorts {
     pub counters: Arc<ClusterCounters>,
     pub records: Arc<dyn ClusterRecordReadPort>,
     pub parts: Arc<dyn ClusterPartReadPort>,
+    pub copies: Arc<dyn ClusterCopyReadPort>,
     pub adapters: Arc<dyn AdapterReadPort>,
     pub info: Arc<ClusterInfo>,
 }
@@ -244,6 +247,8 @@ struct NodeSender<'a> {
     digest: u64,
     announcer: Announcer,
     info_digest: u64,
+    round: BlockRound,
+    next_copy_ms: u32,
 }
 
 impl<'a> NodeSender<'a> {
@@ -266,6 +271,8 @@ impl<'a> NodeSender<'a> {
             digest,
             announcer: Announcer::new(),
             info_digest: 0,
+            round: BlockRound::new(),
+            next_copy_ms: now_ms,
         }
     }
 
@@ -288,7 +295,9 @@ impl<'a> NodeSender<'a> {
         }
         self.release_foreign(&reading, now_ms);
         self.carry_commands(&reading, now_ms);
-        self.announce(&reading, settled.mode == OwnMode::Running, now_ms);
+        let running = settled.mode == OwnMode::Running;
+        self.keep_block(reading.settings.node_number, running, now_ms);
+        self.announce(&reading, running, now_ms);
         self.ports.presence.prune(now_ms);
         self.publish_if_changed(now_ms);
     }
@@ -296,8 +305,9 @@ impl<'a> NodeSender<'a> {
     fn announce(&mut self, reading: &Reading, running: bool, now_ms: u32) {
         let hello = self.ports.presence.take_hello_heard() && running;
         let timing = self.ports.presence.timing();
-        let turn = Turn { running, node: reading.settings.node_number, now_ms, hello, timing };
-        let own = OwnInfo { records: &*self.ports.records, parts: &*self.ports.parts };
+        let split = self.ports.presence.own_status().block == BlockState::Contested;
+        let turn = Turn { running, node: reading.settings.node_number, now_ms, hello, split, timing };
+        let own = OwnInfo { records: &*self.ports.records, parts: &*self.ports.parts, copies: &*self.ports.copies };
         self.announcer.plan(turn, own);
         if !self.announcer.page_due(now_ms) {
             return;
@@ -346,7 +356,8 @@ impl<'a> NodeSender<'a> {
             let info = self.announcer.deadline().map_or(u32::MAX, left);
             let commands = self.outgoing.deadline().map_or(u32::MAX, left);
             let held = self.hold.line().deadline().map_or(u32::MAX, left);
-            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info).min(commands).min(held)))
+            let block = self.block_deadline().map_or(u32::MAX, left);
+            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info).min(commands).min(held).min(block)))
         })
     }
 

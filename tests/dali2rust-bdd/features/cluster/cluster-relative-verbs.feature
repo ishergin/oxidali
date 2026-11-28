@@ -135,7 +135,8 @@ Feature: Cluster — UP, DOWN, the steps and a stopped fade between nodes
   @id:CLU-107
   Scenario: A channel takes a relative verb by the same body as a group, goes out and runs on this node's own part
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the response status should be 201
     When I link "/api/v1/cluster/channel-parts/0/7" to the cluster record "/api/v1/cluster/channels/2" with send true and accept true
     Then the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "running"
@@ -150,7 +151,8 @@ Feature: Cluster — UP, DOWN, the steps and a stopped fade between nodes
   @id:CLU-108
   Scenario Outline: A channel refuses a relative verb it cannot read, or one mixed with a setpoint
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the response status should be 201
     And the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "running"
     Given a DALI mock transport with no response

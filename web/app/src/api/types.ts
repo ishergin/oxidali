@@ -378,7 +378,10 @@ export interface ClusterOwn {
   wire_chain: boolean
   unprotected_wire: boolean
   number_held_by: string | null
+  block: ClusterBlockState
 }
+
+export type ClusterBlockState = 'off' | 'passive' | 'listening' | 'contested' | 'settled'
 
 export interface ClusterNode {
   node: number
@@ -411,7 +414,7 @@ export interface ClusterStatus {
   ignored: ClusterIgnored[]
 }
 
-export type ClusterInfoSource = 'own' | 'cached' | 'stale'
+export type ClusterInfoSource = 'own' | 'cached' | 'stale' | 'copy'
 
 export interface ClusterInfoNode {
   node: number
@@ -447,10 +450,18 @@ export interface ClusterPart {
 
 export type ClusterPartLink = 'live' | 'orphan' | 'unknown'
 
+export type ClusterWireHolding = 'other_record' | 'nothing'
+
+export interface ClusterWireFault {
+  node: number
+  holds: ClusterWireHolding
+}
+
 export interface ClusterNodePart extends ClusterPart {
   node: number
   source: ClusterInfoSource
   link: ClusterPartLink
+  wire_fault: ClusterWireFault | null
 }
 
 export interface ClusterInfo {
@@ -1377,6 +1388,8 @@ export type StatsCluster = {
   foreign_hold_full_total: number
   wire_notes_sent_total: number
   wire_notes_taken_total: number
+  copies_stored_total: number
+  records_taken_back_total: number
 }
 
 export type InputDeviceSummary = {

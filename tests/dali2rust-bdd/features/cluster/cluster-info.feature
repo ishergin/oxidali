@@ -18,7 +18,8 @@ Feature: Cluster — the channels and scenes of every node
   @id:CLU-057
   Scenario: A neighbour's whole set appears in the cluster's lists beside this node's own records
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     And a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 of cluster "hall" for installation "site-b"
     Then the JSON pointer "/nodes/0/heard" at "/api/v1/cluster/status" should eventually be "true"
     When the board "02:00:00:0a:0b:02" sends info page 0 of set 7 as a page before the last with [{"channel":16,"mark":[1,5],"name":"Hall"},{"scene":17,"mark":[1,6],"name":"Evening"}]
@@ -172,6 +173,7 @@ Feature: Cluster — the channels and scenes of every node
   @id:CLU-065
   Scenario: This node's records and parts go out in info pages after each write
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
     Then the cluster hub should carry a pulse from this controller holding node 0 of cluster "hall"
     When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the response status should be 201
@@ -187,7 +189,8 @@ Feature: Cluster — the channels and scenes of every node
   @id:CLU-066
   Scenario: This node's info goes out again on the periodic refresh with nothing changed
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the cluster hub should carry an info page from this controller with {"channel":2,"name":"Corridor"} within 4000 ms
     When the cluster hub sets aside what this controller has sent so far
     Then the cluster hub should carry an info page from this controller with {"channel":2,"name":"Corridor"} within 8000 ms
@@ -202,7 +205,8 @@ Feature: Cluster — the channels and scenes of every node
   @id:CLU-068
   Scenario: A standby node keeps listening and announces nothing
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the cluster hub should carry an info page from this controller with {"channel":2,"name":"Corridor"} within 4000 ms
     When I PATCH JSON {"application_active":false} to "/api/v1/settings/dali"
     Then the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "standby"
@@ -215,17 +219,21 @@ Feature: Cluster — the channels and scenes of every node
     Then the cluster hub should carry no info page from this controller within 1500 ms
 
   @id:CLU-069
-  Scenario: A node waiting for its number announces nothing
+  Scenario: A node waiting for its number announces nothing and issues no number
     When a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 2 of cluster "hall" for installation "site-b"
     And I PATCH JSON {"cluster_name":"hall","node_number":2,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":34,"name":"Corridor"} to "/api/v1/cluster/channels"
     Then the JSON pointer "/own/state" at "/api/v1/cluster/status" should eventually be "waiting"
+    And the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "contested"
+    When I POST JSON {"number":34,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the response status should be 409
+    And the JSON pointer "/message" should be "cluster_node_contested"
     And the cluster hub should carry no info page from this controller within 1500 ms
 
   @id:CLU-070
   Scenario: A neighbour's hello is answered with this node's info before the refresh is due
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
-    And I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
+    Then the JSON pointer "/own/block" at "/api/v1/cluster/status" should eventually be "settled"
+    When I POST JSON {"number":2,"name":"Corridor"} to "/api/v1/cluster/channels"
     And a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 of cluster "hall" for installation "site-b"
     Then the JSON pointer "/nodes/0/heard" at "/api/v1/cluster/status" should eventually be "true"
     And the cluster hub should carry an info page from this controller with {"channel":2,"name":"Corridor"} within 4000 ms
@@ -251,7 +259,7 @@ Feature: Cluster — the channels and scenes of every node
     Then the response status should be 404
 
   @id:CLU-072
-  Scenario: A part naming a mark its home node does not carry is shown as an orphan
+  Scenario: A part naming an older mark than its settled home node carries is shown as an orphan
     When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
     And a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 of cluster "hall" for installation "site-b"
     And a board "02:00:00:0a:0b:03" at "10.0.0.3" pulses as node 2 of cluster "hall" for installation "site-c"
@@ -265,7 +273,10 @@ Feature: Cluster — the channels and scenes of every node
     When I send a GET request to "/api/v1/cluster/nodes/1/channel-parts"
     Then the response status should be 200
     And the JSON pointer "/channel_parts/0/record/number" should be 32
-    And the JSON pointer "/channel_parts/0/link" should be "orphan"
+    And the JSON pointer "/channel_parts/0/link" should be "unknown"
+    When the board "02:00:00:0a:0b:03" announces one-page sets from 2 with [{"channel":32,"mark":[2,9],"name":"Stairs"}] until the JSON pointer "/channel_parts/0/link" at "/api/v1/cluster/nodes/1/channel-parts" is "orphan"
+    And I send a GET request to "/api/v1/cluster/nodes/1/channel-parts"
+    Then the JSON pointer "/channel_parts/0/link" should be "orphan"
     And the JSON pointer "/channel_parts/1/record/number" should be 48
     And the JSON pointer "/channel_parts/1/link" should be "unknown"
     When I send a GET request to "/api/v1/cluster/channels/32"

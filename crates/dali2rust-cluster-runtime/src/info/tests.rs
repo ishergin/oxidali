@@ -1,7 +1,7 @@
 use dali2rust_contracts::msg::ClusterRecordKind::{self, Channel, Scene};
 use dali2rust_domain::registry::{
-    ClusterPartKeys, ClusterPartReadPort, ClusterPartView, ClusterRecordNumbers,
-    ClusterRecordReadPort, ClusterRecordView,
+    ClusterCopyReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterPartView, ClusterRecordNumbers,
+    ClusterRecordReadPort, ClusterRecordView, MAX_CLUSTER_COPIES_PER_KIND,
 };
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 
@@ -12,6 +12,8 @@ use crate::frame::{
 };
 
 const NODE: u8 = 2;
+const RECEIVER: u8 = 5;
+const RECEIVER_NUMBER: u8 = 83;
 const MAC: [u8; 6] = [2, 0, 0, 0, 0, 2];
 const EPOCH: u32 = 0x00e0_0001;
 const NOW_MS: u32 = 5_000;
@@ -49,7 +51,7 @@ fn page_bytes(set: u32, page: u8, last: bool, elements: &[InfoElement<'_>]) -> V
 
 fn feed(cache: &mut InfoCache, bytes: &[u8], epoch: u32) -> PageTally {
     let Frame::ChannelSceneInfo(page) = decode(bytes).expect("decode").frame else { panic!("not a page") };
-    cache.take_page(Arrival { node: NODE, mac: MAC, epoch, now_ms: NOW_MS }, &page)
+    cache.take_page(Arrival { node: NODE, own_node: RECEIVER, mac: MAC, epoch, now_ms: NOW_MS }, &page)
 }
 
 fn names(cache: &InfoCache) -> Vec<String> {
@@ -133,6 +135,25 @@ fn the_same_content_again_is_taken_but_is_not_a_change() {
     let tally = feed(&mut cache, &page_bytes(2, 0, true, &[record(OWN_NUMBER, "Hall", 1)]), EPOCH);
     assert!(tally.taken && !tally.changed);
     assert_eq!(cache.changes(), before);
+}
+
+fn copy(number: u8, generation: u32, revision: u32) -> InfoElement<'static> {
+    let mark = BirthMark { generation, nonce: 0x0c0c };
+    InfoElement::ChannelRecord(Record { id: RecordRef { number, mark }, name: "Copy", revision })
+}
+
+#[test]
+fn a_copy_of_a_record_of_the_receiver_s_block_is_kept_apart_for_taking_back() {
+    let mut cache = placed_cache();
+    let elements = [copy(RECEIVER_NUMBER, 2, 9), copy(RECEIVER_NUMBER, 3, 1), copy(RECEIVER_NUMBER, 3, 4), copy(RECEIVER_NUMBER, 3, 2)];
+    let tally = feed(&mut cache, &page_bytes(1, 0, true, &elements), EPOCH);
+    assert_eq!((tally.taken, tally.skipped), (true, 0));
+    let set = cache.shown(NODE).expect("held");
+    let kept = set.takeback(Channel)[3].as_ref().map(|held| (held.mark.generation, held.revision));
+    assert_eq!(kept, Some((3, 4)), "the newest generation, then the highest revision");
+    assert!(set.takeback(Scene).iter().all(Option::is_none));
+    assert!(set.record_view(Channel, RECEIVER_NUMBER).is_none(), "a copy is never a record of its sender");
+    assert!(!set.record_numbers(Channel).any());
 }
 
 #[test]
@@ -234,6 +255,10 @@ impl ClusterRecordReadPort for OwnPorts {
         };
         ClusterRecordNumbers { first: 32, live }
     }
+
+    fn cluster_generation(&self, kind: ClusterRecordKind, number: u8) -> u32 {
+        self.cluster_record(kind, number).map_or(0, |record| record.mark.generation)
+    }
 }
 
 impl ClusterPartReadPort for OwnPorts {
@@ -261,6 +286,7 @@ fn a_node_s_own_info_goes_out_in_pages_and_comes_back_whole() {
     while let Some(len) = cursor.write_next(&mut buffer, &header, own.elements()).expect("page") {
         feed(&mut cache, &buffer[..len], EPOCH);
     }
+    own.own = RECEIVER;
     let shown = cache.shown(NODE).expect("held");
     assert_eq!(*shown, *own);
     assert_eq!(cache.counts(NODE, Channel), Some((1, 2)));
@@ -272,11 +298,57 @@ fn a_page_admitted_before_the_cache_was_cleared_never_lands_after_the_clear() {
     let info = ClusterInfo::new();
     let bytes = page_bytes(1, 0, true, &[record(OWN_NUMBER, "Hall", 1)]);
     let Frame::ChannelSceneInfo(page) = decode(&bytes).expect("decode").frame else { panic!("not a page") };
-    let at = Arrival { node: NODE, mac: MAC, epoch: EPOCH, now_ms: NOW_MS };
+    let at = Arrival { node: NODE, own_node: RECEIVER, mac: MAC, epoch: EPOCH, now_ms: NOW_MS };
     let admitted = info.era();
     info.clear();
     assert!(!info.take_page(at, &page, admitted).taken);
     assert!(info.info_held(NODE).is_none());
     assert!(info.take_page(at, &page, info.era()).taken);
     assert!(info.info_held(NODE).is_some());
+}
+
+const COPY_NAME: &str = "A copied channel whose name fills all sixty-four bytes it may.!!";
+
+struct EveryCopy;
+
+impl ClusterCopyReadPort for EveryCopy {
+    fn cluster_copy(&self, _kind: ClusterRecordKind, _record: RecordRef) -> Option<ClusterRecordView> {
+        None
+    }
+
+    fn cluster_copy_at(&self, kind: ClusterRecordKind, index: usize) -> Option<ClusterRecordView> {
+        let index = u8::try_from(index).ok().filter(|index| usize::from(*index) < MAX_CLUSTER_COPIES_PER_KIND)?;
+        let number = RECEIVER_NUMBER - 3 + index % 16;
+        let generation = u32::from(index) + 1;
+        let mark = BirthMark { generation, nonce: 0x0c0c };
+        Some(ClusterRecordView { kind, number, home_node: RECEIVER, mark, name: COPY_NAME.to_owned(), revision: 2 })
+    }
+}
+
+#[test]
+fn the_widest_set_with_every_copy_goes_out_whole_and_its_copies_reach_their_home_as_take_back_offers() {
+    assert_eq!(COPY_NAME.len(), 64);
+    let mut own = placed_set();
+    own.fill(NODE, &OwnPorts, &OwnPorts);
+    let mut copies = placed_copy_set();
+    copies.fill(&EveryCopy);
+    let mut cache = placed_cache();
+    let mut cursor = PageCursor::new(1);
+    let mut buffer: DatagramBuffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
+    let header = Header { cluster_tag: 1, sender_mac: MAC, boot_epoch: EPOCH, node_no: NODE, seq: 0 };
+    let mut pages = 0;
+    while let Some(len) = cursor.write_next(&mut buffer, &header, own.elements().chain(copies.elements())).expect("page") {
+        assert!(!feed(&mut cache, &buffer[..len], EPOCH).stale);
+        pages += 1;
+    }
+    let shown = cache.shown(NODE).expect("a whole set");
+    assert_eq!(shown.skipped, 0, "every copy is of the receiver's block");
+    let first = usize::from(RECEIVER_NUMBER - 3);
+    for kind in [Channel, Scene] {
+        let newest = shown.takeback(kind).iter().map(|held| held.as_ref().map(|held| held.mark.generation)).collect::<Vec<_>>();
+        let expected = (0..16).map(|slot| Some(u32::try_from(slot + 112 + 1).expect("small"))).collect::<Vec<_>>();
+        assert_eq!(newest, expected, "the newest generation of each number, {kind:?}, from {first}");
+        assert_eq!(cache.counts(NODE, kind).map(|(records, _)| records), Some(1), "a copy is never a record of its sender");
+    }
+    assert!(pages > 1);
 }

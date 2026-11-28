@@ -61,6 +61,7 @@ function part(r: ClusterRecord, local: number, over: Partial<ClusterNodePart> = 
     node: 0,
     source: 'own',
     link: 'live',
+    wire_fault: null,
     ...over,
   }
 }
@@ -379,6 +380,12 @@ test('a record is renamed and deleted only on its home node; elsewhere the row n
   assert.deepEqual(homeName('channel', stale), {
     editable: false,
     text: 'kept on node 2 · cannot be renamed or deleted until node 2 answers',
+    openNode: null,
+  })
+  const copy = rec(21, { source: 'copy', home_node: 1, name: 'Hall' })
+  assert.deepEqual(homeName('channel', copy), {
+    editable: false,
+    text: "home node 1 not heard · the name is this node's copy",
     openNode: null,
   })
 })

@@ -167,6 +167,8 @@ pub struct RegistryCommandCounters {
     pub redundancy_settings_applied: AtomicU32,
     pub display_settings_applied: AtomicU32,
     pub cluster_settings_applied: AtomicU32,
+    pub cluster_copies_stored: AtomicU32,
+    pub cluster_records_taken_back: AtomicU32,
     pub policies_applied: AtomicU32,
     pub slice_reloads: AtomicU32,
     pub home_assistant_settings_applied: AtomicU32,

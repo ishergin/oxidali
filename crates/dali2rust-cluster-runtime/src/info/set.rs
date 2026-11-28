@@ -43,6 +43,9 @@ pub struct InfoSet {
     pub(crate) scenes: [Option<HeldRecord>; BLOCK_SLOTS],
     pub(crate) channel_parts: [Option<HeldPart>; PART_SLOTS],
     pub(crate) scene_parts: [Option<HeldPart>; PART_SLOTS],
+    pub(crate) own: u8,
+    pub(crate) channel_takeback: [Option<HeldRecord>; BLOCK_SLOTS],
+    pub(crate) scene_takeback: [Option<HeldRecord>; BLOCK_SLOTS],
     pub(crate) skipped: u16,
 }
 
@@ -55,13 +58,22 @@ impl InfoSet {
             write_empty(ptr::addr_of_mut!((*set).scenes).cast::<Option<HeldRecord>>(), BLOCK_SLOTS);
             write_empty(ptr::addr_of_mut!((*set).channel_parts).cast::<Option<HeldPart>>(), PART_SLOTS);
             write_empty(ptr::addr_of_mut!((*set).scene_parts).cast::<Option<HeldPart>>(), PART_SLOTS);
+            ptr::addr_of_mut!((*set).own).write(0);
+            write_empty(ptr::addr_of_mut!((*set).channel_takeback).cast::<Option<HeldRecord>>(), BLOCK_SLOTS);
+            write_empty(ptr::addr_of_mut!((*set).scene_takeback).cast::<Option<HeldRecord>>(), BLOCK_SLOTS);
             ptr::addr_of_mut!((*set).skipped).write(0);
         }
     }
 
     pub(crate) fn clear(&mut self, node: u8) {
+        self.clear_for(node, node);
+    }
+
+    pub(crate) fn clear_for(&mut self, node: u8, own: u8) {
         self.node = node;
+        self.own = own;
         self.channels.iter_mut().chain(self.scenes.iter_mut()).for_each(|slot| *slot = None);
+        self.channel_takeback.iter_mut().chain(self.scene_takeback.iter_mut()).for_each(|slot| *slot = None);
         self.channel_parts.iter_mut().chain(self.scene_parts.iter_mut()).for_each(|slot| *slot = None);
         self.skipped = 0;
     }
@@ -77,6 +89,24 @@ impl InfoSet {
         match kind {
             ClusterRecordKind::Channel => &self.channel_parts,
             ClusterRecordKind::Scene => &self.scene_parts,
+        }
+    }
+
+    pub(crate) const fn takeback(&self, kind: ClusterRecordKind) -> &[Option<HeldRecord>; BLOCK_SLOTS] {
+        match kind {
+            ClusterRecordKind::Channel => &self.channel_takeback,
+            ClusterRecordKind::Scene => &self.scene_takeback,
+        }
+    }
+
+    pub(crate) const fn own(&self) -> u8 {
+        self.own
+    }
+
+    fn takeback_mut(&mut self, kind: ClusterRecordKind) -> &mut [Option<HeldRecord>; BLOCK_SLOTS] {
+        match kind {
+            ClusterRecordKind::Channel => &mut self.channel_takeback,
+            ClusterRecordKind::Scene => &mut self.scene_takeback,
         }
     }
 
@@ -111,11 +141,20 @@ impl InfoSet {
     }
 
     fn take_record(&mut self, kind: ClusterRecordKind, record: &Record<'_>) -> Kept {
-        let Some(index) = block_index(self.node, record.id.number) else {
+        let held = HeldRecord { mark: record.id.mark, name: fixed_text_64(record.name), revision: record.revision };
+        if let Some(index) = block_index(self.node, record.id.number) {
+            put(self.records_mut(kind), usize::from(index), held);
+            return Kept::default();
+        }
+        let Some(index) = block_index(self.own, record.id.number).filter(|_| self.own != self.node) else {
             return Kept { skipped: true };
         };
-        let held = HeldRecord { mark: record.id.mark, name: fixed_text_64(record.name), revision: record.revision };
-        put(self.records_mut(kind), usize::from(index), held);
+        if let Some(slot) = self.takeback_mut(kind).get_mut(usize::from(index)) {
+            let rank = |held: &HeldRecord| (held.mark.generation, held.revision);
+            if slot.as_ref().is_none_or(|kept| rank(kept) < rank(&held)) {
+                *slot = Some(held);
+            }
+        }
         Kept::default()
     }
 
@@ -241,7 +280,7 @@ impl InfoSet {
     }
 }
 
-unsafe fn write_empty<T>(first: *mut Option<T>, slots: usize) {
+pub(super) unsafe fn write_empty<T>(first: *mut Option<T>, slots: usize) {
     for index in 0..slots {
         // SAFETY: the caller hands the first of `slots` contiguous places of an array field.
         unsafe { first.add(index).write(None) };
@@ -264,7 +303,7 @@ fn slot_key(slot: usize) -> Option<(u8, u8)> {
     Some((adapter, local))
 }
 
-fn held_record(view: &ClusterRecordView) -> HeldRecord {
+pub(super) fn held_record(view: &ClusterRecordView) -> HeldRecord {
     HeldRecord { mark: view.mark, name: fixed_text_64(&view.name), revision: view.revision }
 }
 
@@ -272,7 +311,7 @@ const fn held_part(view: &ClusterPartView) -> HeldPart {
     HeldPart { record: view.record, send: view.send, accept: view.accept, revision: view.revision }
 }
 
-fn held_to_record(held: &HeldRecord, number: u8) -> Record<'_> {
+pub(super) fn held_to_record(held: &HeldRecord, number: u8) -> Record<'_> {
     Record { id: RecordRef { number, mark: held.mark }, name: held.name.as_str(), revision: held.revision }
 }
 

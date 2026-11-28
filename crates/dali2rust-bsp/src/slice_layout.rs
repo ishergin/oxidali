@@ -34,11 +34,18 @@ const TAIL_SLOT_COUNT: u32 = 4;
 const TAIL_REGION_OFFSET: u32 =
     LARGE_REGION_BYTES + SMALL_SLOT_COUNT * 2 * SMALL_BANK_BYTES + PD_BANK_REGION_BYTES;
 
-pub const LAYOUT_BYTES: u32 = TAIL_REGION_OFFSET + TAIL_SLOT_COUNT * 2 * SMALL_BANK_BYTES;
+const COPY_BANK_SECTORS: u32 = 3;
+const COPY_BANK_BYTES: u32 = COPY_BANK_SECTORS * SECTOR_BYTES;
+const COPY_SLOT_COUNT: u32 = 2;
+const COPY_REGION_OFFSET: u32 = TAIL_REGION_OFFSET + TAIL_SLOT_COUNT * 2 * SMALL_BANK_BYTES;
+
+pub const LAYOUT_BYTES: u32 = COPY_REGION_OFFSET + COPY_SLOT_COUNT * 2 * COPY_BANK_BYTES;
 
 pub const BANK_HEADER_BYTES: u32 = 16;
 
 pub const SMALL_SLOT_PAYLOAD_BYTES: u32 = SMALL_BANK_BYTES - BANK_HEADER_BYTES;
+
+pub const COPY_SLOT_PAYLOAD_BYTES: u32 = COPY_BANK_BYTES - BANK_HEADER_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotGeometry {
@@ -81,6 +88,12 @@ pub fn slot_geometry(key: SliceKey) -> Option<SlotGeometry> {
             offset: TAIL_REGION_OFFSET + index * 2 * SMALL_BANK_BYTES,
             bank_bytes: SMALL_BANK_BYTES,
         }),
+        SliceKey::ClusterChannelCopies | SliceKey::ClusterSceneCopies => {
+            copy_slot_index(key).map(|index| SlotGeometry {
+                offset: COPY_REGION_OFFSET + index * 2 * COPY_BANK_BYTES,
+                bank_bytes: COPY_BANK_BYTES,
+            })
+        }
         _ => small_slot_index(key).map(|index| SlotGeometry {
             offset: LARGE_REGION_BYTES + index * 2 * SMALL_BANK_BYTES,
             bank_bytes: SMALL_BANK_BYTES,
@@ -94,6 +107,14 @@ fn tail_slot_index(key: SliceKey) -> Option<u32> {
         SliceKey::ClusterSettings => Some(1),
         SliceKey::ClusterChannelParts => Some(2),
         SliceKey::ClusterSceneParts => Some(3),
+        _ => None,
+    }
+}
+
+fn copy_slot_index(key: SliceKey) -> Option<u32> {
+    match key {
+        SliceKey::ClusterChannelCopies => Some(0),
+        SliceKey::ClusterSceneCopies => Some(1),
         _ => None,
     }
 }
@@ -114,7 +135,7 @@ pub fn choose_bank(proved: Option<u8>, newest_header: Option<u8>) -> BankChoice 
 
 pub const PD_BANK_SLOT_COUNT: u32 = MAX_ADAPTERS * PD_BANKS_PER_ADAPTER;
 pub const TOTAL_SLOT_COUNT: u32 =
-    LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + TAIL_SLOT_COUNT;
+    LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + TAIL_SLOT_COUNT + COPY_SLOT_COUNT;
 
 pub fn slot_index(key: SliceKey) -> Option<u32> {
     match key {
@@ -134,6 +155,8 @@ pub fn slot_index(key: SliceKey) -> Option<u32> {
         | SliceKey::ClusterChannelParts
         | SliceKey::ClusterSceneParts => tail_slot_index(key)
             .map(|index| LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + index),
+        SliceKey::ClusterChannelCopies | SliceKey::ClusterSceneCopies => copy_slot_index(key)
+            .map(|index| LARGE_SLOT_COUNT + SMALL_SLOT_COUNT + PD_BANK_SLOT_COUNT + TAIL_SLOT_COUNT + index),
         _ => small_slot_index(key).map(|index| LARGE_SLOT_COUNT + index),
     }
 }
@@ -225,6 +248,8 @@ mod tests {
             | SliceKey::ClusterSettings
             | SliceKey::ClusterChannelParts
             | SliceKey::ClusterSceneParts
+            | SliceKey::ClusterChannelCopies
+            | SliceKey::ClusterSceneCopies
             | SliceKey::InputDevices { .. }
             | SliceKey::Rules { .. }
             | SliceKey::VirtualLamps { .. }
@@ -250,6 +275,8 @@ mod tests {
             SliceKey::ClusterSettings,
             SliceKey::ClusterChannelParts,
             SliceKey::ClusterSceneParts,
+            SliceKey::ClusterChannelCopies,
+            SliceKey::ClusterSceneCopies,
             SliceKey::InputDevices { bank: 0 },
             SliceKey::InputDevices { bank: 1 },
             SliceKey::InputDevices { bank: 2 },
@@ -260,23 +287,23 @@ mod tests {
             SliceKey::Rules { bank: 3 },
         ];
         for adapter_id in 0..MAX_ADAPTERS as u8 {
-            keys.push(SliceKey::VirtualLamps { adapter_id });
-            keys.push(SliceKey::Groups { adapter_id });
-            keys.push(SliceKey::PhysicalDevices { adapter_id });
-            for bank in 0..PD_BANKS_PER_ADAPTER as u8 {
-                keys.push(SliceKey::PhysicalDeviceBank { adapter_id, bank });
-            }
-            for scene_id in 0..SCENES_PER_ADAPTER as u8 {
-                keys.push(SliceKey::Scene {
-                    adapter_id,
-                    scene_id,
-                });
-            }
+            keys.extend(adapter_keys(adapter_id));
         }
         keys
     }
 
-    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 13] = [
+    fn adapter_keys(adapter_id: u8) -> Vec<SliceKey> {
+        let mut keys = vec![
+            SliceKey::VirtualLamps { adapter_id },
+            SliceKey::Groups { adapter_id },
+            SliceKey::PhysicalDevices { adapter_id },
+        ];
+        keys.extend((0..PD_BANKS_PER_ADAPTER as u8).map(|bank| SliceKey::PhysicalDeviceBank { adapter_id, bank }));
+        keys.extend((0..SCENES_PER_ADAPTER as u8).map(|scene_id| SliceKey::Scene { adapter_id, scene_id }));
+        keys
+    }
+
+    const INSTALLED_SLOTS: [(SliceKey, u32, u32); 15] = [
         (SliceKey::PhysicalDevices { adapter_id: 0 }, 0, 8),
         (SliceKey::PhysicalDevices { adapter_id: 7 }, 112, 8),
         (SliceKey::Adapters, 128, 1),
@@ -290,10 +317,12 @@ mod tests {
         (SliceKey::ClusterSettings, 706, 1),
         (SliceKey::ClusterChannelParts, 708, 1),
         (SliceKey::ClusterSceneParts, 710, 1),
+        (SliceKey::ClusterChannelCopies, 712, 3),
+        (SliceKey::ClusterSceneCopies, 718, 3),
     ];
 
-    const INSTALLED_LAYOUT_SECTORS: u32 = 712;
-    const INSTALLED_LAYOUT_DIGEST: u64 = 0x2edf_db07_a749_11d9;
+    const INSTALLED_LAYOUT_SECTORS: u32 = 724;
+    const INSTALLED_LAYOUT_DIGEST: u64 = 0x00fc_f712_bd50_e44e;
     const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     const MOVED: &str = "An installed slot keeps its offset for good, and a new slice gets a \

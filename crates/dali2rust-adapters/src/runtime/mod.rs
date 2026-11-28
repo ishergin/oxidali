@@ -217,6 +217,7 @@ fn spawn_cluster_slice(
         counters: Arc::clone(&seams.counters),
         records: Arc::clone(store) as _,
         parts: Arc::clone(store) as _,
+        copies: Arc::clone(store) as _,
         adapters: Arc::clone(store) as _,
         info: Arc::clone(&seams.info),
     };
@@ -712,6 +713,7 @@ fn cluster_info_bridge(
         settings: Arc::clone(store) as _,
         records: Arc::clone(store) as _,
         parts: Arc::clone(store) as _,
+        copies: Arc::clone(store) as _,
     };
     let (info, presence) = (Arc::clone(&seams.info) as _, Arc::clone(&seams.presence) as _);
     Arc::new(http_bridges::ClusterInfoBridge::new(registry, info, presence))

@@ -91,6 +91,10 @@ impl Node {
         self.read("/api/v1/cluster/status")["own"]["state"] == "running"
     }
 
+    fn settled(&self) -> bool {
+        self.read("/api/v1/cluster/status")["own"]["block"] == "settled"
+    }
+
     fn part(&self, reference: &Value, send: bool) {
         let part = json!({ "record": reference, "send": send, "accept": true }).to_string();
         self.send("PUT", "/api/v1/cluster/channel-parts/0/5", &part);
@@ -149,6 +153,7 @@ fn cluster_with(owner: &Value, beside: &Value) -> Cluster {
     cluster.third.join(&settings(2, &json!({})));
     let all_run = || cluster.owner.running() && cluster.beside.running() && cluster.third.running();
     assert!(try_wait_until(all_run, SETTLE), "the three nodes run");
+    assert!(try_wait_until(|| cluster.owner.settled(), SETTLE), "the owner's block settled");
     let channel = cluster.owner.send("POST", "/api/v1/cluster/channels", r#"{"number":2,"name":"Corridor"}"#);
     cluster.owner.part(&json!({ "number": channel["number"], "birth_mark": channel["birth_mark"] }), true);
     cluster.beside.link(true);

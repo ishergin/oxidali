@@ -5,10 +5,11 @@ use dali2rust_contracts::msg::{
 };
 use dali2rust_domain::registry::{
     ClusterRecordConflict, ClusterSettingsConflict, ClusterSettingsReadPort, ClusterSettingsView,
-    ClusterWire,
+    ClusterWire, CLUSTER_RECORD_KINDS,
 };
 use dali2rust_platform::slice_store::StoreError;
 
+use super::cluster_copies::prune_copies;
 use super::cluster_parts::plan_part_edit;
 use super::cluster_records::{
     persistable_records, plan_record_edit, stored_block, ClusterRecords, RecordEdit, RecordRequest,
@@ -184,7 +185,12 @@ enum Written {
     Parts(Option<ClusterRecordKind>),
 }
 
-fn apply_stage(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
+fn apply_stage(g: &mut Inner, patches: &[ClusterPatch]) -> Result<(Written, [bool; 2]), ClusterRefusal> {
+    let written = apply_patches(g, patches)?;
+    Ok((written, CLUSTER_RECORD_KINDS.map(|kind| prune_copies(g, kind))))
+}
+
+fn apply_patches(g: &mut Inner, patches: &[ClusterPatch]) -> Result<Written, ClusterRefusal> {
     if let Some(command) = part_request(patches)? {
         let edit = plan_part_edit(g, command)?;
         return Ok(Written::Parts(g.cluster_parts.apply(edit)));
@@ -238,10 +244,13 @@ impl RegistryStore {
         if stage.patches.len() != usize::from(frames) {
             return Err(ClusterRefusal::FrameCountMismatch);
         }
-        let written = apply_stage(&mut g, &stage.patches)?;
+        let (written, pruned) = apply_stage(&mut g, &stage.patches)?;
         let applied = g.cluster_settings.clone();
         drop(g);
         self.mark_cluster_written(written);
+        for (kind, _) in CLUSTER_RECORD_KINDS.into_iter().zip(pruned).filter(|(_, pruned)| *pruned) {
+            self.mark_cluster_copies_dirty(kind);
+        }
         Ok(applied)
     }
 
@@ -321,6 +330,9 @@ pub(crate) fn decode_cluster_settings(bytes: &[u8]) -> Result<PersistableCluster
 pub(crate) fn hydrate_cluster_settings_inner(inner: &mut Inner, slice: &PersistableClusterSettingsSlice) {
     inner.cluster_settings = ClusterSettingsRecord(stored_view(slice));
     inner.cluster_records = stored_records(slice).unwrap_or_else(ClusterRecords::preallocated);
+    for kind in CLUSTER_RECORD_KINDS {
+        prune_copies(inner, kind);
+    }
 }
 
 #[cfg(test)]

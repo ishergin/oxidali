@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::bounded::FixedText64;
 use super::kinds::LevelTransition;
 use super::state::LightSetpoint;
 
@@ -53,7 +54,7 @@ pub enum ClusterRecordKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClusterRecordAction {
-    Create { number: Option<u8>, nonce: u32 },
+    Create { number: Option<u8>, nonce: u32, node: u8 },
     Rename { number: u8, revision: u32 },
     Delete { number: u8, revision: u32 },
 }
@@ -106,6 +107,19 @@ pub enum ClusterSubject {
     Info,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClusterCopyAction {
+    Store { revision: u32, name: FixedText64 },
+    Drop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClusterTakenRecord {
+    pub mark: ClusterBirthMark,
+    pub revision: u32,
+    pub name: FixedText64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,7 +135,7 @@ mod tests {
         assert_eq!(encode(&ClusterTextField::RecordName), [1]);
         assert_eq!(encode(&ClusterRecordKind::Channel), [0]);
         assert_eq!(encode(&ClusterRecordKind::Scene), [1]);
-        assert_eq!(encode(&ClusterRecordAction::Create { number: None, nonce: 0 }), [0, 0, 0]);
+        assert_eq!(encode(&ClusterRecordAction::Create { number: None, nonce: 0, node: 2 }), [0, 0, 0, 2]);
         assert_eq!(encode(&ClusterRecordAction::Rename { number: 3, revision: 2 }), [1, 3, 2]);
         assert_eq!(encode(&ClusterRecordAction::Delete { number: 3, revision: 2 }), [2, 3, 2]);
     }

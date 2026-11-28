@@ -23,6 +23,11 @@ pub const fn cluster_block(node: u8) -> RangeInclusive<u8> {
     first..=first.saturating_add(CLUSTER_NUMBERS_PER_NODE - 1)
 }
 
+#[must_use]
+pub const fn cluster_node_of(number: u8) -> u8 {
+    number / CLUSTER_NUMBERS_PER_NODE
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClusterWire {
     #[default]

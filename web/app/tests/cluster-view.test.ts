@@ -60,6 +60,7 @@ const own = (over: Partial<ClusterOwn> = {}): ClusterOwn => ({
   wire_chain: false,
   unprotected_wire: false,
   number_held_by: null,
+  block: 'settled',
   ...over,
 })
 

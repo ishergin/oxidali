@@ -1,4 +1,5 @@
 mod cache;
+mod copy_set;
 mod set;
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ use dali2rust_platform::liveness::monotonic_ms;
 
 pub use cache::{Arrival, HeldNode, InfoCache, PageTally, SetId};
 pub(crate) use cache::{placed_cache, placed_set};
+pub(crate) use copy_set::{placed_copy_set, CopySet};
 pub use set::{HeldPart, HeldRecord, InfoSet, Kept, BLOCK_SLOTS, PART_SLOTS};
 
 use crate::frame::InfoPage;
@@ -21,6 +23,7 @@ use crate::frame::InfoPage;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InfoHeldView {
     pub node: u8,
+    pub mac: [u8; 6],
     pub set: u32,
     pub age_ms: u32,
     pub skipped: u16,
@@ -74,6 +77,12 @@ impl ClusterInfo {
         cache.take_page(at, page)
     }
 
+    pub(crate) fn with_shown<R>(&self, node: u8, now_ms: u32, read: impl FnOnce(&InfoSet, HeldNode) -> R) -> Option<R> {
+        let cache = self.lock();
+        let held = cache.held(node, now_ms)?;
+        cache.shown(node).map(|set| read(set, held))
+    }
+
     pub(crate) fn forget(&self, node: u8) {
         self.lock().forget(node);
     }
@@ -94,8 +103,8 @@ impl ClusterInfo {
         let held = cache.held(node, now_ms)?;
         let (channels, channel_parts) = cache.counts(node, ClusterRecordKind::Channel)?;
         let (scenes, scene_parts) = cache.counts(node, ClusterRecordKind::Scene)?;
-        let HeldNode { set, age_ms, skipped } = held;
-        Some(InfoHeldView { node, set, age_ms, skipped, channels, scenes, channel_parts, scene_parts })
+        let HeldNode { mac, set, age_ms, skipped } = held;
+        Some(InfoHeldView { node, mac, set, age_ms, skipped, channels, scenes, channel_parts, scene_parts })
     }
 }
 

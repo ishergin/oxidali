@@ -1,16 +1,23 @@
 use std::io::{self, Write};
 
-use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_contracts::msg::{ClusterBirthMark, ClusterRecordKind, ClusterRecordRef};
 use dali2rust_domain::registry::{
-    ClusterPartKeys, ClusterRecordNumbers, CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE,
+    ClusterPartKeys, ClusterRecordConflict, ClusterRecordNumbers, CLUSTER_NODE_COUNT, CLUSTER_NUMBERS_PER_NODE, MAX_CLUSTER_COPIES_PER_KIND,
 };
 use serde::Serialize;
 
-use crate::http::cluster_parts_state::ClusterPartDto;
+use crate::http::cluster_parts_state::{ClusterPartDto, ClusterPartRecordDto};
 use crate::http::handlers::common::write_json_array_items;
 use crate::http::cluster_records_state::ClusterRecordDto;
 
+#[cfg(test)]
+mod tests;
+
 const NODES: usize = CLUSTER_NODE_COUNT as usize;
+
+pub const CLUSTER_BLOCK_UNSETTLED: &str = ClusterRecordConflict::BlockUnsettled.message();
+
+pub const CLUSTER_NODE_CONTESTED: &str = "cluster_node_contested";
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +25,7 @@ pub enum ClusterInfoSource {
     Own,
     Cached,
     Stale,
+    Copy,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -41,6 +49,19 @@ pub struct ClusterInfoNodeDto {
     pub skipped: u16,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterWireHolding {
+    OtherRecord,
+    Nothing,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct ClusterWireFaultDto {
+    pub node: u8,
+    pub holds: ClusterWireHolding,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct ClusterNodePartDto {
     pub node: u8,
@@ -48,6 +69,7 @@ pub struct ClusterNodePartDto {
     #[serde(flatten)]
     pub part: ClusterPartDto,
     pub link: ClusterPartLink,
+    pub wire_fault: Option<ClusterWireFaultDto>,
 }
 
 pub trait ClusterInfoHttpState: Send + Sync {
@@ -60,21 +82,42 @@ pub trait ClusterInfoHttpState: Send + Sync {
     fn part(&self, node: u8, kind: ClusterRecordKind, adapter: u8, local: u8) -> Option<ClusterPartDto>;
 
     fn part_keys(&self, node: u8, kind: ClusterRecordKind) -> ClusterPartKeys;
+
+    fn copy_at(&self, _kind: ClusterRecordKind, _index: usize) -> Option<ClusterRecordDto> {
+        None
+    }
+
+    fn link(&self, _kind: ClusterRecordKind, _record: ClusterRecordRef) -> ClusterPartLink {
+        ClusterPartLink::Unknown
+    }
+
+    fn wire(&self, _node: u8) -> Option<u8> {
+        None
+    }
+
+    fn record_write_block(&self) -> Result<u8, &'static str>;
 }
 
 #[derive(Clone, Copy)]
 pub struct ClusterView<'a> {
     state: &'a dyn ClusterInfoHttpState,
     sources: [Option<ClusterInfoSource>; NODES],
+    wires: [Option<u8>; NODES],
 }
 
 impl<'a> ClusterView<'a> {
     pub fn read(state: &'a dyn ClusterInfoHttpState) -> Self {
         let mut sources = [None; NODES];
-        for (node, source) in (0..CLUSTER_NODE_COUNT).zip(sources.iter_mut()) {
+        let mut wires = [None; NODES];
+        for ((node, source), wire) in (0..CLUSTER_NODE_COUNT).zip(sources.iter_mut()).zip(wires.iter_mut()) {
             *source = state.node_info(node).map(|info| info.source);
+            *wire = state.wire(node);
         }
-        Self { state, sources }
+        Self { state, sources, wires }
+    }
+
+    fn wire(&self, node: u8) -> Option<u8> {
+        self.wires.get(usize::from(node)).copied().flatten()
     }
 
     pub fn source(&self, node: u8) -> Option<ClusterInfoSource> {
@@ -86,29 +129,43 @@ impl<'a> ClusterView<'a> {
     }
 
     pub fn records(&self, kind: ClusterRecordKind) -> impl Iterator<Item = ClusterRecordDto> + '_ {
-        self.known_nodes().flat_map(move |(node, _)| {
+        let held = self.known_nodes().flat_map(move |(node, _)| {
             let numbers = self.state.record_numbers(node, kind).iter();
             numbers.filter_map(move |number| self.state.record(node, kind, number))
+        });
+        held.chain(self.copies(kind))
+    }
+
+    fn copies(&self, kind: ClusterRecordKind) -> impl Iterator<Item = ClusterRecordDto> + '_ {
+        let mut copies = (0..MAX_CLUSTER_COPIES_PER_KIND).map_while(move |index| self.state.copy_at(kind, index)).peekable();
+        core::iter::from_fn(move || {
+            let copy = copies.next()?;
+            let newest = copies.peek().is_none_or(|next| next.number != copy.number);
+            Some(newest.then_some(copy))
         })
+        .flatten()
+        .filter(|copy| self.source(copy.home_node).is_none())
     }
 
     pub fn record(&self, kind: ClusterRecordKind, number: u8) -> Option<ClusterRecordDto> {
         let home = home_node(number);
-        self.source(home)?;
-        self.state.record(home, kind, number)
+        if self.source(home).is_some() {
+            return self.state.record(home, kind, number);
+        }
+        self.copies(kind).find(|copy| copy.number == number)
     }
 
     pub fn parts_of(&self, kind: ClusterRecordKind, record: &ClusterRecordDto) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
-        let (number, mark) = (record.number, record.birth_mark);
-        let all = self.known_nodes().flat_map(move |(node, _)| self.held_parts(node, kind));
-        all.filter(move |held| held.part.record.number == number).map(move |held| {
-            let link = if held.part.record.birth_mark == mark { ClusterPartLink::Live } else { ClusterPartLink::Orphan };
-            ClusterNodePartDto { link, ..held }
-        })
+        let number = record.number;
+        let all = self.known_nodes().flat_map(move |(node, _)| self.node_parts(node, kind));
+        all.filter(move |held| held.part.record.number == number)
     }
 
     pub fn node_parts(&self, node: u8, kind: ClusterRecordKind) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
-        self.held_parts(node, kind).map(move |held| ClusterNodePartDto { link: self.link(kind, &held.part), ..held })
+        self.held_parts(node, kind).map(move |held| {
+            let link = self.state.link(kind, record_ref(held.part.record));
+            ClusterNodePartDto { link, wire_fault: self.wire_fault(kind, &held), ..held }
+        })
     }
 
     fn held_parts(&self, node: u8, kind: ClusterRecordKind) -> impl Iterator<Item = ClusterNodePartDto> + '_ {
@@ -116,20 +173,31 @@ impl<'a> ClusterView<'a> {
         let keys = source.map(|_| self.state.part_keys(node, kind)).unwrap_or_default();
         keys.iter().filter_map(move |(adapter, local)| {
             let part = self.state.part(node, kind, adapter, local)?;
-            Some(ClusterNodePartDto { node, source: source?, part, link: ClusterPartLink::Unknown })
+            Some(ClusterNodePartDto { node, source: source?, part, link: ClusterPartLink::Unknown, wire_fault: None })
         })
     }
 
-    fn link(&self, kind: ClusterRecordKind, part: &ClusterPartDto) -> ClusterPartLink {
-        let number = part.record.number;
-        if self.source(home_node(number)).is_none() {
-            return ClusterPartLink::Unknown;
-        }
-        match self.record(kind, number) {
-            Some(record) if record.birth_mark == part.record.birth_mark => ClusterPartLink::Live,
-            _ => ClusterPartLink::Orphan,
-        }
+    fn wire_fault(&self, kind: ClusterRecordKind, held: &ClusterNodePartDto) -> Option<ClusterWireFaultDto> {
+        let wire = self.wire(held.node)?;
+        let (adapter, local) = (held.part.adapter, held.part.group.or(held.part.scene)?);
+        let neighbours = self.known_nodes().filter(|(node, source)| {
+            *node != held.node && matches!(source, ClusterInfoSource::Own | ClusterInfoSource::Cached)
+        });
+        neighbours.filter(|(node, _)| self.wire(*node) == Some(wire)).find_map(|(node, _)| {
+            let holds = match self.state.part(node, kind, adapter, local) {
+                None => ClusterWireHolding::Nothing,
+                Some(other) if other.record.number != held.part.record.number => ClusterWireHolding::OtherRecord,
+                Some(other) if other.record.birth_mark != held.part.record.birth_mark => ClusterWireHolding::OtherRecord,
+                Some(_) => return None,
+            };
+            Some(ClusterWireFaultDto { node, holds })
+        })
     }
+}
+
+const fn record_ref(record: ClusterPartRecordDto) -> ClusterRecordRef {
+    let mark = ClusterBirthMark { generation: record.birth_mark.generation, nonce: record.birth_mark.nonce };
+    ClusterRecordRef { number: record.number, mark }
 }
 
 #[must_use]

@@ -1,6 +1,6 @@
 use dali2rust_contracts::msg::ClusterRecordKind;
 use dali2rust_domain::registry::{
-    cluster_block, ClusterPartKeys, ClusterPartReadPort, ClusterPartView, ClusterRecordNumbers,
+    cluster_block, ClusterCopyReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterPartView, ClusterRecordNumbers,
     ClusterRecordReadPort, ClusterRecordView,
 };
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
@@ -28,6 +28,10 @@ impl ClusterRecordReadPort for FullBlock {
     fn cluster_record_numbers(&self, _kind: ClusterRecordKind) -> ClusterRecordNumbers {
         ClusterRecordNumbers { first: *cluster_block(self.node).start(), live: ALL_NUMBERS }
     }
+
+    fn cluster_generation(&self, _kind: ClusterRecordKind, _number: u8) -> u32 {
+        MARK.generation
+    }
 }
 
 impl ClusterPartReadPort for FullBlock {
@@ -37,6 +41,16 @@ impl ClusterPartReadPort for FullBlock {
 
     fn cluster_part_keys(&self, _kind: ClusterRecordKind) -> ClusterPartKeys {
         ClusterPartKeys::default()
+    }
+}
+
+impl ClusterCopyReadPort for FullBlock {
+    fn cluster_copy(&self, _kind: ClusterRecordKind, _record: crate::frame::RecordRef) -> Option<ClusterRecordView> {
+        None
+    }
+
+    fn cluster_copy_at(&self, _kind: ClusterRecordKind, _index: usize) -> Option<ClusterRecordView> {
+        None
     }
 }
 
@@ -52,6 +66,7 @@ struct Rig {
     block: FullBlock,
     buffer: DatagramBuffer,
     sent: Vec<Sent>,
+    split: bool,
 }
 
 impl Rig {
@@ -61,13 +76,13 @@ impl Rig {
 
     fn timed(node: u8, timing: PresenceTiming) -> Self {
         let buffer = [0; MAX_CLUSTER_DATAGRAM_BYTES];
-        Self { timing, announcer: Announcer::new(), block: FullBlock { node }, buffer, sent: Vec::new() }
+        Self { timing, announcer: Announcer::new(), block: FullBlock { node }, buffer, sent: Vec::new(), split: false }
     }
 
     fn turn(&mut self, now_ms: u32, running: bool, hello: bool) {
         let node = self.block.node;
-        let turn = Turn { running, node, now_ms, hello, timing: self.timing };
-        let own = OwnInfo { records: &self.block, parts: &self.block };
+        let turn = Turn { running, node, now_ms, hello, split: self.split, timing: self.timing };
+        let own = OwnInfo { records: &self.block, parts: &self.block, copies: &self.block };
         self.announcer.plan(turn, own);
         if self.announcer.page_due(now_ms) {
             let tag = cluster_tag("hall");
@@ -94,6 +109,23 @@ impl Rig {
         }
         starts
     }
+}
+
+#[test]
+fn a_set_sent_while_two_boards_hold_the_node_number_never_counts_as_sent() {
+    let mut rig = Rig::new(0);
+    rig.run(0, WATCH_MS, &[]);
+    assert!(rig.announcer.sets_sent(WATCH_MS)[1].is_some(), "a set went out before the split");
+    rig.split = true;
+    for now_ms in WATCH_MS..2 * WATCH_MS {
+        rig.turn(now_ms, true, false);
+        assert_eq!(rig.announcer.sets_sent(now_ms), [None; 2], "at {now_ms} ms");
+    }
+    let split_sets = rig.sent.iter().filter(|sent| sent.at_ms >= WATCH_MS && sent.closes_set).count();
+    assert!(split_sets > 0, "sets go out during the split");
+    rig.split = false;
+    rig.turn(2 * WATCH_MS, true, false);
+    assert_eq!(rig.announcer.sets_sent(2 * WATCH_MS), [None; 2], "the home may have heard only the other board");
 }
 
 #[test]

@@ -6,7 +6,10 @@ use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState, ClusterWireOwnerDto,
     MAX_CLUSTER_STATUS_IGNORED,
 };
-use dali2rust_api::http::cluster_info_state::{ClusterInfoHttpState, ClusterInfoNodeDto, ClusterInfoSource};
+use dali2rust_api::http::cluster_info_state::{
+    ClusterInfoHttpState, ClusterInfoNodeDto, ClusterInfoSource, ClusterPartLink, CLUSTER_BLOCK_UNSETTLED,
+    CLUSTER_NODE_CONTESTED,
+};
 use dali2rust_api::http::cluster_parts_state::{
     cluster_part_view_to_dto, ClusterPartDto, ClusterPartsHttpState, ClusterPartsHttpStateBridge,
 };
@@ -68,12 +71,13 @@ use dali2rust_bus::BusPublisher;
 use dali2rust_cluster_runtime::info::{ClusterInfoReadPort, InfoHeldView};
 use dali2rust_cluster_runtime::presence::{IgnoredReason, OwnMode, WireOwner, MAX_HEARD_BOARDS};
 use dali2rust_cluster_runtime::{
-    ClusterCounters, ClusterPresenceReadPort, IgnoredView, NodeView, OwnStatus,
+    own_standing, BlockState, ClusterCounters, ClusterPresenceReadPort, HomeReads, IgnoredView, NodeView, OwnStatus,
+    RecordStanding,
 };
-use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_contracts::msg::{ClusterRecordKind, ClusterRecordRef};
 use dali2rust_domain::registry::{
-    AdapterReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterRecordNumbers, ClusterRecordReadPort,
-    ClusterSettingsReadPort, RegistryReadPort,
+    cluster_node_of, AdapterReadPort, ClusterCopyReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterRecordNumbers,
+    ClusterRecordReadPort, ClusterSettingsReadPort, ClusterWire, RegistryReadPort,
 };
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
 use dali2rust_platform::clock::Uptime;
@@ -387,6 +391,7 @@ declare_counter_mapping! {
         forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
         forwards_skipped_wire_total, foreign_forwarded_total, foreign_held_total, foreign_cancelled_total,
         foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
+        copies_stored_total = 0, records_taken_back_total = 0,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,
@@ -793,6 +798,9 @@ impl StatsHttpState for StatsBridge {
         out.hcl = stats_hcl_dto(&self.counters.hcl_scheduler);
         out.rules = stats_rules_dto(&self.counters);
         out.cluster = stats_cluster_dto(&self.cluster);
+        let registry = &self.counters.registry.command;
+        out.cluster.copies_stored_total = registry.cluster_copies_stored.load(Relaxed);
+        out.cluster.records_taken_back_total = registry.cluster_records_taken_back.load(Relaxed);
         out.network = self.link.as_ref().map(|l| stats_network_dto(l.stats()));
     }
 }
@@ -1540,6 +1548,17 @@ fn own_dto(status: &OwnStatus) -> ClusterOwnDto {
         wire_chain: status.faults.wire_chain,
         unprotected_wire: status.faults.unprotected_wire,
         number_held_by: status.held_by.map(node_name),
+        block: block_name(status.block),
+    }
+}
+
+const fn block_name(block: BlockState) -> &'static str {
+    match block {
+        BlockState::Off => "off",
+        BlockState::Passive => "passive",
+        BlockState::Listening => "listening",
+        BlockState::Contested => "contested",
+        BlockState::Settled => "settled",
     }
 }
 
@@ -1609,6 +1628,7 @@ pub(crate) struct ClusterRegistryPorts {
     pub settings: Arc<dyn ClusterSettingsReadPort>,
     pub records: Arc<dyn ClusterRecordReadPort>,
     pub parts: Arc<dyn ClusterPartReadPort>,
+    pub copies: Arc<dyn ClusterCopyReadPort>,
 }
 
 pub(crate) struct ClusterInfoBridge {
@@ -1654,6 +1674,14 @@ impl ClusterInfoBridge {
         let records = self.registry.records.cluster_record_numbers(kind).iter().count();
         let parts = self.registry.parts.cluster_part_keys(kind).iter().count();
         (saturating_u8(records), saturating_u8(parts))
+    }
+}
+
+const fn part_link(standing: RecordStanding) -> ClusterPartLink {
+    match standing {
+        RecordStanding::Live => ClusterPartLink::Live,
+        RecordStanding::Orphan => ClusterPartLink::Orphan,
+        RecordStanding::Unknown => ClusterPartLink::Unknown,
     }
 }
 
@@ -1714,6 +1742,45 @@ impl ClusterInfoHttpState for ClusterInfoBridge {
             Home::Other(_) => self.info.info_part_keys(node, kind),
         }
     }
+
+    fn copy_at(&self, kind: ClusterRecordKind, index: usize) -> Option<ClusterRecordDto> {
+        let view = self.registry.copies.cluster_copy_at(kind, index)?;
+        Some(ClusterRecordDto { source: ClusterInfoSource::Copy, ..cluster_record_view_to_dto(view) })
+    }
+
+    fn link(&self, kind: ClusterRecordKind, record: ClusterRecordRef) -> ClusterPartLink {
+        if cluster_node_of(record.number) == self.own_node() {
+            let block = self.presence.own_status().block;
+            return part_link(own_standing(&*self.registry.records, block, kind, record));
+        }
+        part_link(HomeReads { presence: &*self.presence, info: &*self.info }.standing(kind, record))
+    }
+
+    fn wire(&self, node: u8) -> Option<u8> {
+        if node == self.own_node() {
+            let settings = self.registry.settings.cluster_settings_view();
+            return Some(match settings.wire {
+                ClusterWire::Own => settings.node_number,
+                ClusterWire::SameAs(wire) => wire,
+            });
+        }
+        self.presence.heard_node(node).map(|view| view.wire)
+    }
+
+    fn record_write_block(&self) -> Result<u8, &'static str> {
+        let status = self.presence.own_status();
+        record_write_block(status.block, status.node, self.own_node())
+    }
+}
+
+const fn record_write_block(block: BlockState, block_node: u8, numbered: u8) -> Result<u8, &'static str> {
+    match block {
+        BlockState::Listening => Err(CLUSTER_BLOCK_UNSETTLED),
+        BlockState::Contested => Err(CLUSTER_NODE_CONTESTED),
+        BlockState::Settled if block_node != numbered => Err(CLUSTER_BLOCK_UNSETTLED),
+        BlockState::Settled => Ok(block_node),
+        BlockState::Off | BlockState::Passive => Ok(numbered),
+    }
 }
 
 #[cfg(test)]
@@ -1722,8 +1789,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        arbitration_dto, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
+        arbitration_dto, record_write_block, stats_readback_dto, ConfigTransferBridge, ReplicationSinkBridge,
     };
+    use dali2rust_api::http::cluster_info_state::{CLUSTER_BLOCK_UNSETTLED, CLUSTER_NODE_CONTESTED};
+    use dali2rust_cluster_runtime::BlockState;
     use dali2rust_api::http::handlers::config_transfer::ConfigTransferPort;
     use dali2rust_bsp::slice_store_files::InMemorySliceStore;
     use dali2rust_platform::slice_store::{SliceKey, SliceStore};
@@ -1745,6 +1814,15 @@ mod tests {
     const SHORT: u8 = 4;
     const GROUP: u8 = 3;
     const ADAPTERS: u8 = 1;
+
+    #[test]
+    fn a_block_settled_for_another_node_number_issues_no_number() {
+        assert_eq!(record_write_block(BlockState::Settled, 2, 2), Ok(2));
+        assert_eq!(record_write_block(BlockState::Settled, 2, 3), Err(CLUSTER_BLOCK_UNSETTLED));
+        assert_eq!(record_write_block(BlockState::Listening, 3, 3), Err(CLUSTER_BLOCK_UNSETTLED));
+        assert_eq!(record_write_block(BlockState::Contested, 3, 3), Err(CLUSTER_NODE_CONTESTED));
+        assert_eq!(record_write_block(BlockState::Passive, 2, 3), Ok(3));
+    }
     const KNOWN_SLICE: &str = "poller_settings";
     const OTHER_KNOWN_SLICE: &str = "hcl_schedules";
     const SLICE_BYTES: [u8; 3] = [1, 2, 3];

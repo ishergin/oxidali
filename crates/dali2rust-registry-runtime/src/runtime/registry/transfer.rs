@@ -26,6 +26,8 @@ pub fn transferable_slices(adapter_count: u8) -> Vec<SliceKey> {
     keys.push(SliceKey::ClusterSettings);
     keys.push(SliceKey::ClusterChannelParts);
     keys.push(SliceKey::ClusterSceneParts);
+    keys.push(SliceKey::ClusterChannelCopies);
+    keys.push(SliceKey::ClusterSceneCopies);
     for bank in 0..SliceKey::INPUT_DEVICE_BANKS {
         keys.push(SliceKey::InputDevices { bank });
     }

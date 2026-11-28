@@ -89,6 +89,10 @@ impl Node {
         self.read("/api/v1/cluster/status")["own"]["state"] == "running"
     }
 
+    fn settled(&self) -> bool {
+        self.read("/api/v1/cluster/status")["own"]["block"] == "settled"
+    }
+
     fn link(&self, part: &str, record: &str) {
         assert!(try_wait_until(|| self.read(record)["source"] == "cached", SETTLE), "{record}: {}", self.read(record));
         let held = self.read(record);
@@ -131,6 +135,7 @@ fn running_pair() -> (Arc<ClusterHub>, Node, Node) {
     first.join(0);
     second.join(1);
     assert!(try_wait_until(|| first.running() && second.running(), SETTLE), "both nodes run");
+    assert!(try_wait_until(|| first.settled() && second.settled(), SETTLE), "both blocks settled");
     (hub, first, second)
 }
 
@@ -165,6 +170,7 @@ fn a_node_whose_command_cannot_leave_does_not_execute_its_own_part() {
     let node = node_on(&hub, &FIRST);
     node.join(0);
     assert!(try_wait_until(|| node.running(), SETTLE), "the node runs");
+    assert!(try_wait_until(|| node.settled(), SETTLE), "its block settled");
     let channel = node.send("POST", "/api/v1/cluster/channels", r#"{"number":2,"name":"Corridor"}"#);
     let reference = json!({ "number": channel["number"], "birth_mark": channel["birth_mark"] });
     node.send("PUT", "/api/v1/cluster/channel-parts/0/5", &json!({ "record": reference, "send": false, "accept": true }).to_string());

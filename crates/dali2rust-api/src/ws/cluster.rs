@@ -83,6 +83,7 @@ mod tests {
                 wire_chain: true,
                 unprotected_wire: true,
                 number_held_by: Some(WIDEST_BOARD.into()),
+                block: "contested",
             }
         }
 
@@ -165,6 +166,10 @@ mod tests {
 
         fn part_keys(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterPartKeys {
             ClusterPartKeys::default()
+        }
+
+        fn record_write_block(&self) -> Result<u8, &'static str> {
+            Ok(0)
         }
     }
 

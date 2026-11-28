@@ -13,6 +13,7 @@ use crate::runtime::registry::input_devices::{
     hydrate_input_devices_bank_inner, rebank_input_devices, PersistableInputDevicesSlice,
 };
 
+use super::cluster_copies::{decode_channel_copies, decode_scene_copies};
 use super::cluster_parts::{decode_channel_parts, decode_scene_parts};
 use super::cluster_settings::decode_cluster_settings;
 use super::dali_settings::decode_dali_settings_slice;
@@ -31,7 +32,7 @@ use super::persistence_slices::{
     POLICIES_SLICE_VERSION,
     REDUNDANCY_SETTINGS_SLICE_VERSION,
     DISPLAY_SETTINGS_SLICE_VERSION, CLUSTER_SETTINGS_SLICE_VERSION, CLUSTER_CHANNEL_PARTS_SLICE_VERSION,
-    CLUSTER_SCENE_PARTS_SLICE_VERSION,
+    CLUSTER_SCENE_PARTS_SLICE_VERSION, CLUSTER_CHANNEL_COPIES_SLICE_VERSION, CLUSTER_SCENE_COPIES_SLICE_VERSION,
     SCENES_SLICE_VERSION,
     VIRTUAL_LAMPS_SLICE_VERSION,
 };
@@ -344,6 +345,8 @@ impl crate::runtime::registry::store::RegistryStore {
         self.flush_cluster_settings_if_dirty(slices);
         self.flush_cluster_channel_parts_if_dirty(slices);
         self.flush_cluster_scene_parts_if_dirty(slices);
+        self.flush_cluster_channel_copies_if_dirty(slices);
+        self.flush_cluster_scene_copies_if_dirty(slices);
         self.flush_policies_if_dirty(slices);
         self.flush_home_assistant_settings_if_dirty(slices);
         self.flush_input_devices_if_dirty(slices);
@@ -551,6 +554,20 @@ impl crate::runtime::registry::store::RegistryStore {
             CLUSTER_SCENE_PARTS_SLICE_VERSION,
             "cluster_scene_parts",
             crate::runtime::registry::cluster_parts::persistable_scene_parts;
+        flush_cluster_channel_copies_if_dirty =>
+            take_cluster_channel_copies_dirty,
+            mark_cluster_channel_copies_dirty,
+            SliceKey::ClusterChannelCopies,
+            CLUSTER_CHANNEL_COPIES_SLICE_VERSION,
+            "cluster_channel_copies",
+            crate::runtime::registry::cluster_copies::persistable_channel_copies;
+        flush_cluster_scene_copies_if_dirty =>
+            take_cluster_scene_copies_dirty,
+            mark_cluster_scene_copies_dirty,
+            SliceKey::ClusterSceneCopies,
+            CLUSTER_SCENE_COPIES_SLICE_VERSION,
+            "cluster_scene_copies",
+            crate::runtime::registry::cluster_copies::persistable_scene_copies;
         flush_policies_if_dirty =>
             take_policies_dirty,
             mark_policies_dirty,
@@ -722,6 +739,8 @@ fn registry_kind(key: SliceKey) -> Option<PersistenceSliceKind> {
         SliceKey::ClusterSettings => PersistenceSliceKind::ClusterSettings,
         SliceKey::ClusterChannelParts => PersistenceSliceKind::ClusterChannelParts,
         SliceKey::ClusterSceneParts => PersistenceSliceKind::ClusterSceneParts,
+        SliceKey::ClusterChannelCopies => PersistenceSliceKind::ClusterChannelCopies,
+        SliceKey::ClusterSceneCopies => PersistenceSliceKind::ClusterSceneCopies,
         SliceKey::InputDevices { bank } => PersistenceSliceKind::InputDevices { bank },
         SliceKey::ControllerSettings | SliceKey::Rules { .. } => return None,
     })
@@ -760,6 +779,8 @@ fn validate_kind(kind: &PersistenceSliceKind, bytes: &[u8]) -> Result<(), StoreE
         PersistenceSliceKind::ClusterSettings => decode_cluster_settings(bytes).map(drop),
         PersistenceSliceKind::ClusterChannelParts => decode_channel_parts(bytes).map(drop),
         PersistenceSliceKind::ClusterSceneParts => decode_scene_parts(bytes).map(drop),
+        PersistenceSliceKind::ClusterChannelCopies => decode_channel_copies(bytes).map(drop),
+        PersistenceSliceKind::ClusterSceneCopies => decode_scene_copies(bytes).map(drop),
         PersistenceSliceKind::InputDevices { .. } => {
             decodes::<PersistableInputDevicesSlice>(bytes, INPUT_DEVICES_SLICE_VERSION)
         }
@@ -868,6 +889,8 @@ fn key_of(kind: &PersistenceSliceKind) -> SliceKey {
         PersistenceSliceKind::ClusterSettings => SliceKey::ClusterSettings,
         PersistenceSliceKind::ClusterChannelParts => SliceKey::ClusterChannelParts,
         PersistenceSliceKind::ClusterSceneParts => SliceKey::ClusterSceneParts,
+        PersistenceSliceKind::ClusterChannelCopies => SliceKey::ClusterChannelCopies,
+        PersistenceSliceKind::ClusterSceneCopies => SliceKey::ClusterSceneCopies,
         PersistenceSliceKind::InputDevices { bank } => SliceKey::InputDevices { bank },
     }
 }
@@ -993,6 +1016,8 @@ fn mark_slice_dirty(store: &RegistryStore, kind: &PersistenceSliceKind) {
         PersistenceSliceKind::ClusterSettings => store.dirty.mark_cluster_settings_dirty(),
         PersistenceSliceKind::ClusterChannelParts => store.dirty.mark_cluster_channel_parts_dirty(),
         PersistenceSliceKind::ClusterSceneParts => store.dirty.mark_cluster_scene_parts_dirty(),
+        PersistenceSliceKind::ClusterChannelCopies => store.dirty.mark_cluster_channel_copies_dirty(),
+        PersistenceSliceKind::ClusterSceneCopies => store.dirty.mark_cluster_scene_copies_dirty(),
         PersistenceSliceKind::InputDevices { .. } => store.dirty.mark_input_devices_dirty(),
     }
 }
@@ -1114,11 +1139,23 @@ hydrate_wrappers! { decoded:
         "no cluster scene parts stored",
         decode_scene_parts,
         crate::runtime::registry::cluster_parts::hydrate_scene_parts_inner;
+    hydrate_cluster_channel_copies_slice =>
+        PersistenceSliceKind::ClusterChannelCopies,
+        "cluster channel copies",
+        "no cluster channel copies stored",
+        decode_channel_copies,
+        crate::runtime::registry::cluster_copies::hydrate_channel_copies_inner;
+    hydrate_cluster_scene_copies_slice =>
+        PersistenceSliceKind::ClusterSceneCopies,
+        "cluster scene copies",
+        "no cluster scene copies stored",
+        decode_scene_copies,
+        crate::runtime::registry::cluster_copies::hydrate_scene_copies_inner;
 }
 
 type GlobalHydrate = fn(&RegistryStore, &dyn SliceStore, &mut HydrateSink<'_>);
 
-const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 10] = [
+const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 12] = [
     (SliceKey::HclSchedules, hydrate_hcl_schedules_slice),
     (SliceKey::PollerSettings, hydrate_poller_settings_slice),
     (SliceKey::DaliSettings, hydrate_dali_settings_slice),
@@ -1129,6 +1166,8 @@ const LATE_GLOBAL_SLICES: [(SliceKey, GlobalHydrate); 10] = [
     (SliceKey::ClusterSettings, hydrate_cluster_settings_slice),
     (SliceKey::ClusterChannelParts, hydrate_cluster_channel_parts_slice),
     (SliceKey::ClusterSceneParts, hydrate_cluster_scene_parts_slice),
+    (SliceKey::ClusterChannelCopies, hydrate_cluster_channel_copies_slice),
+    (SliceKey::ClusterSceneCopies, hydrate_cluster_scene_copies_slice),
 ];
 
 hydrate_wrappers! { per_adapter:

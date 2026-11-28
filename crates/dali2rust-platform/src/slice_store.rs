@@ -19,6 +19,8 @@ pub enum SliceKey {
     ClusterSettings,
     ClusterChannelParts,
     ClusterSceneParts,
+    ClusterChannelCopies,
+    ClusterSceneCopies,
 }
 
 impl SliceKey {
@@ -59,6 +61,8 @@ impl SliceKey {
                 SliceKey::ClusterSettings,
                 SliceKey::ClusterChannelParts,
                 SliceKey::ClusterSceneParts,
+                SliceKey::ClusterChannelCopies,
+                SliceKey::ClusterSceneCopies,
             ])
     }
 
@@ -94,6 +98,8 @@ impl SliceKey {
             SliceKey::ClusterSettings => "cluster_settings".to_string(),
             SliceKey::ClusterChannelParts => "cluster_channel_parts".to_string(),
             SliceKey::ClusterSceneParts => "cluster_scene_parts".to_string(),
+            SliceKey::ClusterChannelCopies => "cluster_channel_copies".to_string(),
+            SliceKey::ClusterSceneCopies => "cluster_scene_copies".to_string(),
             SliceKey::PhysicalDeviceBank { adapter_id, bank } => {
                 format!("a{adapter_id}/physical_devices_b{bank}")
             }
@@ -200,6 +206,8 @@ mod tests {
             | SliceKey::ClusterSettings
             | SliceKey::ClusterChannelParts
             | SliceKey::ClusterSceneParts
+            | SliceKey::ClusterChannelCopies
+            | SliceKey::ClusterSceneCopies
             | SliceKey::PhysicalDeviceBank { .. } => keys.contains(&key),
         };
         for key in [
@@ -223,11 +231,13 @@ mod tests {
             SliceKey::ClusterSettings,
             SliceKey::ClusterChannelParts,
             SliceKey::ClusterSceneParts,
+            SliceKey::ClusterChannelCopies,
+            SliceKey::ClusterSceneCopies,
         ] {
             assert!(witness(key), "{key:?} is not enumerated");
         }
-        assert_eq!(keys.len(), 90);
-        assert_eq!(SliceKey::every(2).count(), 90);
+        assert_eq!(keys.len(), 92);
+        assert_eq!(SliceKey::every(2).count(), 92);
         assert!(!keys.contains(&SliceKey::Scene { adapter_id: 2, scene_id: 0 }));
     }
 

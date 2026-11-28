@@ -18,8 +18,10 @@ pub(crate) const INPUT_DEVICES: u32 = (ALL_INPUT_DEVICE_BANKS as u32) << FIRST_I
 pub(crate) const CLUSTER_SETTINGS: u32 = 1 << (FIRST_INPUT_DEVICE_BANK + SliceKey::INPUT_DEVICE_BANKS as u32);
 pub(crate) const CLUSTER_CHANNEL_PARTS: u32 = CLUSTER_SETTINGS << 1;
 pub(crate) const CLUSTER_SCENE_PARTS: u32 = CLUSTER_SETTINGS << 2;
+pub(crate) const CLUSTER_CHANNEL_COPIES: u32 = CLUSTER_SETTINGS << 3;
+pub(crate) const CLUSTER_SCENE_COPIES: u32 = CLUSTER_SETTINGS << 4;
 
-const GLOBALS: [(u32, SliceKey); 11] = [
+const GLOBALS: [(u32, SliceKey); 13] = [
     (ADAPTERS, SliceKey::Adapters),
     (HCL_SCHEDULES, SliceKey::HclSchedules),
     (POLLER_SETTINGS, SliceKey::PollerSettings),
@@ -31,6 +33,8 @@ const GLOBALS: [(u32, SliceKey); 11] = [
     (CLUSTER_SETTINGS, SliceKey::ClusterSettings),
     (CLUSTER_CHANNEL_PARTS, SliceKey::ClusterChannelParts),
     (CLUSTER_SCENE_PARTS, SliceKey::ClusterSceneParts),
+    (CLUSTER_CHANNEL_COPIES, SliceKey::ClusterChannelCopies),
+    (CLUSTER_SCENE_COPIES, SliceKey::ClusterSceneCopies),
 ];
 
 fn bit(index: u8) -> u32 {
@@ -65,6 +69,8 @@ fn place(key: SliceKey) -> Option<(Word, u32)> {
         SliceKey::ClusterSettings => global(CLUSTER_SETTINGS),
         SliceKey::ClusterChannelParts => global(CLUSTER_CHANNEL_PARTS),
         SliceKey::ClusterSceneParts => global(CLUSTER_SCENE_PARTS),
+        SliceKey::ClusterChannelCopies => global(CLUSTER_CHANNEL_COPIES),
+        SliceKey::ClusterSceneCopies => global(CLUSTER_SCENE_COPIES),
         SliceKey::PhysicalDevices { .. }
         | SliceKey::PhysicalDeviceBank { .. }
         | SliceKey::ControllerSettings
