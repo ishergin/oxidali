@@ -713,6 +713,7 @@ fn cluster_info_bridge(
         settings: Arc::clone(store) as _,
         records: Arc::clone(store) as _,
         parts: Arc::clone(store) as _,
+        copies: Arc::clone(store) as _,
     };
     let (info, presence) = (Arc::clone(&seams.info) as _, Arc::clone(&seams.presence) as _);
     Arc::new(http_bridges::ClusterInfoBridge::new(registry, info, presence))

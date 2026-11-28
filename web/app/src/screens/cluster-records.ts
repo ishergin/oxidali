@@ -68,6 +68,8 @@ export function homeName(kind: Kind, rec: ClusterRecord): HomeName {
   const label = recordLabel(kind, rec.number)
   const k = rec.home_node
   if (isHome(rec)) return { editable: true, text: `kept on this node, the home of ${label}`, openNode: null }
+  if (rec.source === 'copy')
+    return { editable: false, text: `home node ${k} not heard · the name is this node's copy`, openNode: null }
   if (rec.source === 'stale')
     return { editable: false, text: `kept on node ${k} · cannot be renamed or deleted until node ${k} answers`, openNode: null }
   return { editable: false, text: `kept on node ${k}, the home of ${label}: renamed and deleted there`, openNode: k }

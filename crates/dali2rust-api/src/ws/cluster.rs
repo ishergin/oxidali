@@ -48,10 +48,10 @@ fn cluster_frame(event: &str, ts_ms: u64, write: impl FnOnce(&mut Vec<u8>) -> io
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::cluster_info_state::{ClusterInfoNodeDto, ClusterInfoSource};
+    use crate::http::cluster_info_state::{ClusterInfoNodeDto, ClusterInfoSource, ClusterPartLink};
     use crate::http::cluster_parts_state::ClusterPartDto;
     use crate::http::cluster_records_state::ClusterRecordDto;
-    use dali2rust_contracts::msg::ClusterRecordKind;
+    use dali2rust_contracts::msg::{ClusterRecordKind, ClusterRecordRef};
     use dali2rust_domain::registry::{ClusterPartKeys, ClusterRecordNumbers, CLUSTER_NODE_COUNT};
     use crate::http::cluster_status_state::{
         ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterWireOwnerDto, MAX_CLUSTER_STATUS_IGNORED,
@@ -83,6 +83,7 @@ mod tests {
                 wire_chain: true,
                 unprotected_wire: true,
                 number_held_by: Some(WIDEST_BOARD.into()),
+                block: "contested",
             }
         }
 
@@ -165,6 +166,22 @@ mod tests {
 
         fn part_keys(&self, _node: u8, _kind: ClusterRecordKind) -> ClusterPartKeys {
             ClusterPartKeys::default()
+        }
+
+        fn copy_at(&self, _kind: ClusterRecordKind, _index: usize) -> Option<ClusterRecordDto> {
+            None
+        }
+
+        fn link(&self, _kind: ClusterRecordKind, _record: ClusterRecordRef) -> ClusterPartLink {
+            ClusterPartLink::Unknown
+        }
+
+        fn wire(&self, _node: u8) -> Option<u8> {
+            None
+        }
+
+        fn record_write_refusal(&self) -> Option<&'static str> {
+            None
         }
     }
 

@@ -26,6 +26,7 @@ pub struct ClusterOwnDto {
     pub wire_chain: bool,
     pub unprotected_wire: bool,
     pub number_held_by: Option<String>,
+    pub block: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

@@ -6,7 +6,10 @@ use dali2rust_api::http::cluster_status_state::{
     ClusterIgnoredDto, ClusterNodeDto, ClusterOwnDto, ClusterStatusHttpState, ClusterWireOwnerDto,
     MAX_CLUSTER_STATUS_IGNORED,
 };
-use dali2rust_api::http::cluster_info_state::{ClusterInfoHttpState, ClusterInfoNodeDto, ClusterInfoSource};
+use dali2rust_api::http::cluster_info_state::{
+    ClusterInfoHttpState, ClusterInfoNodeDto, ClusterInfoSource, ClusterPartLink, CLUSTER_BLOCK_UNSETTLED,
+    CLUSTER_NODE_CONTESTED,
+};
 use dali2rust_api::http::cluster_parts_state::{
     cluster_part_view_to_dto, ClusterPartDto, ClusterPartsHttpState, ClusterPartsHttpStateBridge,
 };
@@ -68,12 +71,13 @@ use dali2rust_bus::BusPublisher;
 use dali2rust_cluster_runtime::info::{ClusterInfoReadPort, InfoHeldView};
 use dali2rust_cluster_runtime::presence::{IgnoredReason, OwnMode, WireOwner, MAX_HEARD_BOARDS};
 use dali2rust_cluster_runtime::{
-    ClusterCounters, ClusterPresenceReadPort, IgnoredView, NodeView, OwnStatus,
+    own_standing, BlockState, ClusterCounters, ClusterPresenceReadPort, HomeReads, IgnoredView, NodeView, OwnStatus,
+    RecordStanding,
 };
-use dali2rust_contracts::msg::ClusterRecordKind;
+use dali2rust_contracts::msg::{ClusterRecordKind, ClusterRecordRef};
 use dali2rust_domain::registry::{
-    AdapterReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterRecordNumbers, ClusterRecordReadPort,
-    ClusterSettingsReadPort, RegistryReadPort,
+    cluster_node_of, AdapterReadPort, ClusterCopyReadPort, ClusterPartKeys, ClusterPartReadPort, ClusterRecordNumbers,
+    ClusterRecordReadPort, ClusterSettingsReadPort, ClusterWire, RegistryReadPort,
 };
 use dali2rust_operations_runtime::{ApplyOrchestratorCounters, OperationTrackerCounters};
 use dali2rust_platform::clock::Uptime;
@@ -1540,6 +1544,17 @@ fn own_dto(status: &OwnStatus) -> ClusterOwnDto {
         wire_chain: status.faults.wire_chain,
         unprotected_wire: status.faults.unprotected_wire,
         number_held_by: status.held_by.map(node_name),
+        block: block_name(status.block),
+    }
+}
+
+const fn block_name(block: BlockState) -> &'static str {
+    match block {
+        BlockState::Off => "off",
+        BlockState::Passive => "passive",
+        BlockState::Listening => "listening",
+        BlockState::Contested => "contested",
+        BlockState::Settled => "settled",
     }
 }
 
@@ -1609,6 +1624,7 @@ pub(crate) struct ClusterRegistryPorts {
     pub settings: Arc<dyn ClusterSettingsReadPort>,
     pub records: Arc<dyn ClusterRecordReadPort>,
     pub parts: Arc<dyn ClusterPartReadPort>,
+    pub copies: Arc<dyn ClusterCopyReadPort>,
 }
 
 pub(crate) struct ClusterInfoBridge {
@@ -1654,6 +1670,14 @@ impl ClusterInfoBridge {
         let records = self.registry.records.cluster_record_numbers(kind).iter().count();
         let parts = self.registry.parts.cluster_part_keys(kind).iter().count();
         (saturating_u8(records), saturating_u8(parts))
+    }
+}
+
+const fn part_link(standing: RecordStanding) -> ClusterPartLink {
+    match standing {
+        RecordStanding::Live => ClusterPartLink::Live,
+        RecordStanding::Orphan => ClusterPartLink::Orphan,
+        RecordStanding::Unknown => ClusterPartLink::Unknown,
     }
 }
 
@@ -1712,6 +1736,38 @@ impl ClusterInfoHttpState for ClusterInfoBridge {
         match self.home(node) {
             Home::Own => self.registry.parts.cluster_part_keys(kind),
             Home::Other(_) => self.info.info_part_keys(node, kind),
+        }
+    }
+
+    fn copy_at(&self, kind: ClusterRecordKind, index: usize) -> Option<ClusterRecordDto> {
+        let view = self.registry.copies.cluster_copy_at(kind, index)?;
+        Some(ClusterRecordDto { source: ClusterInfoSource::Copy, ..cluster_record_view_to_dto(view) })
+    }
+
+    fn link(&self, kind: ClusterRecordKind, record: ClusterRecordRef) -> ClusterPartLink {
+        if cluster_node_of(record.number) == self.own_node() {
+            let block = self.presence.own_status().block;
+            return part_link(own_standing(&*self.registry.records, block, kind, record));
+        }
+        part_link(HomeReads { presence: &*self.presence, info: &*self.info }.standing(kind, record))
+    }
+
+    fn wire(&self, node: u8) -> Option<u8> {
+        if node == self.own_node() {
+            let settings = self.registry.settings.cluster_settings_view();
+            return Some(match settings.wire {
+                ClusterWire::Own => settings.node_number,
+                ClusterWire::SameAs(wire) => wire,
+            });
+        }
+        self.presence.heard_node(node).map(|view| view.wire)
+    }
+
+    fn record_write_refusal(&self) -> Option<&'static str> {
+        match self.presence.own_status().block {
+            BlockState::Listening => Some(CLUSTER_BLOCK_UNSETTLED),
+            BlockState::Contested => Some(CLUSTER_NODE_CONTESTED),
+            BlockState::Off | BlockState::Passive | BlockState::Settled => None,
         }
     }
 }

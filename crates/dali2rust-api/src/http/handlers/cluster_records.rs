@@ -168,6 +168,9 @@ impl ClusterRecordHandler {
 
     fn commit(&self, action: ClusterRecordAction, name: Option<String>) -> Result<(), HttpResponse> {
         let deps = &self.deps;
+        if let Some(refusal) = deps.cluster.record_write_refusal() {
+            return Err(json_err(409, refusal));
+        }
         let before = deps.apply_watch.cluster_settings_applied_load();
         publish_batch_and_wait_for_success(&deps.publisher, &deps.slots, deps.timeout_ms, self.batch(action, name))?;
         let watch = Arc::clone(&deps.apply_watch);
