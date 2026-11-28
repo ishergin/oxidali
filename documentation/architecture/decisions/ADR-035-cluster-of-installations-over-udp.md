@@ -196,8 +196,12 @@ this wire with the same target and verb cancels it:
   it.
 - A setpoint is held 70 ms, the relative spacing and the latency. It is cancelled only by a
   command that agrees with every field it states, the level through `dapc_level()`, and
-  that command supersedes every earlier setpoint held for its target: the colour frames
-  before a `DAPC`, a slider's intermediate values. A setpoint that leaves before its
+  that command supersedes the earlier commands held for its target that it covers: a
+  setpoint that states a level covers the steps and the setpoints without a colour — the
+  colour frames before a `DAPC`, a slider's intermediate values — and covers a setpoint
+  with a colour or a scene recall only when it states a colour too. A scene recall held
+  before a neighbour's setpoint that does not cover it still leaves after it, so the two
+  can arrive at the other wires in the opposite order. A setpoint that leaves before its
   neighbour's command arrives is a duplicate of the same value or an intermediate one the
   later command overwrites, so a slider on a neighbour leaves every wire at its last
   value.
@@ -209,6 +213,21 @@ this wire with the same target and verb cancels it:
   verbs lost. Silence on the neighbour's side simply lets the observation leave after its
   hold.
 - Alone on its wire a node holds nothing.
+- A cancel heard before its observation waits for it and is forgotten as soon as another
+  command on its target is heard, so it cannot swallow a later foreign command of the same
+  value.
+
+A neighbour also puts on the wire frames it does not send to the cluster: a rule, HCL or
+a source whose switch is off, a group whose part does not send. The owner hears them as
+foreign, and forwarding them would carry exactly what the neighbour keeps home — with
+rules on two shared wires, a loop. So a node that shares its wire and does not forward the
+foreign master notes every such group, broadcast or scene frame to the owner in a wire
+note: its wire, adapter, group or broadcast, and the verb or local scene. The note names
+the frame in DALI terms because the neighbour may have no part for that group; the owner
+maps it through its own parts, as it maps its own observation, and cancels by it exactly
+as by a command. A frame the neighbour sends to the cluster is cancelled by that command
+and is never noted, so each frame has one carrier. A note goes twice with one sequence
+number and does not wait in the neighbour's line.
 
 While two nodes both think they own the wire — the window this record already allows —
 both hold and forward, and each one's copy arrives after the other has released its own,
@@ -218,9 +237,22 @@ a design value: the hold against a real neighbour's line is owed to the bench.
 A neighbour on this wire without protection, or this node's protection off on a wire that
 became shared, is a storm in the making: the owner reports `unprotected_wire` in its status
 and forwards no foreign frame while it lasts, and a chain of wires already stops the owner.
-These are run-time checks because only pulses show them. What the settings can see is
-refused when written: protection off while the foreign master is forwarded on a wire this
-node names after another, as before, or on its own wire while a live neighbour names it.
+These are run-time checks because only pulses show them. The owner at the head of a chain
+— its wire named by a neighbour whose own wire another node names — forwards no foreign
+frame either, though it keeps owning its wire. A settings change pulses at once, so a
+neighbour that switches its protection off is heard within the network's latency rather
+than a pulse period. What the settings can see is refused when written: protection off
+while the foreign master is forwarded on a wire this node names after another, as before,
+or a patch of the wire, the switch, the protection or the node number that leaves this
+node forwarding the foreign master unprotected on its own wire while a live neighbour
+names it.
+
+The windows are design values and owed to the bench: the relative hold against a
+neighbour line that interleaves absolute commands, which wait the longer target spacing;
+the 70 ms an early cancel waits against the neighbour's own execution, since a command
+typed for a channel leaves the neighbour before it reaches its wire; and the sniffer's
+required publication, which retries a fact under a full ingress the way it already did for
+a recall, against a burst that fills the interrupt's ring.
 
 ### The bus rules hold
 
