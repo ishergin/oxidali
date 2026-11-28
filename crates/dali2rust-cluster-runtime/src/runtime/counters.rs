@@ -46,6 +46,13 @@ pub struct ClusterCounters {
     pub forwards_skipped_cluster_origin_total: AtomicU32,
     pub forwards_skipped_source_off_total: AtomicU32,
     pub forwards_skipped_not_sent_total: AtomicU32,
+    pub forwards_skipped_wire_total: AtomicU32,
+    pub foreign_forwarded_total: AtomicU32,
+    pub foreign_held_total: AtomicU32,
+    pub foreign_cancelled_total: AtomicU32,
+    pub foreign_hold_full_total: AtomicU32,
+    pub wire_notes_sent_total: AtomicU32,
+    pub wire_notes_taken_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {
@@ -58,6 +65,7 @@ impl ClusterCounters {
             Skip::ClusterOrigin => &self.forwards_skipped_cluster_origin_total,
             Skip::SourceOff => &self.forwards_skipped_source_off_total,
             Skip::NotSent => &self.forwards_skipped_not_sent_total,
+            Skip::Wire => &self.forwards_skipped_wire_total,
         }
     }
 

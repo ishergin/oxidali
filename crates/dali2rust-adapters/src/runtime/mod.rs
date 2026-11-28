@@ -29,7 +29,6 @@ pub use dali2rust_ws_runtime::{
 };
 
 use crate::dali::transport::bus_unit_wire::controller_identity;
-use crate::dali::transport::mock::MockDaliTransport;
 
 pub use bus_stack::BusStackRuntime;
 use app_router::{
@@ -727,9 +726,9 @@ pub struct HttpTestPorts {
     pub cluster: Option<ClusterComposition>,
 }
 
-pub fn build_http_test_stack(
+pub fn build_http_test_stack<T: DaliTransport + Send + 'static>(
     version: &'static str,
-    mock: Arc<Mutex<MockDaliTransport>>,
+    transport: Arc<Mutex<T>>,
     config: BusConfig,
     runtime_config: DaliRuntimeConfig,
     persistence_slices: Option<Arc<dyn SliceStore>>,
@@ -738,7 +737,7 @@ pub fn build_http_test_stack(
 ) -> (Router, Arc<WsHub>, Box<BusStackRuntime>) {
     build_router_with_bus_and_transport(
         version,
-        mock,
+        transport,
         ports.display_panel.map_or_else(HardwareDisplay::none, HardwareDisplay::panel),
         StackOptions {
             bus_config: config,

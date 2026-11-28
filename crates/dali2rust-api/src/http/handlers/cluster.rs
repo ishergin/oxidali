@@ -8,17 +8,18 @@ use dali2rust_contracts::msg::{
     ClusterTextUpdateCommand,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::{CLUSTER_NODE_COUNT, MAX_CLUSTER_NAME_BYTES};
+use dali2rust_domain::registry::{ClusterSettingsConflict, CLUSTER_NODE_COUNT, MAX_CLUSTER_NAME_BYTES};
 
 use crate::confirmation_bridge::PendingConfirmationSlots;
-use crate::http::cluster_settings_state::{ClusterSettingsApplyWatch, ClusterSettingsHttpState};
+use crate::http::cluster_settings_state::{ClusterSettingsApplyWatch, ClusterSettingsDto, ClusterSettingsHttpState};
+use crate::http::cluster_status_state::ClusterStatusHttpState;
 use crate::http::dispatcher::{publish_batch_and_wait_for_success, CorrelationIdAllocator};
 use crate::http::handler::ApiHandler;
 use crate::http::handlers::resource_surface::declare_handler_shell;
 use crate::http::types::HttpResponse;
 
 use super::common::{
-    check_body_keys, json_err, json_stream_dto, parse_bool_field, parse_json_body, require_get,
+    check_body_keys, json_err, json_err_with_message, json_stream_dto, parse_bool_field, parse_json_body, require_get,
     wait_apply_counter, MutatingHandler, APPLY_WATCH_BUDGET_MS,
 };
 
@@ -44,6 +45,8 @@ const WRITABLE_KEYS: &[&str] = &[
     "accept_single_lamps",
     "wire_protection",
 ];
+
+const WIRE_GUARD_FIELDS: [Field; 4] = [Field::Wire, Field::ForwardForeignMaster, Field::WireProtection, Field::NodeNumber];
 
 const FLAGS: [(&str, Field); 9] = [
     ("enabled", Field::Enabled),
@@ -86,6 +89,7 @@ declare_handler_shell!(ClusterSettingsPatchHandler {
     apply_watch: Arc<dyn ClusterSettingsApplyWatch>,
     bus_id: BusId,
     timeout_ms: u64,
+    presence: Arc<dyn ClusterStatusHttpState>,
 });
 
 pub struct ClusterPatchData {
@@ -119,6 +123,31 @@ impl ClusterSettingsPatchHandler {
     }
 }
 
+impl ClusterSettingsPatchHandler {
+    fn refuse_unprotecting_a_heard_wire(&self, patch: &ClusterSettingsUpdateCommand) -> Result<(), HttpResponse> {
+        if !WIRE_GUARD_FIELDS.into_iter().any(|field| patch.patches(field)) {
+            return Ok(());
+        }
+        let Some(wire) = unprotected_own_wire(&self.state.cluster_settings_dto(), patch) else {
+            return Ok(());
+        };
+        if !self.presence.neighbour_names_wire(wire, wire) {
+            return Ok(());
+        }
+        let message = ClusterSettingsConflict::WireProtectionRequired.message();
+        Err(json_err_with_message(409, "conflict", message))
+    }
+}
+
+fn unprotected_own_wire(stored: &ClusterSettingsDto, patch: &ClusterSettingsUpdateCommand) -> Option<u8> {
+    let pick = |field, patched: bool, stored: bool| if patch.patches(field) { patched } else { stored };
+    let own_wire = pick(Field::Wire, patch.wire_same_as.is_none(), stored.wire_same_as.is_none());
+    let foreign = pick(Field::ForwardForeignMaster, patch.forwarding.foreign_master, stored.forward_foreign_master);
+    let protected = pick(Field::WireProtection, patch.wire_protection, stored.wire_protection);
+    let node = if patch.patches(Field::NodeNumber) { patch.node_number } else { stored.node_number };
+    (own_wire && foreign && !protected).then_some(node)
+}
+
 impl MutatingHandler for ClusterSettingsPatchHandler {
     type Validated = ClusterPatchData;
     type Executed = ();
@@ -135,6 +164,7 @@ impl MutatingHandler for ClusterSettingsPatchHandler {
     }
 
     fn execute(&self, data: ClusterPatchData) -> Result<(), HttpResponse> {
+        self.refuse_unprotecting_a_heard_wire(&data.settings)?;
         let batch = self.build_batch(data);
         if batch.is_empty() {
             return Ok(());
@@ -253,6 +283,7 @@ fn parse_cluster_name(obj: &JsonObject) -> Result<Option<String>, HttpResponse> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn parsed(body: serde_json::Value) -> Result<ClusterPatchData, HttpResponse> {
         parse_cluster_patch(body.as_object().expect("object"))
@@ -276,12 +307,47 @@ mod tests {
     fn every_flag_names_its_own_field_and_only_that_field() {
         assert_eq!(READERS.map(|(key, field, _)| (key, field)), FLAGS);
         for (key, field, read) in READERS {
-            let settings = parsed(serde_json::json!({ key: true })).ok().expect("parses").settings;
+            let settings = parsed(json!({ key: true })).ok().expect("parses").settings;
             assert_eq!(settings.patch_mask, field.bit(), "{key}");
             assert!(read(&settings), "{key} did not land in its field");
             let set = READERS.iter().filter(|(_, _, other)| other(&settings)).count();
             assert_eq!(set, 1, "{key} moved another field");
         }
+    }
+
+    fn stored(foreign: bool, protected: bool) -> ClusterSettingsDto {
+        let mut dto = crate::http::cluster_settings_state::cluster_settings_view_to_dto(Default::default(), false);
+        dto.forward_foreign_master = foreign;
+        dto.wire_protection = protected;
+        dto
+    }
+
+    fn unprotected(stored: &ClusterSettingsDto, body: serde_json::Value) -> Option<u8> {
+        unprotected_own_wire(stored, &parsed(body).ok().expect("parses").settings)
+    }
+
+    fn unprotects(stored: &ClusterSettingsDto, body: serde_json::Value) -> bool {
+        unprotected(stored, body).is_some()
+    }
+
+    #[test]
+    fn only_an_own_wire_with_the_foreign_master_forwarded_and_protection_off_is_unprotected() {
+        assert!(unprotects(&stored(true, true), json!({ "wire_protection": false })));
+        assert!(!unprotects(&stored(false, true), json!({ "wire_protection": false })), "the foreign master stays home");
+        assert!(!unprotects(&stored(true, true), json!({ "wire_same_as": 1, "wire_protection": false })), "another node's wire");
+        assert!(unprotects(&stored(false, false), json!({ "forward_foreign_master": true })));
+        assert!(!unprotects(&stored(true, false), json!({ "wire_protection": true })));
+        assert!(unprotects(&stored(true, false), json!({ "wire_same_as": null })));
+    }
+
+    #[test]
+    fn the_wire_asked_about_is_the_one_the_patch_leaves_this_node_on() {
+        let mut on_another = stored(true, false);
+        on_another.wire_same_as = Some(1);
+        on_another.node_number = 3;
+        assert_eq!(unprotected(&on_another, json!({ "wire_same_as": null })), Some(3), "back to its own wire");
+        assert_eq!(unprotected(&on_another, json!({ "wire_same_as": null, "node_number": 5 })), Some(5), "a new number");
+        assert_eq!(unprotected(&stored(true, true), json!({ "wire_protection": false, "node_number": 6 })), Some(6));
     }
 
     #[test]

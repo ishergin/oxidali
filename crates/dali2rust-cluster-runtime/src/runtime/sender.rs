@@ -37,6 +37,7 @@ use crate::presence::{ListenWindow, OwnFacts, OwnMode, HALF_CLOCK_MS};
 use super::announce::{reached, Announcer, OwnInfo, Turn};
 use super::counters::{bump, ClusterCounters};
 use super::execute::{ClusterExecution, ExecutionReads};
+use super::hold::ForeignHold;
 use super::incoming::CommandIntake;
 use super::outgoing::{placed_outgoing, Outgoing};
 use super::receiver::{run_receiver, LinkHandoff};
@@ -60,6 +61,7 @@ pub const CLUSTER_WORKER_HANDLED_EVENTS: &[&str] = &[
     "DaliLevelTransitionAppliedEvent",
     "DaliSceneRecalledEvent",
     "DaliStopFadeAppliedEvent",
+    "DaliObservedFrameEvent",
 ];
 
 
@@ -97,7 +99,14 @@ pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) 
     let info = Arc::clone(&ports.info);
     let execution = execution(&ports);
     let settings = Arc::clone(&ports.settings);
-    let intake = CommandIntake { execution: Arc::clone(&execution), settings, confirmations: inboxes.confirmations };
+    let hold = Arc::new(ForeignHold::new());
+    let intake = CommandIntake {
+        execution: Arc::clone(&execution),
+        settings,
+        parts: Arc::clone(&ports.parts),
+        confirmations: inboxes.confirmations,
+        hold: Arc::clone(&hold),
+    };
     let receiver = spawn_named_stack_in(
         c"cluster_rx",
         std_thread_stack::EVENT_WORKER_STACK,
@@ -109,7 +118,7 @@ pub fn spawn_cluster_worker(inboxes: ClusterInboxes, ports: ClusterWorkerPorts) 
         c"cluster_tx",
         std_thread_stack::EVENT_WORKER_STACK,
         StackHome::ExternalOnXip,
-        move || run_sender(inbox, &ports, (handoff_tx, execution)),
+        move || run_sender(inbox, &ports, Links { handoff: handoff_tx, execution, hold }),
     );
     ClusterWorkerThreads { sender, receiver }
 }
@@ -137,7 +146,13 @@ dali2rust_contracts::dispatch_bus_commands! {
     ClusterCommandCommand(command) => node.on_command(correlation_id, command),
 }
 
-fn run_sender(inbox: BusSubscriberRx, ports: &ClusterWorkerPorts, links: (Sender<LinkHandoff>, Arc<ClusterExecution>)) {
+struct Links {
+    handoff: Sender<LinkHandoff>,
+    execution: Arc<ClusterExecution>,
+    hold: Arc<ForeignHold>,
+}
+
+fn run_sender(inbox: BusSubscriberRx, ports: &ClusterWorkerPorts, links: Links) {
     let mut node = NodeSender::new(ports, links);
     SENDER_STACK.note("start");
     loop {
@@ -207,6 +222,8 @@ impl Reading {
             mac: self.mac.unwrap_or_default(),
             node_no: self.settings.node_number,
             wire: self.wire(),
+            wire_protection: self.settings.wire_protection,
+            forwards_foreign: self.settings.forwarding.foreign_master,
             running_since_ms: None,
         }
     }
@@ -216,6 +233,7 @@ struct NodeSender<'a> {
     ports: &'a ClusterWorkerPorts,
     handoff: Sender<LinkHandoff>,
     execution: Arc<ClusterExecution>,
+    hold: Arc<ForeignHold>,
     outgoing: PsramBox<Outgoing>,
     mode: OwnMode,
     buffer: PsramBox<DatagramBuffer>,
@@ -229,7 +247,7 @@ struct NodeSender<'a> {
 }
 
 impl<'a> NodeSender<'a> {
-    fn new(ports: &'a ClusterWorkerPorts, (handoff, execution): (Sender<LinkHandoff>, Arc<ClusterExecution>)) -> Self {
+    fn new(ports: &'a ClusterWorkerPorts, Links { handoff, execution, hold }: Links) -> Self {
         let now_ms = monotonic_ms();
         let digest = ports.presence.digest(now_ms);
         let buffer = datagram_buffer();
@@ -237,6 +255,7 @@ impl<'a> NodeSender<'a> {
             ports,
             handoff,
             execution,
+            hold,
             outgoing: placed_outgoing(),
             mode: OwnMode::Off,
             buffer,
@@ -267,6 +286,7 @@ impl<'a> NodeSender<'a> {
         if settled.entered_running || self.slot_due(now_ms) {
             self.on_slot(&reading, settled, now_ms);
         }
+        self.release_foreign(&reading, now_ms);
         self.carry_commands(&reading, now_ms);
         self.announce(&reading, settled.mode == OwnMode::Running, now_ms);
         self.ports.presence.prune(now_ms);
@@ -325,7 +345,8 @@ impl<'a> NodeSender<'a> {
             let left = |at_ms: u32| if reached(now_ms, at_ms) { 0 } else { at_ms.wrapping_sub(now_ms) };
             let info = self.announcer.deadline().map_or(u32::MAX, left);
             let commands = self.outgoing.deadline().map_or(u32::MAX, left);
-            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info).min(commands)))
+            let held = self.hold.line().deadline().map_or(u32::MAX, left);
+            Duration::from_millis(u64::from(left(self.next_slot_ms).min(info).min(commands).min(held)))
         })
     }
 
@@ -440,11 +461,16 @@ impl<'a> NodeSender<'a> {
         match frame {
             BusFrame::Command(command) => dispatch_cluster_command(&command.payload, self, command.meta.correlation_id),
             BusFrame::Event(event) => match &event.payload {
-                BusEventPayload::ClusterSettingsChangedEvent(_) => self.announcer.note_settings_changed(),
+                BusEventPayload::ClusterSettingsChangedEvent(_) => self.on_settings_changed(),
                 fact => self.forward(fact),
             },
             _ => {}
         }
+    }
+
+    fn on_settings_changed(&mut self) {
+        self.announcer.note_settings_changed();
+        self.next_slot_ms = monotonic_ms();
     }
 
     fn on_forget(&mut self, correlation_id: u64, forget: &ClusterForgetNodeCommand) {

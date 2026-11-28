@@ -3,6 +3,7 @@ mod command;
 mod header;
 mod info;
 mod limits;
+mod note;
 mod presence;
 
 #[cfg(test)]
@@ -25,4 +26,5 @@ pub use limits::{
     ADAPTER_COUNT, MAX_CLUSTER_NAME_BYTES, MAX_INSTALLATION_BYTES, MAX_NAME_BYTES, NODE_COUNT,
     NUMBERS_PER_NODE, RECORD_NUMBER_COUNT,
 };
+pub use note::{NoteDeed, NoteReach, WireNote};
 pub use presence::{Hello, NodeClaim, Pulse};

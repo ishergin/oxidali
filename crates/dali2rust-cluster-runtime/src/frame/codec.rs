@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::command::Command;
 use super::header::Header;
 use super::info::InfoPage;
+use super::note::WireNote;
 use super::presence::{Hello, Pulse};
 
 pub const PROTOCOL_TAG: [u8; 4] = *b"D2RC";
@@ -25,10 +26,11 @@ pub enum FrameKind {
     Pulse = 1,
     Hello = 2,
     ChannelSceneInfo = 3,
+    WireNote = 4,
 }
 
 impl FrameKind {
-    const ALL: [Self; 4] = [Self::Command, Self::Pulse, Self::Hello, Self::ChannelSceneInfo];
+    const ALL: [Self; 5] = [Self::Command, Self::Pulse, Self::Hello, Self::ChannelSceneInfo, Self::WireNote];
 
     fn from_byte(byte: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| *kind as u8 == byte)
@@ -41,6 +43,7 @@ pub enum Frame<'a> {
     Pulse(Pulse<'a>),
     Hello(Hello),
     ChannelSceneInfo(InfoPage<'a>),
+    WireNote(WireNote),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,12 +75,14 @@ impl<'a> Frame<'a> {
             Self::Pulse(_) => FrameKind::Pulse,
             Self::Hello(_) => FrameKind::Hello,
             Self::ChannelSceneInfo(_) => FrameKind::ChannelSceneInfo,
+            Self::WireNote(_) => FrameKind::WireNote,
         }
     }
 
     fn in_range(&self) -> bool {
         match self {
             Self::Command(command) => command.in_range(),
+            Self::WireNote(note) => note.in_range(),
             Self::Pulse(pulse) => pulse.in_range(),
             Self::Hello(_) | Self::ChannelSceneInfo(_) => true,
         }
@@ -89,6 +94,7 @@ impl<'a> Frame<'a> {
             Self::Pulse(pulse) => put(pulse, out),
             Self::Hello(hello) => put(hello, out),
             Self::ChannelSceneInfo(page) => page.write(out),
+            Self::WireNote(note) => put(note, out),
         }
     }
 
@@ -98,6 +104,7 @@ impl<'a> Frame<'a> {
             FrameKind::Pulse => Self::Pulse(whole(body)?),
             FrameKind::Hello => Self::Hello(whole(body)?),
             FrameKind::ChannelSceneInfo => Self::ChannelSceneInfo(InfoPage::decode(body)?),
+            FrameKind::WireNote => Self::WireNote(whole(body)?),
         };
         if frame.in_range() {
             Ok(frame)

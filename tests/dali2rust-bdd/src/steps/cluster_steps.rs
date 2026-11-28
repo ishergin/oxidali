@@ -138,6 +138,7 @@ impl Drop for Neighbour {
 struct Pulser {
     speaker: Speaker,
     wire: u8,
+    protected: bool,
     installation: String,
 }
 
@@ -146,7 +147,7 @@ impl Pulser {
         let [cluster_name, installation] = names;
         let seq = Arc::new(Mutex::new(0));
         let speaker = Speaker { hub: Arc::clone(hub), source, mac, node, cluster_name, seq };
-        Self { speaker, wire, installation }
+        Self { speaker, wire, protected: true, installation }
     }
 
     fn run(self, stop: &Receiver<()>) {
@@ -166,7 +167,7 @@ impl Pulser {
             installation: &self.installation,
             claim: NodeClaim::Holding,
             wire: self.wire,
-            wire_protection: true,
+            wire_protection: self.protected,
         };
         self.speaker.say(buffer, &Frame::Pulse(pulse));
     }
@@ -196,7 +197,7 @@ fn holds_node(datagram: &HubDatagram, mac: [u8; 6], node: u8, cluster_name: &str
         && pulse.cluster_name == cluster_name)
 }
 
-// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-084 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-107 CLU-108 CLU-109 CLU-110 CLU-111
+// CLU-015 CLU-016 CLU-017 CLU-018 CLU-019 CLU-020 CLU-021 CLU-022 CLU-023 CLU-024 CLU-025 CLU-026 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-065 CLU-066 CLU-067 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-084 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-107 CLU-108 CLU-109 CLU-110 CLU-111 CLU-170 CLU-171 CLU-172 CLU-173 CLU-174 CLU-175 CLU-176 CLU-177 CLU-178 CLU-179 CLU-185 CLU-186 CLU-187 CLU-180 CLU-181
 #[given(regex = r#"^the controller runs on a cluster hub as board "([0-9a-f:]{17})" at "([0-9.]+)"$"#)]
 async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     let (mac, address) = (hardware_address(&mac), ipv4(&address));
@@ -204,7 +205,7 @@ async fn on_cluster_hub(world: &mut DaliWorld, mac: String, address: String) {
     world.run_on_network_link(mac, Some(address), node_name(mac));
 }
 
-// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-109 CLU-110 CLU-111
+// CLU-016 CLU-017 CLU-018 CLU-020 CLU-022 CLU-023 CLU-024 CLU-025 CLU-027 CLU-057 CLU-058 CLU-059 CLU-060 CLU-061 CLU-062 CLU-063 CLU-064 CLU-068 CLU-069 CLU-070 CLU-071 CLU-072 CLU-073 CLU-074 CLU-075 CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-083 CLU-085 CLU-086 CLU-087 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-120 CLU-121 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-109 CLU-110 CLU-111 CLU-170 CLU-171 CLU-172 CLU-173 CLU-174 CLU-176 CLU-187
 #[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) of cluster "([^"]*)" for installation "([^"]*)"$"#)]
 async fn board_pulses(world: &mut DaliWorld, mac: String, source: String, node: u8, name: String, site: String) {
     let rig = rig(world);
@@ -213,7 +214,7 @@ async fn board_pulses(world: &mut DaliWorld, mac: String, source: String, node: 
     rig.start(pulser);
 }
 
-// CLU-026
+// CLU-026 CLU-175 CLU-177 CLU-178 CLU-179 CLU-186 CLU-180 CLU-181
 #[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) on the wire of node (\d) of cluster "([^"]*)" for installation "([^"]*)"$"#)]
 async fn board_pulses_on_a_wire(
     world: &mut DaliWorld,
@@ -230,6 +231,23 @@ async fn board_pulses_on_a_wire(
     rig.start(pulser);
 }
 
+// CLU-185
+#[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) on the wire of node (\d) without wire protection of cluster "([^"]*)" for installation "([^"]*)"$"#)]
+async fn board_pulses_unprotected(
+    world: &mut DaliWorld,
+    mac: String,
+    source: String,
+    node: u8,
+    wire: u8,
+    name: String,
+    site: String,
+) {
+    let rig = rig(world);
+    let (mac, source) = (hardware_address(&mac), ipv4(&source));
+    let pulser = Pulser { protected: false, ..Pulser::new(&rig.hub, (source, mac, node), wire, [name, site]) };
+    rig.start(pulser);
+}
+
 // CLU-019
 #[when(regex = r#"^a board at "([0-9.]+)" pulses this controller's hardware address as node (\d) of cluster "([^"]*)"$"#)]
 async fn board_pulses_our_address(world: &mut DaliWorld, source: String, node: u8, name: String) {
@@ -239,7 +257,7 @@ async fn board_pulses_our_address(world: &mut DaliWorld, source: String, node: u
     rig.start(pulser);
 }
 
-// CLU-020 CLU-071 CLU-120
+// CLU-020 CLU-071 CLU-120 CLU-185
 #[when(regex = r#"^the board "([0-9a-f:]{17})" stops pulsing$"#)]
 async fn board_stops(world: &mut DaliWorld, mac: String) {
     let mac = hardware_address(&mac);
@@ -249,7 +267,7 @@ async fn board_stops(world: &mut DaliWorld, mac: String) {
     assert!(rig.neighbours.len() < before, "no board {mac:02x?} was pulsing");
 }
 
-// CLU-023 CLU-066 CLU-068 CLU-070 CLU-076 CLU-083 CLU-084 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-101 CLU-102 CLU-104 CLU-105 CLU-106 CLU-107 CLU-108 CLU-109 CLU-110
+// CLU-023 CLU-066 CLU-068 CLU-070 CLU-076 CLU-083 CLU-084 CLU-090 CLU-091 CLU-092 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-101 CLU-102 CLU-104 CLU-105 CLU-106 CLU-107 CLU-108 CLU-109 CLU-110 CLU-170 CLU-171 CLU-172 CLU-173 CLU-174 CLU-175 CLU-176 CLU-177 CLU-178 CLU-179 CLU-185 CLU-187 CLU-180
 #[when("the cluster hub sets aside what this controller has sent so far")]
 async fn hub_sets_aside(world: &mut DaliWorld) {
     let hub = &rig(world).hub;

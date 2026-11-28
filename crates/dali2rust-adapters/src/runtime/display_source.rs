@@ -184,6 +184,10 @@ mod tests {
         fn ignored_board(&self, _index: usize) -> Option<IgnoredView> {
             None
         }
+
+        fn neighbour_names_wire(&self, _node: u8, _wire: u8) -> bool {
+            false
+        }
     }
 
     #[test]
@@ -227,9 +231,9 @@ mod tests {
     #[test]
     fn a_split_pair_travels_with_the_mode() {
         let mut presence = FakePresence::new(OwnMode::Running);
-        presence.own.faults = OwnFaults { split_pair: true, wire_chain: false };
+        presence.own.faults = OwnFaults { split_pair: true, ..OwnFaults::default() };
         assert!(cluster_glance(&presence).pair_split);
-        presence.own.faults = OwnFaults { split_pair: false, wire_chain: true };
+        presence.own.faults = OwnFaults { wire_chain: true, ..OwnFaults::default() };
         assert!(!cluster_glance(&presence).pair_split, "a wire chain is not shown on the panel");
     }
 }

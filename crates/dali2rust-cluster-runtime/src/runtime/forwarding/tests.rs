@@ -1,7 +1,6 @@
 use dali2rust_contracts::msg::{
     CompactErrorPayload, DaliLevelTransitionAppliedEvent, DaliSceneRecalledEvent, DaliStopFadeAppliedEvent,
-    DaliTargetStateAppliedEvent,
-    ErrorCode, LightSetpoint, PowerState,
+    DaliTargetStateAppliedEvent, DecodeStatus, ErrorCode, ObservedFrameWidth,
 };
 use dali2rust_domain::registry::{ClusterPartKeys, ClusterPartView};
 
@@ -95,8 +94,55 @@ fn recalled(scope: DaliTargetScope, source: RuntimeSource) -> DaliSceneRecalledE
     }
 }
 
+const OWNER: ForeignStanding = ForeignStanding { forwards: true, shared: false };
+
 fn decide(payload: &BusEventPayload, settings: &ClusterSettingsView, parts: &Parts) -> Option<Result<ClusterCommandCommand, Skip>> {
-    Fact::of(payload).map(|fact| forwarding(&fact, settings, parts))
+    decide_on(payload, settings, parts, OWNER)
+}
+
+fn decide_on(
+    payload: &BusEventPayload,
+    settings: &ClusterSettingsView,
+    parts: &Parts,
+    wire: ForeignStanding,
+) -> Option<Result<ClusterCommandCommand, Skip>> {
+    Fact::of(payload).map(|fact| forwarding(&fact, settings, parts, wire))
+}
+
+fn observed(kind: ObservedKind, scope: DaliTargetScope) -> DaliObservedFrameEvent {
+    DaliObservedFrameEvent {
+        registry_adapter_id: 0,
+        observed_kind: kind,
+        scope,
+        short_address: (scope == DaliTargetScope::Short).then_some(3),
+        group_id: (scope == DaliTargetScope::Group).then_some(GROUP),
+        scene_id: None,
+        setpoint: None,
+        dapc_observed: false,
+        level_transition: None,
+        raw_frame: [0; 3],
+        raw_width: ObservedFrameWidth::Forward16,
+        decode_status: DecodeStatus::Decoded,
+        observed_at_ms: 0,
+        observed_at_mono_ms: 0,
+    }
+}
+
+fn foreign_setpoint(scope: DaliTargetScope, setpoint: LightSetpoint) -> BusEventPayload {
+    DaliObservedFrameEvent { setpoint: Some(setpoint), ..observed(ObservedKind::TargetStateObserved, scope) }.into()
+}
+
+fn foreign_transition(kind: ObservedKind, transition: LevelTransition) -> BusEventPayload {
+    DaliObservedFrameEvent { level_transition: Some(transition), ..observed(kind, DaliTargetScope::Group) }.into()
+}
+
+fn foreign_on() -> ClusterSettingsView {
+    ClusterSettingsView { forwarding: ClusterForwarding { foreign_master: true, ..ClusterForwarding::FACTORY }, ..settings() }
+}
+
+fn to_channel(verb: LightVerb) -> ClusterCommandCommand {
+    let action = Action::Light { target: Target::Channel(CHANNEL), verb };
+    ClusterCommandCommand { action, source: SourceClass::ForeignMaster, hold_hcl: true }
 }
 
 #[test]
@@ -152,22 +198,81 @@ fn only_the_operator_home_assistant_and_hcl_have_a_switch_and_hcl_starts_off() {
 }
 
 #[test]
-fn the_foreign_master_and_the_rules_are_not_forwarded_by_this_stage_whatever_the_switch_says() {
+fn the_rules_and_the_reading_paths_are_not_forwarded_by_this_stage_whatever_the_switch_says() {
     let every_switch = ClusterSettingsView {
         forwarding: ClusterForwarding { operator: true, home_assistant: true, hcl: true, foreign_master: true },
         ..settings()
     };
-    let sources = [
-        RuntimeSource::Sniffer,
-        RuntimeSource::Rules,
-        RuntimeSource::Poller,
-        RuntimeSource::Readback,
-        RuntimeSource::AdapterProxy,
-    ];
+    let sources = [RuntimeSource::Rules, RuntimeSource::Poller, RuntimeSource::Readback, RuntimeSource::AdapterProxy];
     for source in sources {
         let fact = applied(DaliTargetScope::Group, source);
         assert_eq!(decide(&fact, &every_switch, &linked(true)), Some(Err(Skip::SourceOff)), "{source:?}");
     }
+}
+
+#[test]
+fn every_foreign_verb_on_a_group_goes_to_the_channel_as_the_foreign_master() {
+    let on_without_level = LightSetpoint { power: PowerState::On, level: None, color: None };
+    let cases = [
+        (foreign_setpoint(DaliTargetScope::Group, level(200)), LightVerb::Setpoint(level(200))),
+        (foreign_transition(ObservedKind::LevelTransitionObserved, LevelTransition::RecallMaxLevel), LightVerb::Transition(LevelTransition::RecallMaxLevel)),
+        (foreign_transition(ObservedKind::LevelTransitionObserved, LevelTransition::StepDownAndOff), LightVerb::Transition(LevelTransition::StepDownAndOff)),
+        (foreign_transition(ObservedKind::LevelTransitionObserved, LevelTransition::GoToLastActiveLevel), LightVerb::Setpoint(on_without_level)),
+        (foreign_transition(ObservedKind::DimmingObserved, LevelTransition::Up), LightVerb::Transition(LevelTransition::Up)),
+        (foreign_transition(ObservedKind::DimmingObserved, LevelTransition::Down), LightVerb::Transition(LevelTransition::Down)),
+        (observed(ObservedKind::FadeStopObserved, DaliTargetScope::Group).into(), LightVerb::StopFade),
+    ];
+    for (fact, verb) in cases {
+        assert_eq!(decide(&fact, &foreign_on(), &linked(true)), Some(Ok(to_channel(verb.clone()))), "{verb:?}");
+    }
+}
+
+#[test]
+fn a_foreign_command_needs_its_switch_and_never_leaves_for_a_single_address() {
+    let dapc = foreign_setpoint(DaliTargetScope::Group, level(80));
+    assert_eq!(decide(&dapc, &settings(), &linked(true)), Some(Err(Skip::SourceOff)), "the switch is off from the factory");
+    assert_eq!(decide(&foreign_setpoint(DaliTargetScope::Short, level(80)), &foreign_on(), &linked(true)), None);
+    assert_eq!(decide(&dapc, &foreign_on(), &linked(false)), Some(Err(Skip::NotSent)));
+    let recall = DaliSceneRecalledEvent { scope: DaliTargetScope::Short, ..recalled(DaliTargetScope::Short, RuntimeSource::Sniffer) };
+    assert_eq!(decide(&recall.into(), &foreign_on(), &linked(true)), None);
+}
+
+#[test]
+fn only_a_node_that_may_forward_the_foreign_master_on_its_wire_does() {
+    let dapc = foreign_setpoint(DaliTargetScope::Group, level(80));
+    let refused = ForeignStanding { forwards: false, shared: true };
+    assert_eq!(decide_on(&dapc, &foreign_on(), &linked(true), refused), Some(Err(Skip::Wire)));
+    let own = applied(DaliTargetScope::Group, RuntimeSource::Api);
+    assert!(matches!(decide_on(&own, &foreign_on(), &linked(true), refused), Some(Ok(_))), "the node's own commands are not the wire's");
+    let off = decide_on(&dapc, &settings(), &linked(true), refused);
+    assert_eq!(off, Some(Err(Skip::SourceOff)), "a switched-off source is told apart from the wire");
+}
+
+#[test]
+fn a_foreign_broadcast_and_a_foreign_scene_recall_go_where_their_parts_send() {
+    let all_lamps = ClusterSettingsView { send_all_lamps: true, ..foreign_on() };
+    let broadcast = foreign_transition(ObservedKind::DimmingObserved, LevelTransition::Up);
+    let broadcast = match broadcast {
+        BusEventPayload::DaliObservedFrameEvent(body) => DaliObservedFrameEvent { scope: DaliTargetScope::Broadcast, group_id: None, ..body },
+        _ => unreachable!("an observation"),
+    };
+    let request = decide(&broadcast.into(), &all_lamps, &linked(true)).and_then(Result::ok).map(|request| request.action);
+    assert_eq!(request, Some(Action::Light { target: Target::All, verb: LightVerb::Transition(LevelTransition::Up) }));
+    let scene = decide(&recalled(DaliTargetScope::Broadcast, RuntimeSource::Sniffer).into(), &foreign_on(), &linked(true));
+    let wanted = ClusterCommandCommand {
+        action: Action::RecallScene { scene: SCENE, scope: RecallScope::Node },
+        source: SourceClass::ForeignMaster,
+        hold_hcl: true,
+    };
+    assert_eq!(scene, Some(Ok(wanted)));
+}
+
+#[test]
+fn an_observation_that_names_no_verb_is_no_trigger() {
+    for kind in [ObservedKind::UnknownObserved, ObservedKind::SceneWriteObserved, ObservedKind::SceneRemovalObserved] {
+        assert_eq!(decide(&observed(kind, DaliTargetScope::Group).into(), &foreign_on(), &linked(true)), None, "{kind:?}");
+    }
+    assert_eq!(decide(&observed(ObservedKind::TargetStateObserved, DaliTargetScope::Group).into(), &foreign_on(), &linked(true)), None);
 }
 
 #[test]
@@ -197,7 +302,7 @@ fn every_transition_but_go_to_last_active_level_is_forwarded_as_its_own_verb() {
         let wanted = Action::Light { target: Target::Channel(CHANNEL), verb: LightVerb::Transition(verb) };
         assert_eq!(action, Some(wanted), "{verb:?}");
     }
-    assert_eq!(forwarded(LevelTransition::GoToLastActiveLevel), None);
+    assert_eq!(forwarded(LevelTransition::GoToLastActiveLevel), Some(Err(Skip::NotSent)));
 }
 
 fn stopped(scope: DaliTargetScope, source: RuntimeSource) -> BusEventPayload {
@@ -266,4 +371,27 @@ fn a_scene_recall_that_failed_on_the_wire_is_no_trigger() {
         ..recalled(DaliTargetScope::Broadcast, RuntimeSource::Api)
     };
     assert_eq!(decide(&failed.into(), &settings(), &linked(true)), None);
+}
+
+#[test]
+fn a_note_of_an_own_frame_names_what_the_owner_forwards_on_hearing_that_frame() {
+    let mut foreign_on = settings();
+    foreign_on.forwarding.foreign_master = true;
+    let mut setpoint = observed(ObservedKind::TargetStateObserved, DaliTargetScope::Group);
+    setpoint.setpoint = Some(level(200));
+    let mut last_active = observed(ObservedKind::LevelTransitionObserved, DaliTargetScope::Group);
+    last_active.level_transition = Some(LevelTransition::GoToLastActiveLevel);
+    let own_and_heard: [(BusEventPayload, BusEventPayload); 3] = [
+        (applied(DaliTargetScope::Group, RuntimeSource::Rules), setpoint.into()),
+        (transition_by(DaliTargetScope::Group, LevelTransition::GoToLastActiveLevel, RuntimeSource::Api), last_active.into()),
+        (recalled(DaliTargetScope::Group, RuntimeSource::Rules).into(), recalled(DaliTargetScope::Group, RuntimeSource::Sniffer).into()),
+    ];
+    for (own, heard) in own_and_heard {
+        let note = Fact::of(&own).expect("an own fact").note(1);
+        let forwarded = Fact::of(&heard).and_then(|fact| forwarding(&fact, &foreign_on, &linked(true), OWNER).ok());
+        let forwarded = forwarded.map(|request| request.action);
+        assert!(forwarded.is_some(), "{heard:?}");
+        assert_eq!(Fact::noted(&note, false, &linked(true)), forwarded, "{own:?}");
+        assert_eq!(Fact::noted(&note, false, &linked(false)), None, "a part that does not send forwards nothing to cancel");
+    }
 }

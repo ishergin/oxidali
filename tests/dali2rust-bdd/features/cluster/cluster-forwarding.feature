@@ -5,8 +5,8 @@ Feature: Cluster — a command given to this node's group, all its lamps or a sc
   while this node sends to all lamps, or a scene recall whose scene part sends,
   goes to the cluster as the command to the channel, to all lamps or to the
   cluster scene, stamped with this node's wire and not executed here again. The
-  operator and Home Assistant are forwarded out of the box and HCL when it is
-  switched on; the sniffer, rules and the cluster itself never are. A command a
+  operator and Home Assistant are forwarded out of the box, HCL and the foreign
+  master when they are switched on; rules and the cluster itself never are. A command a
   neighbour sent and this node executed goes nowhere. A neighbour's command to
   all lamps runs here as a broadcast only while this node accepts all lamps, and
   a neighbour's HCL tick keeps the wire priority of an HCL tick here and does
@@ -115,8 +115,8 @@ Feature: Cluster — a command given to this node's group, all its lamps or a sc
       | false       | forwards_skipped_source_off_total | no command from this controller within 1000 ms                                                                              |
 
   @id:CLU-095
-  Scenario: A foreign master's scene recall on a group goes nowhere from here, even with the foreign master switched on
-    When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true,"forward_foreign_master":true} to "/api/v1/cluster"
+  Scenario: A foreign master's scene recall on a group goes nowhere from here while the foreign master is switched off
+    When I PATCH JSON {"cluster_name":"hall","node_number":0,"enabled":true} to "/api/v1/cluster"
     And I PUT JSON {"record":{"number":17,"birth_mark":{"generation":1,"nonce":6}},"send":true,"accept":true} to "/api/v1/cluster/scene-parts/0/4"
     And I PUT JSON {"record":{"number":16,"birth_mark":{"generation":1,"nonce":5}},"send":true,"accept":true} to "/api/v1/cluster/channel-parts/0/7"
     And a board "02:00:00:0a:0b:02" at "10.0.0.2" pulses as node 1 of cluster "hall" for installation "site-b"

@@ -1,0 +1,218 @@
+use std::collections::VecDeque;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+use dali2rust_contracts::msg::{ClusterCommandCommand, LightSetpoint};
+
+use crate::frame::{Action, LightVerb, RecallScope, Target};
+
+use super::announce::reached;
+use super::outgoing::{is_relative, RELATIVE_LINE, RELATIVE_SPACING_MS};
+
+#[cfg(test)]
+mod tests;
+
+const NEIGHBOUR_LATENCY_MS: u32 = 20;
+
+pub(crate) const ABSOLUTE_HOLD_MS: u32 = RELATIVE_SPACING_MS + NEIGHBOUR_LATENCY_MS;
+
+#[expect(clippy::cast_possible_truncation, reason = "RELATIVE_LINE is 4")]
+pub(crate) const RELATIVE_HOLD_MS: u32 = RELATIVE_LINE as u32 * RELATIVE_SPACING_MS + NEIGHBOUR_LATENCY_MS;
+
+pub(crate) const ECHO_MS: u32 = ABSOLUTE_HOLD_MS;
+
+pub(crate) const HOLD_DEPTH: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Waiting {
+    request: ClusterCommandCommand,
+    due_ms: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Carrier {
+    Command,
+    Note,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Echo {
+    action: Action,
+    carrier: Carrier,
+    until_ms: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Held {
+    Cancelled,
+    Queued { held: bool, pushed_out: Option<ClusterCommandCommand> },
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct HoldLine {
+    waiting: VecDeque<Waiting>,
+    echoes: VecDeque<Echo>,
+}
+
+impl HoldLine {
+    pub(crate) fn new() -> Self {
+        Self { waiting: VecDeque::with_capacity(HOLD_DEPTH), echoes: VecDeque::with_capacity(HOLD_DEPTH) }
+    }
+
+    pub(crate) fn hold(&mut self, request: ClusterCommandCommand, shared: bool, now_ms: u32) -> Held {
+        self.expire(now_ms);
+        if self.take_echo(&request.action) {
+            return Held::Cancelled;
+        }
+        self.forget_echoes_on(&request.action);
+        let pushed_out = (self.waiting.len() >= HOLD_DEPTH).then(|| self.waiting.pop_front()).flatten();
+        let due_ms = if shared { now_ms.wrapping_add(hold_ms(&request.action)) } else { now_ms };
+        self.waiting.push_back(Waiting { request, due_ms });
+        Held::Queued { held: shared, pushed_out: pushed_out.map(|out| out.request) }
+    }
+
+    pub(crate) fn cancel(&mut self, neighbour: &Action, carrier: Carrier, now_ms: u32) -> (u32, bool) {
+        self.expire(now_ms);
+        let cancelled = self.cancel_waiting(neighbour, carrier);
+        let relative = is_relative(neighbour);
+        if relative && cancelled > 0 {
+            return (cancelled, false);
+        }
+        let evicted = self.echoes.len() >= HOLD_DEPTH;
+        if evicted {
+            self.echoes.pop_front();
+        }
+        self.echoes.push_back(Echo { action: neighbour.clone(), carrier, until_ms: now_ms.wrapping_add(ECHO_MS) });
+        (cancelled, evicted)
+    }
+
+    pub(crate) fn take_due(&mut self, now_ms: u32) -> Option<ClusterCommandCommand> {
+        let due = self.waiting.front().is_some_and(|front| reached(now_ms, front.due_ms));
+        due.then(|| self.waiting.pop_front()).flatten().map(|waiting| waiting.request)
+    }
+
+    pub(crate) fn deadline(&self) -> Option<u32> {
+        self.waiting.front().map(|front| front.due_ms)
+    }
+
+    pub(crate) fn clear(&mut self) -> impl Iterator<Item = ClusterCommandCommand> + '_ {
+        self.echoes.clear();
+        self.waiting.drain(..).map(|waiting| waiting.request)
+    }
+
+    fn cancel_waiting(&mut self, neighbour: &Action, carrier: Carrier) -> u32 {
+        let matches = |waiting: &Waiting| same_command(&waiting.request.action, neighbour);
+        let found = if is_relative(neighbour) {
+            self.waiting.iter().position(matches)
+        } else {
+            self.waiting.iter().rposition(matches)
+        };
+        let Some(index) = found else {
+            return 0;
+        };
+        let superseded = if carrier == Carrier::Command { self.supersede(index, neighbour) } else { 0 };
+        let at = index.saturating_sub(usize::try_from(superseded).unwrap_or(index));
+        self.waiting.remove(at).map_or(superseded, |_| superseded + 1)
+    }
+
+    fn supersede(&mut self, before: usize, by: &Action) -> u32 {
+        let mut index = 0;
+        let mut removed = 0;
+        self.waiting.retain(|waiting| {
+            let earlier = index < before;
+            index += 1;
+            let gone = earlier && covers(by, &waiting.request.action);
+            removed += u32::from(gone);
+            !gone
+        });
+        removed
+    }
+
+    fn take_echo(&mut self, observed: &Action) -> bool {
+        let Some(index) = self.echoes.iter().position(|echo| same_command(observed, &echo.action)) else {
+            return false;
+        };
+        if is_relative(observed) {
+            self.echoes.remove(index);
+        } else if self.echoes.get(index).is_some_and(|echo| echo.carrier == Carrier::Command) {
+            self.supersede(self.waiting.len(), observed);
+        }
+        true
+    }
+
+    fn forget_echoes_on(&mut self, observed: &Action) {
+        let target = target_of(observed);
+        self.echoes.retain(|echo| is_relative(&echo.action) || target_of(&echo.action) != target);
+    }
+
+    fn expire(&mut self, now_ms: u32) {
+        self.echoes.retain(|echo| !reached(now_ms, echo.until_ms));
+    }
+}
+
+fn same_command(observed: &Action, neighbour: &Action) -> bool {
+    match (observed, neighbour) {
+        (Action::Light { target, verb }, Action::Light { target: other_target, verb: other_verb }) => {
+            target == other_target && same_verb(verb, other_verb)
+        }
+        (Action::RecallScene { .. }, Action::RecallScene { .. }) => observed == neighbour,
+        (Action::Light { .. }, Action::RecallScene { .. }) | (Action::RecallScene { .. }, Action::Light { .. }) => false,
+    }
+}
+
+fn same_verb(observed: &LightVerb, neighbour: &LightVerb) -> bool {
+    match (observed, neighbour) {
+        (LightVerb::Setpoint(observed), LightVerb::Setpoint(command)) => agrees(observed, command),
+        _ => observed == neighbour,
+    }
+}
+
+fn agrees(observed: &LightSetpoint, command: &LightSetpoint) -> bool {
+    let level = observed.dapc_level().is_none_or(|level| command.dapc_level() == Some(level));
+    let power = observed.commanded_power().is_none_or(|power| command.commanded_power() == Some(power));
+    let colour = !observed.states_color() || observed.color == command.color;
+    level && power && colour
+}
+
+fn covers(by: &Action, earlier: &Action) -> bool {
+    let Action::Light { target, verb: LightVerb::Setpoint(setpoint) } = by else {
+        return false;
+    };
+    if setpoint.dapc_level().is_none() || target_of(earlier) != *target {
+        return false;
+    }
+    match earlier {
+        Action::Light { verb: LightVerb::Setpoint(held), .. } => !held.states_color() || setpoint.states_color(),
+        Action::Light { verb: LightVerb::Transition(_) | LightVerb::StopFade, .. } => true,
+        Action::RecallScene { .. } => setpoint.states_color(),
+    }
+}
+
+const fn target_of(action: &Action) -> Target {
+    match action {
+        Action::Light { target, .. } => *target,
+        Action::RecallScene { scope: RecallScope::Channel(channel), .. } => Target::Channel(*channel),
+        Action::RecallScene { scope: RecallScope::Node, .. } => Target::All,
+    }
+}
+
+const fn hold_ms(action: &Action) -> u32 {
+    if is_relative(action) {
+        RELATIVE_HOLD_MS
+    } else {
+        ABSOLUTE_HOLD_MS
+    }
+}
+
+pub(crate) struct ForeignHold {
+    line: Mutex<HoldLine>,
+}
+
+impl ForeignHold {
+    pub(crate) fn new() -> Self {
+        Self { line: Mutex::new(HoldLine::new()) }
+    }
+
+    pub(crate) fn line(&self) -> MutexGuard<'_, HoldLine> {
+        self.line.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}

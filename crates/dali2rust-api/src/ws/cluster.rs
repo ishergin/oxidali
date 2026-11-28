@@ -81,6 +81,7 @@ mod tests {
                 wire_owner: Some(ClusterWireOwnerDto { node: u8::MAX, board: WIDEST_BOARD.into(), this_node: false }),
                 split_pair: true,
                 wire_chain: true,
+                unprotected_wire: true,
                 number_held_by: Some(WIDEST_BOARD.into()),
             }
         }
@@ -110,6 +111,10 @@ mod tests {
                 cluster_name: Some(hostile(CLUSTER_NAME_BYTES)),
                 age_ms: u32::MAX,
             })
+        }
+
+        fn neighbour_names_wire(&self, _node: u8, _wire: u8) -> bool {
+            true
         }
     }
 

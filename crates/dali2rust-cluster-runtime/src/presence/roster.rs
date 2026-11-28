@@ -15,6 +15,8 @@ pub struct OwnFacts {
     pub mac: [u8; 6],
     pub node_no: u8,
     pub wire: u8,
+    pub wire_protection: bool,
+    pub forwards_foreign: bool,
     pub running_since_ms: Option<u32>,
 }
 
@@ -48,6 +50,7 @@ pub enum WireOwner {
 pub struct OwnFaults {
     pub split_pair: bool,
     pub wire_chain: bool,
+    pub unprotected_wire: bool,
 }
 
 const NODES: usize = NODE_COUNT as usize;
@@ -186,7 +189,52 @@ impl<'a> Roster<'a> {
         OwnFaults {
             split_pair: own.holds(own.node_no) && self.split_with_this_node(),
             wire_chain: self.chained(own.node_no, own.wire),
+            unprotected_wire: self.unprotected_wire(),
         }
+    }
+
+    fn neighbours_on(&self, node: u8, wire: u8) -> impl Iterator<Item = &'a HeardBoard> + '_ {
+        self.table.iter().filter(move |board| {
+            board.node_no != node
+                && board.pulse.wire == wire
+                && self.live(board)
+                && self.standing(board) == Standing::Holder
+        })
+    }
+
+    fn neighbours_on_wire(&self) -> impl Iterator<Item = &'a HeardBoard> + '_ {
+        self.neighbours_on(self.own.node_no, self.own.wire)
+    }
+
+    pub fn shares_wire(&self) -> bool {
+        self.neighbours_on_wire().next().is_some()
+    }
+
+    pub fn named_by_neighbour(&self, node: u8, wire: u8) -> bool {
+        self.neighbours_on(node, wire).next().is_some()
+    }
+
+    fn unprotected_wire(&self) -> bool {
+        let neighbour_unprotected = || self.neighbours_on_wire().any(|board| !board.pulse.wire_protection);
+        let shared = self.shares_wire();
+        self.own.forwards_foreign && shared && (!self.own.wire_protection || neighbour_unprotected())
+    }
+
+    pub fn forwards_foreign(&self) -> bool {
+        let faults = self.faults();
+        let clear = !faults.wire_chain && !faults.unprotected_wire && !self.chain_ends_on(self.own.wire);
+        self.wire_owner() == WireOwner::ThisNode && clear
+    }
+
+    fn chain_ends_on(&self, wire: u8) -> bool {
+        self.table.iter().any(|board| {
+            let named = board.pulse.wire;
+            named != board.node_no
+                && named != wire
+                && self.live(board)
+                && self.standing(board) == Standing::Holder
+                && self.wire_of(named) == Some(wire)
+        })
     }
 
     pub fn wire_owner(&self) -> WireOwner {

@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use dali2rust_bsp::psram::PsramBox;
 use dali2rust_contracts::msg::{FixedText32, FixedText64};
 
-use crate::frame::{decode, Command, Decoded, Frame, Header, NODE_COUNT};
+use crate::frame::{decode, Command, Decoded, Frame, Header, WireNote, NODE_COUNT};
 use crate::info::{Arrival, ClusterInfo};
 use crate::presence::{
     claim_mode, in_reach, Arriving, BoardTable, HeardBoard, IgnoredReason, OwnFacts, OwnFaults, OwnMode,
@@ -17,6 +17,7 @@ use crate::presence::{
 
 use super::composition::EpochSource;
 use super::counters::{bump, ClusterCounters};
+use super::forwarding::ForeignStanding;
 
 #[cfg(test)]
 mod tests;
@@ -65,6 +66,8 @@ pub trait ClusterPresenceReadPort: Send + Sync {
     fn heard_node(&self, node: u8) -> Option<NodeView>;
 
     fn ignored_board(&self, index: usize) -> Option<IgnoredView>;
+
+    fn neighbour_names_wire(&self, node: u8, wire: u8) -> bool;
 }
 
 pub struct PresenceState {
@@ -109,8 +112,14 @@ pub(crate) enum CommandAdmission {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Heard {
+    Command(Command),
+    Note(WireNote),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HeardCommand {
-    pub(crate) command: Command,
+    pub(crate) heard: Heard,
     pub(crate) admission: CommandAdmission,
 }
 
@@ -123,7 +132,7 @@ struct Admitted {
 impl Admitted {
     const NOTHING: Self = Self { taken: None, member: false, standing: None };
 
-    fn command(&self, command: Command) -> Option<HeardCommand> {
+    fn command(&self, heard: Heard) -> Option<HeardCommand> {
         let taken = self.taken?;
         let admission = if !self.member {
             CommandAdmission::NotMember
@@ -132,7 +141,7 @@ impl Admitted {
         } else {
             self.standing.map_or(CommandAdmission::NotMember, CommandAdmission::Taken)
         };
-        Some(HeardCommand { command, admission })
+        Some(HeardCommand { heard, admission })
     }
 
     fn feeds_info(&self) -> bool {
@@ -197,8 +206,10 @@ impl ClusterPresence {
         if let Some(taken) = admitted.taken {
             counters.count_taken(taken);
         }
-        if let Frame::Command(command) = decoded.frame {
-            return admitted.command(command);
+        match decoded.frame {
+            Frame::Command(command) => return admitted.command(Heard::Command(command)),
+            Frame::WireNote(note) => return admitted.command(Heard::Note(note)),
+            _ => {}
         }
         if admitted.feeds_info() {
             self.hear_member(&decoded, (delivery.now_ms, era), counters, info);
@@ -235,6 +246,12 @@ impl ClusterPresence {
 
     pub(crate) fn take_hello_heard(&self) -> bool {
         self.hello_heard.swap(false, Relaxed)
+    }
+
+    pub(crate) fn foreign_standing(&self, now_ms: u32) -> ForeignStanding {
+        let state = self.lock();
+        let roster = state.roster(now_ms, self.timing);
+        ForeignStanding { forwards: roster.forwards_foreign(), shared: roster.shares_wire() }
     }
 
     pub(crate) fn member_heard(&self, node: u8, now_ms: u32) -> bool {
@@ -326,10 +343,10 @@ impl PresenceState {
         let taken = match &decoded.frame {
             Frame::Pulse(pulse) => self.table.take_pulse(at, pulse),
             Frame::Hello(hello) => self.table.take_hello(header, hello),
-            Frame::Command(_) | Frame::ChannelSceneInfo(_) => self.table.take_other(header),
+            Frame::Command(_) | Frame::WireNote(_) | Frame::ChannelSceneInfo(_) => self.table.take_other(header),
         };
         let speaks = !matches!(decoded.frame, Frame::Pulse(_)) && self.speaks_for_its_node(header, delivery.now_ms, timing);
-        let standing = matches!(decoded.frame, Frame::Command(_)).then(|| self.command_standing(delivery.now_ms, timing));
+        let standing = matches!(decoded.frame, Frame::Command(_) | Frame::WireNote(_)).then(|| self.command_standing(delivery.now_ms, timing));
         Admitted { taken: Some(taken), member: speaks, standing }
     }
 
@@ -381,6 +398,12 @@ impl ClusterPresenceReadPort for ClusterPresence {
         let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
         let view = roster.ignored().nth(index).map(|(board, reason)| ignored_view(&roster, board, reason));
         view
+    }
+
+    fn neighbour_names_wire(&self, node: u8, wire: u8) -> bool {
+        let state = self.lock();
+        let roster = state.roster(dali2rust_platform::liveness::monotonic_ms(), self.timing);
+        roster.named_by_neighbour(node, wire)
     }
 }
 

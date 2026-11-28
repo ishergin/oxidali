@@ -28,6 +28,8 @@ fn identity(node: u8) -> OwnFacts {
         mac: OWN_MAC,
         node_no: node,
         wire: node,
+        wire_protection: true,
+        forwards_foreign: false,
         running_since_ms: None,
     }
 }

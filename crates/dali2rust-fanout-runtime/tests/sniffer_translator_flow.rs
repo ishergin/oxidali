@@ -714,6 +714,27 @@ fn foreign_up_and_down_are_counted_apart_from_unknown_frames() {
     );
 }
 
+#[test]
+fn foreign_up_down_and_a_stopped_fade_are_published_as_their_own_kinds() {
+    let h = spawn_harness();
+    h.tx.send(forward16([0x8F, 0x01])).expect("send");
+    h.tx.send(forward16([0xFF, 0x02])).expect("send");
+    h.tx.send(forward16([0x8E, 0xFF])).expect("send");
+    let seen: Vec<_> = (0..3).map(|_| recv_observed(&h).1).collect();
+    let kinds: Vec<_> = seen.iter().map(|body| (body.observed_kind, body.level_transition, body.scope)).collect();
+    assert_eq!(
+        kinds,
+        [
+            (ObservedKind::DimmingObserved, Some(LevelTransition::Up), DaliTargetScope::Group),
+            (ObservedKind::DimmingObserved, Some(LevelTransition::Down), DaliTargetScope::Broadcast),
+            (ObservedKind::FadeStopObserved, None, DaliTargetScope::Group),
+        ]
+    );
+    assert!(seen.iter().all(|body| body.setpoint.is_none() && !body.dapc_observed), "no level is invented");
+    assert_eq!(seen.first().and_then(|body| body.group_id), Some(7));
+    assert_eq!(h.counters.dimming_unprojectable.load(Relaxed), 3, "all three stay unprojectable");
+}
+
 fn forward16_at(bytes: [u8; 2], mono_ms: u32) -> ObservedRawFrame {
     ObservedRawFrame {
         bytes: [bytes[0], bytes[1], 0],

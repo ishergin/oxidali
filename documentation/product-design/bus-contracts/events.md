@@ -32,7 +32,7 @@
 | Операции | `OperationStatusChangedEvent` | operation tracker | WS, дисплей | best-effort |
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
-| Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей | best-effort |
+| Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей, кластер | **required** |
 | Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `DaliInputManualConfigEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent`, `BusUnitIdentificationObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр | **required** |
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
@@ -134,11 +134,15 @@
 [`../runtime-modules/sniffer-translator/README.md`](../runtime-modules/sniffer-translator/README.md).
 
 - Публикуются только понятые кадры: `TargetStateObserved`, `LevelTransitionObserved`,
+  `DimmingObserved` (чужие `UP` и `DOWN`), `FadeStopObserved` (`DAPC` MASK),
   `SceneWriteObserved` и `SceneRemovalObserved`. Варианты `UnknownObserved` и
   `SceneRecallObserved` в контракте остаются без производителя; на первый у проектора
   есть счётчик на случай нового производителя.
 - `raw_frame` и `decode_status` — диагностическое свидетельство, не продуктовые
   данные.
+- Наблюдение — единственный носитель чужой команды для кластера, поэтому оно
+  обязательное. `DimmingObserved` и `FadeStopObserved` читает только кластер: проектор и
+  реестр их пропускают.
 - `GO TO SCENE` транслятор публикует не наблюдением, а фактом `DaliSceneRecalledEvent`
   с источником `Sniffer`: проектор, реестр, правила и дисплей видят recall — наш или
   чужой — одним событием.
