@@ -26,6 +26,7 @@ struct CommandSpec {
     channel: Option<[u32; 3]>,
     scene: Option<[u32; 3]>,
     level: Option<u8>,
+    power: Option<String>,
     recall: Option<String>,
     dim: Option<String>,
     all: Option<bool>,
@@ -59,6 +60,14 @@ impl CommandSpec {
         if let Some(dim) = self.dim.as_deref() {
             return relative_verb(dim);
         }
+        if let Some(power) = self.power.as_deref() {
+            let power = match power {
+                "on" => PowerState::On,
+                "off" => PowerState::Off,
+                other => panic!("no power {other}"),
+            };
+            return LightVerb::Setpoint(LightSetpoint { power, level: self.level, color: None });
+        }
         match (self.level, self.recall.as_deref()) {
             (Some(level), None) => LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: Some(level), color: None }),
             (None, Some("max_level")) => LightVerb::Transition(LevelTransition::RecallMaxLevel),
@@ -73,6 +82,7 @@ impl CommandSpec {
             None | Some("operator") => SourceClass::Operator,
             Some("home_assistant") => SourceClass::HomeAssistant,
             Some("hcl") => SourceClass::Hcl,
+            Some("foreign_master") => SourceClass::ForeignMaster,
             Some(other) => panic!("no source class {other}"),
         }
     }

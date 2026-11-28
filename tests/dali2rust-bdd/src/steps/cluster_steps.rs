@@ -138,6 +138,7 @@ impl Drop for Neighbour {
 struct Pulser {
     speaker: Speaker,
     wire: u8,
+    protected: bool,
     installation: String,
 }
 
@@ -146,7 +147,7 @@ impl Pulser {
         let [cluster_name, installation] = names;
         let seq = Arc::new(Mutex::new(0));
         let speaker = Speaker { hub: Arc::clone(hub), source, mac, node, cluster_name, seq };
-        Self { speaker, wire, installation }
+        Self { speaker, wire, protected: true, installation }
     }
 
     fn run(self, stop: &Receiver<()>) {
@@ -166,7 +167,7 @@ impl Pulser {
             installation: &self.installation,
             claim: NodeClaim::Holding,
             wire: self.wire,
-            wire_protection: true,
+            wire_protection: self.protected,
         };
         self.speaker.say(buffer, &Frame::Pulse(pulse));
     }
@@ -227,6 +228,23 @@ async fn board_pulses_on_a_wire(
     let rig = rig(world);
     let (mac, source) = (hardware_address(&mac), ipv4(&source));
     let pulser = Pulser::new(&rig.hub, (source, mac, node), wire, [name, site]);
+    rig.start(pulser);
+}
+
+// CLU-185 CLU-186
+#[when(regex = r#"^a board "([0-9a-f:]{17})" at "([0-9.]+)" pulses as node (\d) on the wire of node (\d) without wire protection of cluster "([^"]*)" for installation "([^"]*)"$"#)]
+async fn board_pulses_unprotected(
+    world: &mut DaliWorld,
+    mac: String,
+    source: String,
+    node: u8,
+    wire: u8,
+    name: String,
+    site: String,
+) {
+    let rig = rig(world);
+    let (mac, source) = (hardware_address(&mac), ipv4(&source));
+    let pulser = Pulser { protected: false, ..Pulser::new(&rig.hub, (source, mac, node), wire, [name, site]) };
     rig.start(pulser);
 }
 
