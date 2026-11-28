@@ -55,9 +55,15 @@ function hasGaps(state: ClusterChannelState): boolean {
   return state.members > state.known || state.parts_unknown > 0
 }
 
+function uncheckedParts(state: ClusterChannelState, notHeard: number[]): string | null {
+  const members = missingMembers(state.known, state.members)
+  const unchecked = members === null ? state.parts_unknown : state.parts_unknown - notHeard.length
+  return unchecked > 0 ? `${unchecked} ${PART_NOUN(unchecked)} not known` : null
+}
+
 function channelTail(state: ClusterChannelState, notHeard: number[]): string | null {
   const members = missingMembers(state.known, state.members)
-  const parts = members === null && state.parts_unknown > 0 ? `${state.parts_unknown} ${PART_NOUN(state.parts_unknown)} not known` : null
+  const parts = uncheckedParts(state, notHeard)
   const nodes = hasGaps(state) ? notHeardText(notHeard) : null
   const uncommanded = state.on === null && !hasGaps(state) && state.lit > 0 ? NOT_COMMANDED_ON : null
   return joined([members, parts, nodes, uncommanded])
@@ -116,11 +122,12 @@ export function notHeardNodes(
 
 const RECORD_NOUN: Record<ClusterRecordKind, string> = { channel: 'channel', scene: 'scene' }
 
-export function wireFaultText(kind: ClusterRecordKind, part: ClusterNodePart, local: string): string | null {
+export function wireFaultText(kind: ClusterRecordKind, part: ClusterNodePart, local: string, me: number): string | null {
   const fault = part.wire_fault
   if (!fault) return null
   const other = fault.holds === 'other_record' ? `another ${RECORD_NOUN[kind]}` : `no ${RECORD_NOUN[kind]}`
-  return `Node ${fault.node} shares this DALI bus and links ${local} to ${other}. The node that executes on the bus decides what ${local} does.`
+  const who = fault.node === me ? 'This node' : `Node ${fault.node}`
+  return `${who} shares this DALI bus and links ${local} to ${other}. The node that executes on the bus decides what ${local} does.`
 }
 
 const BLOCK_LISTENING =

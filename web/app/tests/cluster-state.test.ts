@@ -97,6 +97,11 @@ test('partial knowledge counts the known members and names what is missing, with
   assert.deepEqual(view, { cls: 'on', label: '3 of 5 known lit', tail: '4 of 9 not known · node 2 not heard' })
 })
 
+test('a part whose link cannot be checked is named beside members not known', () => {
+  const view = channelState(channel({ on: null, lit: 3, known: 5, members: 9, parts_unknown: 2 }), [2])
+  assert.equal(view.tail, '4 of 9 not known · 1 part not known · node 2 not heard')
+})
+
 test('nothing known reads as not known, never as 0 lit or off', () => {
   const view = channelState(channel({ on: null, known: 0, members: 4, parts_unknown: 1 }), [2])
   assert.deepEqual(view, { cls: 'unknown', label: 'not known', tail: '4 not known · node 2 not heard' })
@@ -179,12 +184,13 @@ test('a silent, stale or unchecked part is not known, and an orphan shows no sta
 })
 
 test('a wire fault names the neighbour and what it links the same group to', () => {
-  assert.equal(wireFaultText('channel', part(0), 'G9'), null)
+  assert.equal(wireFaultText('channel', part(0), 'G9', 0), null)
   assert.equal(
-    wireFaultText('channel', part(0, { wire_fault: { node: 2, holds: 'other_record' } }), 'G9'),
+    wireFaultText('channel', part(0, { wire_fault: { node: 2, holds: 'other_record' } }), 'G9', 0),
     'Node 2 shares this DALI bus and links G9 to another channel. The node that executes on the bus decides what G9 does.',
   )
-  assert.match(wireFaultText('channel', part(0, { wire_fault: { node: 2, holds: 'nothing' } }), 'G9') ?? '', /links G9 to no channel/)
+  assert.match(wireFaultText('channel', part(0, { wire_fault: { node: 2, holds: 'nothing' } }), 'G9', 0) ?? '', /links G9 to no channel/)
+  assert.match(wireFaultText('channel', part(2, { wire_fault: { node: 0, holds: 'nothing' } }), 'G9', 0) ?? '', /^This node shares/)
 })
 
 test('the create controls wait while the block is listening or contested, and say why', () => {

@@ -100,7 +100,7 @@ test('a live event older than the list and of another code gives way to the list
 })
 
 test("this node's own event carries no node and lands on this node's row; one without an instance lands nowhere", () => {
-  assert.equal(liveOf({ short_address: 3, instance_number: 1, event: 'press', event_info: 1 }, 0, 1)?.[0], '0:3:1')
+  assert.equal(liveOf({ short_address: 3, instance_number: 1, event: 'press', event_info: 1 }, 0, 1)?.[0], '0:0:3:1')
   assert.equal(liveOf({ short_address: 3, instance_number: null, event: 'press', event_info: 1 }, 0, 1), null)
 })
 
@@ -158,11 +158,42 @@ test('search matches a name or an address on every node, and the totals follow i
   const g1 = nodeGroup(1, { kind: 'read', data: inputs(1, [device(5, [instance(0)], { node: 1, name: 'Dock sensor' })]), at: 1 }, ctx())
   const g3 = nodeGroup(3, { kind: 'absent', at: 1 }, ctx())
   assert.equal(totalsText([g0, g1, g3]), '3 instances on 2 nodes')
-  assert.deepEqual(filterGroups([g0, g1, g3], 'dock').map((g) => g.node), [1])
+  assert.deepEqual(filterGroups([g0, g1, g3], 'dock').map((g) => g.node), [1, 3], 'a node not read stays named')
   assert.deepEqual(filterGroups([g0, g1, g3], 'n0.in3/1').flatMap((g) => g.rows.map((r) => r.address)), ['N0·IN3/1'])
   assert.equal(filterGroups([g0, g1, g3], '').length, 3)
 })
 
 test('instance types read in short words, an unread type says so', () => {
   assert.deepEqual(['push_button', 'light_sensor', 'occupancy', null].map(typeName), ['button', 'light', 'occupancy', 'not read'])
+})
+
+test('an address search matches whole parts: node 1 is not device 1, IN3 is not IN30', () => {
+  const g1 = nodeGroup(1, { kind: 'read', data: inputs(1, [device(5, [instance(0)], { node: 1 })]), at: 1 }, ctx())
+  const g2 = nodeGroup(2, { kind: 'read', data: inputs(2, [device(1, [instance(0)], { node: 2 }), device(30, [instance(0)], { node: 2 })]), at: 1 }, ctx())
+  assert.deepEqual(filterGroups([g1, g2], 'N1').flatMap((g) => g.rows.map((r) => r.address)), ['N1·IN5/0'])
+  assert.deepEqual(filterGroups([g1, g2], 'in3').flatMap((g) => g.rows.map((r) => r.address)), [])
+  assert.deepEqual(filterGroups([g1, g2], 'IN30').flatMap((g) => g.rows.map((r) => r.address)), ['N2·IN30/0'])
+})
+
+test('devices of two adapters keep their own rows and their own live events', () => {
+  const data = inputs(0, [device(3, [instance(0)]), device(3, [instance(0)], { adapter_id: 1, name: 'Second bus panel' })])
+  const entry = liveOf({ adapter_id: 1, short_address: 3, instance_number: 0, event: 'press', event_info: 1 }, 0, READ_AT + 1)
+  assert.ok(entry)
+  const group = nodeGroup(0, { kind: 'read', data, at: READ_AT }, ctx({ live: new Map([entry]) }))
+  assert.deepEqual(
+    group.rows.map((r) => [r.key, r.address, r.last.kind]),
+    [
+      ['0:0:3:0', 'N0·IN3/0', 'code'],
+      ['0:1:3:0', 'N0·A1·IN3/0', 'named'],
+    ],
+  )
+})
+
+test('the note counts what the node announced, says when the list is cut, and a silent node stays silent', () => {
+  const cut = inputs(1, [device(5, [instance(0), instance(1)], { node: 1 })], { device_count: 40 })
+  assert.equal(nodeGroup(1, { kind: 'read', data: cut, at: 1 }, ctx()).note, '40 devices · 2 instances · 1 listed')
+  const quiet = inputs(2, [], { source: 'stale', age_ms: null })
+  assert.equal(nodeGroup(2, { kind: 'read', data: quiet, at: 1 }, ctx()).note, 'silent · devices as last heard')
+  const bare = inputs(1, [device(5, [], { node: 1 })])
+  assert.equal(totalsText([nodeGroup(1, { kind: 'read', data: bare, at: 1 }, ctx())]), '0 instances on 1 node')
 })

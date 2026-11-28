@@ -23,7 +23,9 @@ import {
 const TICK_MS = 1000
 const INPUTS_FRAME = 'ClusterInputs'
 const LIVE_TYPES: ReadonlySet<string> = new Set(['ClusterInputEventObservedEvent', 'DaliInputEventObservedEvent'])
+const OWN_DEVICE_TYPES: ReadonlySet<string> = new Set(['InputDeviceChangedEvent', 'DaliInputDeviceLifecycleEvent'])
 const HTTP_NOT_FOUND = 404
+const COLUMNS = 5
 
 async function readNode(node: number): Promise<NodeRead> {
   const at = Date.now()
@@ -80,6 +82,8 @@ function useInputsFeed(me: number, status: ClusterStatus | null) {
     } else if (LIVE_TYPES.has(event.type) && event.payload) {
       const entry = liveOf(event.payload as LivePayload, me, Date.now())
       if (entry) setLive((now) => new Map(now).set(entry[0], entry[1]))
+    } else if (OWN_DEVICE_TYPES.has(event.type)) {
+      void fetchNodes([me])
     }
     return true
   }
@@ -120,7 +124,7 @@ function Group({ group }: { group: NodeGroup }) {
   return (
     <>
       <tr class="group-row">
-        <td colSpan={5}>
+        <td colSpan={COLUMNS}>
           {group.head}
           <span class="unit">{group.note}</span>
         </td>
@@ -153,7 +157,9 @@ function InputsTable({ groups, query }: { groups: NodeGroup[]; query: string }) 
           </tbody>
         </table>
       </div>
-      {groups.length === 0 && <div class="empty">No input device of any node matches “{query.trim()}”.</div>}
+      {query.trim() !== '' && groups.every((g) => g.rows.length === 0) && (
+        <div class="empty">No input device of the nodes read matches “{query.trim()}”.</div>
+      )}
     </div>
   )
 }

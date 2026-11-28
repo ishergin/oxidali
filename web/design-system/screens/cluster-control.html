@@ -417,7 +417,7 @@ tr.lastheard td .nm { color: var(--text-faint); font-weight: 400; }
   <div class="head"><h1>Cluster</h1><span class="sub">dali-cluster · Node 0 · 1 of 2 heard</span></div>
   <div class="ptabs"><a class="ptab" href="#">Channels<span class="hint">6</span></a><a class="ptab" href="#">Scenes<span class="hint">2</span></a><a class="ptab active" href="#">Inputs</a></div>
   <div class="ptabline"></div>
-  <div class="toolbar"><input class="search" placeholder="Search all nodes by name or address" aria-label="Search the input devices of all nodes" value=""><span class="unit">9 instances on 3 nodes</span></div>
+  <div class="toolbar"><input class="search" placeholder="Search all nodes by name or address" aria-label="Search the input devices of all nodes" value=""><span class="unit">8 instances on 3 nodes</span></div>
   <div class="card">
     <div class="table-wrap">
       <table class="ctable">
@@ -440,7 +440,7 @@ tr.lastheard td .nm { color: var(--text-faint); font-weight: 400; }
       </table>
     </div>
   </div>
-  <p class="note">One list of every input device of every node: this node's from its registry, the others' from the last whole set each node announced. An instance's address is <b>N0·IN3/0</b> — node 0, device 3, instance 0. A press on any node updates its row at once from the WebSocket channel <b>input</b>, and the event is named as the rules name it (<b>short press</b>, <b>becomes occupied</b>; a sensor shows its value). A row read only from the REST list shows the raw event code with <b>not named</b>, since the list carries the code and not its name; the age starts from the node's own report and counts on while the page is open. A node heard no more keeps its devices, faded, as last heard. A node that announced nothing is named with what that may mean, and a node whose list could not be read is named as not read: neither is drawn as a node without devices. <b>hidden from Home Assistant</b> marks a device the node does not expose. Search matches a name or an address on every node.</p>
+  <p class="note">One list of every input device of every node: this node's from its registry, the others' from the last whole set each node announced. An instance's address is <b>N0·IN3/0</b> — node 0, device 3, instance 0; a device on an adapter other than 0 names it, <b>N0·A1·IN3/0</b>. A press on any node updates its row at once from the WebSocket channel <b>input</b>, and the event is named as the rules name it (<b>short press</b>, <b>becomes occupied</b>; a sensor shows its value). A row read only from the REST list shows the raw event code with <b>not named</b>, since the list carries the code and not its name; the age starts from the node's own report and counts on while the page is open. A node heard no more keeps its devices, faded, as last heard. A node that announced nothing is named with what that may mean, and a node whose list could not be read is named as not read: neither is drawn as a node without devices. <b>hidden from Home Assistant</b> marks a device the node does not expose. Search matches a name, or whole parts of an address (<b>N1</b> is node 1, never device 1), on every node; a node not read stays named while searching, since it was not searched, and when nothing read matches the list says so.</p>
   <p class="note">When this node's own <b>Share input events</b> is off, its group row adds <i>not shared: other nodes do not see these devices</i>. A neighbour's switch is not announced, so a neighbour that shares nothing reads as Node 3 above.</p>
 </div>
 

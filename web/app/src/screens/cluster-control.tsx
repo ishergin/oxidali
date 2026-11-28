@@ -355,8 +355,10 @@ function StateCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecordItem }) {
   )
 }
 
+const DETAIL_COLUMNS: Record<Kind, number> = { channel: 5, scene: 4 }
+
 function span(kind: Kind): number {
-  return kind === 'channel' ? 5 : 4
+  return DETAIL_COLUMNS[kind]
 }
 
 function RecordRow({ ctx, rec }: { ctx: Ctx; rec: ClusterRecordItem }) {
@@ -506,7 +508,7 @@ function PartFlags({ ctx, rec, shown }: { ctx: Ctx; rec: ClusterRecord; shown: P
 }
 
 function WireFault({ ctx, part }: { ctx: Ctx; part: ClusterNodePart }) {
-  const text = wireFaultText(ctx.kind, part, localLabel(ctx.kind, localOf(part), part.adapter))
+  const text = wireFaultText(ctx.kind, part, localLabel(ctx.kind, localOf(part), part.adapter), ctx.me)
   if (!text || !part.wire_fault) return null
   const node = part.wire_fault.node
   const sn = node === ctx.me ? null : statusNode(ctx, node)

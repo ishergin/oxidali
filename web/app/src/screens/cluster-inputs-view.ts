@@ -28,6 +28,7 @@ export interface LiveEvent {
 
 export interface LivePayload {
   node?: number | null
+  adapter_id?: number | null
   short_address?: number | null
   instance_number?: number | null
   event?: string | null
@@ -38,6 +39,7 @@ export interface LivePayload {
 export interface InputRow {
   key: string
   address: string
+  instance: boolean
   name: string | null
   haHidden: boolean
   type: string
@@ -55,6 +57,7 @@ export interface NodeGroup {
   head: string
   note: string
   stale: boolean
+  searched: boolean
   rows: InputRow[]
 }
 
@@ -75,8 +78,8 @@ export const NOTHING_ANNOUNCED = 'no input device announced: the node shares no 
 export const NOT_READ = 'not read · the list could not be read from this node'
 export const NOT_SHARED = 'not shared: other nodes do not see these devices'
 
-export function liveKey(node: number, short: number, instance: number): string {
-  return `${node}:${short}:${instance}`
+export function liveKey(node: number, adapter: number, short: number, instance: number): string {
+  return `${node}:${adapter}:${short}:${instance}`
 }
 
 export function liveOf(payload: LivePayload, me: number, at: number): [string, LiveEvent] | null {
@@ -85,11 +88,13 @@ export function liveOf(payload: LivePayload, me: number, at: number): [string, L
   if (short === null || short === undefined || instance === null || instance === undefined) return null
   const node = payload.node ?? me
   const event = { event: payload.event ?? null, info: payload.event_info ?? 0, value: payload.value ?? 0, at }
-  return [liveKey(node, short, instance), event]
+  return [liveKey(node, payload.adapter_id ?? 0, short, instance), event]
 }
 
-export function inputAddress(node: number, short: number, instance: number | null): string {
-  return instance === null ? `N${node}·IN${short}` : `N${node}·IN${short}/${instance}`
+export function inputAddress(node: number, adapter: number, short: number, instance: number | null): string {
+  const bus = adapter === 0 ? '' : `A${adapter}·`
+  const device = `N${node}·${bus}IN${short}`
+  return instance === null ? device : `${device}/${instance}`
 }
 
 export function typeName(name: string | null): string {
@@ -121,7 +126,7 @@ function liveWins(live: LiveEvent | undefined, inst: ClusterInputInstance, readA
 }
 
 function instanceRow(node: number, dev: ClusterInputDeviceInstances, inst: ClusterInputInstance, ctx: RowCtx): InputRow {
-  const key = liveKey(node, dev.short_address, inst.instance_number)
+  const key = liveKey(node, dev.adapter_id, dev.short_address, inst.instance_number)
   const live = ctx.live.get(key)
   const rt = inst.runtime
   const restAge = rt.age_ms === null ? null : rt.age_ms + Math.max(0, ctx.now - ctx.readAt)
@@ -130,7 +135,8 @@ function instanceRow(node: number, dev: ClusterInputDeviceInstances, inst: Clust
   const age = liveAge === null ? restAge : restAge === null ? liveAge : Math.min(liveAge, restAge)
   return {
     key,
-    address: inputAddress(node, dev.short_address, inst.instance_number),
+    address: inputAddress(node, dev.adapter_id, dev.short_address, inst.instance_number),
+    instance: true,
     name: dev.name,
     haHidden: !dev.ha_entity,
     type: typeName(inst.instance_type_name),
@@ -141,8 +147,9 @@ function instanceRow(node: number, dev: ClusterInputDeviceInstances, inst: Clust
 
 function bareRow(node: number, dev: ClusterInputDeviceInstances): InputRow {
   return {
-    key: `${node}:${dev.short_address}`,
-    address: inputAddress(node, dev.short_address, null),
+    key: `${node}:${dev.adapter_id}:${dev.short_address}`,
+    address: inputAddress(node, dev.adapter_id, dev.short_address, null),
+    instance: false,
     name: dev.name,
     haHidden: !dev.ha_entity,
     type: 'not read',
@@ -182,23 +189,30 @@ function nodeHead(node: number, ctx: GroupCtx): string {
   return board ? `Node ${node} · ${board}` : `Node ${node}`
 }
 
-function readNote(node: number, data: ClusterNodeInputs, rows: InputRow[], ctx: GroupCtx, stale: boolean): string {
-  if (data.devices.length === 0 && node !== ctx.me) return NOTHING_ANNOUNCED
+function listedText(data: ClusterNodeInputs): string {
+  const instances = data.devices.reduce((n, d) => n + d.instance_count, 0)
+  const listed = data.devices.length < data.device_count ? ` · ${data.devices.length} listed` : ''
+  return `${countText(data.device_count, instances)}${listed}`
+}
+
+function readNote(node: number, data: ClusterNodeInputs, ctx: GroupCtx, stale: boolean): string {
+  if (stale) return data.age_ms === null ? 'silent · devices as last heard' : `silent ${ageText(data.age_ms)} · devices as last heard`
+  if (data.device_count === 0 && node !== ctx.me) return NOTHING_ANNOUNCED
   const own = node === ctx.me && !ctx.share ? ` · ${NOT_SHARED}` : ''
-  if (stale) return `silent ${data.age_ms === null ? '' : `${ageText(data.age_ms)} · `}devices as last heard`
-  if (data.devices.length === 0) return `no input device${own}`
-  return `${countText(data.devices.length, rows.length)}${own}`
+  if (data.device_count === 0) return `no input device${own}`
+  return `${listedText(data)}${own}`
 }
 
 export function nodeGroup(node: number, read: NodeRead, ctx: GroupCtx): NodeGroup {
   const head = nodeHead(node, ctx)
-  if (read.kind === 'pending') return { node, head, note: 'reading…', stale: false, rows: [] }
-  if (read.kind === 'absent') return { node, head, note: NOTHING_ANNOUNCED, stale: false, rows: [] }
-  if (read.kind === 'failed') return { node, head, note: NOT_READ, stale: false, rows: [] }
+  const unread = { node, head, stale: false, searched: false, rows: [] }
+  if (read.kind === 'pending') return { ...unread, note: 'reading…' }
+  if (read.kind === 'absent') return { ...unread, note: NOTHING_ANNOUNCED }
+  if (read.kind === 'failed') return { ...unread, note: NOT_READ }
   const stale = read.data.source === 'stale'
   const rowCtx = { live: ctx.live, now: ctx.now, readAt: read.at }
   const rows = read.data.devices.flatMap((dev) => deviceRows(node, dev, rowCtx))
-  return { node, head, note: readNote(node, read.data, rows, ctx, stale), stale, rows }
+  return { node, head, note: readNote(node, read.data, ctx, stale), stale, searched: true, rows }
 }
 
 export function inputNodes(me: number, status: ClusterStatus | null, frame: ClusterInputsNode[] | null): number[] {
@@ -216,25 +230,35 @@ export function movedNodes(before: ClusterInputsNode[] | null, after: ClusterInp
     .map((n) => n.node)
 }
 
-function squash(text: string): string {
-  return text.toLowerCase().replace(/[·.\s]/g, '')
+function tokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[·./\s]+/)
+    .filter((t) => t !== '')
+}
+
+function addressMatches(address: string, query: string): boolean {
+  const have = tokens(address)
+  const want = tokens(query)
+  if (want.length === 0) return false
+  return have.some((_, at) => want.every((t, i) => have[at + i] === t))
 }
 
 export function rowMatches(row: InputRow, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (q === '') return true
-  return (row.name ?? '').toLowerCase().includes(q) || squash(row.address).includes(squash(q))
+  return (row.name ?? '').toLowerCase().includes(q) || addressMatches(row.address, q)
 }
 
 export function filterGroups(groups: NodeGroup[], query: string): NodeGroup[] {
   if (query.trim() === '') return groups
   return groups
     .map((g) => ({ ...g, rows: g.rows.filter((r) => rowMatches(r, query)) }))
-    .filter((g) => g.rows.length > 0)
+    .filter((g) => g.rows.length > 0 || !g.searched)
 }
 
 export function totalsText(groups: NodeGroup[]): string {
-  const instances = groups.reduce((n, g) => n + g.rows.length, 0)
+  const instances = groups.reduce((n, g) => n + g.rows.filter((r) => r.instance).length, 0)
   const nodes = groups.filter((g) => g.rows.length > 0).length
   const i = instances === 1 ? '1 instance' : `${instances} instances`
   return `${i} on ${nodes === 1 ? '1 node' : `${nodes} nodes`}`

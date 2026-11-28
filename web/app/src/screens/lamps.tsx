@@ -320,7 +320,7 @@ export function Lamps() {
         <table>
           <colgroup>
             <col style="width:64px" />
-            {node !== null && <col style="width:88px" />}
+            {node !== null && <col style="width:86px" />}
             <col />
             <col style="width:88px" />
             <col style="width:96px" />
