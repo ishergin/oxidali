@@ -3,16 +3,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::MockDaliTransport;
-use dali2rust_adapters::{
-    build_http_test_stack, fixed_boot_epoch, BusStackRuntime, ClusterComposition, DaliRuntimeConfig, HttpTestPorts,
-};
+use dali2rust_adapters::BusStackRuntime;
 use dali2rust_api::http::router::Router;
-use dali2rust_bus::BusConfig;
 use dali2rust_cluster_runtime::frame::{decode, Frame};
-use dali2rust_cluster_runtime::presence::PresenceTiming;
 use dali2rust_platform::dali::ObservedRawFrameKind;
-use dali2rust_test_support::{try_wait_until, ClusterHub, ClusterHubBinder, HubDatagram, MockNetworkLink};
+use dali2rust_test_support::{try_wait_until, ClusterHub, HubDatagram};
 use serde_json::{json, Value};
+
+mod cluster_node;
+
+use cluster_node::{stack_on, Board};
 
 const PULSE_PERIOD_MS: u32 = 250;
 const SETTLE: Duration = Duration::from_secs(10);
@@ -31,32 +31,13 @@ struct Node {
     _runtime: Box<BusStackRuntime>,
 }
 
-struct Board {
-    mac: [u8; 6],
-    address: [u8; 4],
-    epoch: u32,
-}
 
 const FIRST: Board = Board { mac: [0x02, 0, 0, 0x0e, 0x0f, 0x01], address: [10, 0, 2, 1], epoch: 41 };
 const SECOND: Board = Board { mac: [0x02, 0, 0, 0x0e, 0x0f, 0x02], address: [10, 0, 2, 2], epoch: 42 };
 
 fn node_on(hub: &Arc<ClusterHub>, board: &Board) -> Node {
-    let cluster = ClusterComposition {
-        binder: Arc::new(ClusterHubBinder::new(Arc::clone(hub), board.address)),
-        timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
-        boot_epoch: fixed_boot_epoch(board.epoch),
-    };
-    let link = MockNetworkLink::new(board.mac, Some(board.address), "cluster-node");
     let wire = Arc::new(Mutex::new(MockDaliTransport::new()));
-    let (router, _hub, runtime) = build_http_test_stack(
-        "0.1.0-test",
-        Arc::clone(&wire),
-        BusConfig::default(),
-        DaliRuntimeConfig::default(),
-        None,
-        &[],
-        HttpTestPorts { network_link: Some(Arc::new(link)), cluster: Some(cluster), ..HttpTestPorts::default() },
-    );
+    let (router, runtime) = stack_on(hub, board, PULSE_PERIOD_MS, Arc::clone(&wire));
     Node { router, wire, _runtime: runtime }
 }
 

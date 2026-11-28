@@ -148,7 +148,8 @@ from the home node, an edit carried by a datagram, and no remote edit at all.
   the wire is named after one of its nodes. One live node owns it. Only the owner executes
   incoming commands to channels, to all lamps and scene recalls, and only it forwards a
   foreign master; a command its sender already executed on that wire is executed by
-  nobody. When a neighbour shares the wire, the owner holds a foreign frame's observation
+  nobody. A command to one lamp is outside both rules: only the node it names executes it,
+  whoever owns the wire. When a neighbour shares the wire, the owner holds a foreign frame's observation
   for tens of milliseconds, and the neighbour's frame with the same target and verb cancels
   it; alone on its wire a node holds nothing.
 
@@ -300,8 +301,8 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   `sdkconfig.p4.defaults`, which only a flash proves.
 - The cluster's counters are a block in `/api/v1/stats`, and its worker one more command,
   event and confirmation subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 8512 against a measured worst case of 8462 — the smallest
-  8192 + 64·k that holds it, k = 5 —
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 8576 against a measured worst case of 8555 — the smallest
+  8192 + 64·k that holds it, k = 6 —
   `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8832 against 8805. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15901: eight nodes and 24 ignored boards, every text at its widest. The per-node

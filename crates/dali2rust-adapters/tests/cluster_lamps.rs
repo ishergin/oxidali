@@ -3,19 +3,19 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dali2rust_adapters::dali::transport::sim::SimDaliTransport;
-use dali2rust_adapters::{
-    build_http_test_stack, fixed_boot_epoch, BusStackRuntime, ClusterComposition, DaliRuntimeConfig, HttpTestPorts,
-};
+use dali2rust_adapters::BusStackRuntime;
 use dali2rust_api::http::router::Router;
-use dali2rust_bus::BusConfig;
 use dali2rust_cluster_runtime::frame::{
     cluster_tag, decode, encode, DatagramBuffer, Frame, Header, Hello, NodeClaim, Pulse,
 };
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
-use dali2rust_cluster_runtime::presence::PresenceTiming;
 use dali2rust_gear_model::GearSpec;
-use dali2rust_test_support::{try_wait_until, ClusterHub, ClusterHubBinder, HubDatagram, MockNetworkLink};
+use dali2rust_test_support::{try_wait_until, ClusterHub, HubDatagram};
 use serde_json::{json, Value};
+
+mod cluster_node;
+
+use cluster_node::{stack_on, Board};
 
 const PULSE_PERIOD_MS: u32 = 250;
 const SETTLE: Duration = Duration::from_secs(10);
@@ -34,17 +34,15 @@ const WATCH: Duration = Duration::from_secs(2);
 const HELLO_EVERY: Duration = Duration::from_millis(100);
 const NEIGHBOUR: Board = Board { mac: [0x02, 0, 0, 0x0e, 0x0f, 0x09], address: [10, 0, 2, 9], epoch: 49 };
 const NEIGHBOUR_NODE: u8 = 1;
+const SECOND_NODE: u8 = 1;
+const DAPC_SHORT_0_AT_LEVEL: u16 = 0x00B4;
 
 struct Node {
     router: Router,
+    wire: Arc<Mutex<SimDaliTransport>>,
     _runtime: Box<BusStackRuntime>,
 }
 
-struct Board {
-    mac: [u8; 6],
-    address: [u8; 4],
-    epoch: u32,
-}
 
 const FIRST: Board = Board { mac: [0x02, 0, 0, 0x0e, 0x0f, 0x01], address: [10, 0, 2, 1], epoch: 41 };
 const SECOND: Board = Board { mac: [0x02, 0, 0, 0x0e, 0x0f, 0x02], address: [10, 0, 2, 2], epoch: 42 };
@@ -58,22 +56,9 @@ fn wire_with_a_lamp_in_group_5(random_address: u32) -> SimDaliTransport {
 }
 
 fn node_on(hub: &Arc<ClusterHub>, board: &Board) -> Node {
-    let cluster = ClusterComposition {
-        binder: Arc::new(ClusterHubBinder::new(Arc::clone(hub), board.address)),
-        timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
-        boot_epoch: fixed_boot_epoch(board.epoch),
-    };
-    let link = MockNetworkLink::new(board.mac, Some(board.address), "cluster-node");
-    let (router, _hub, runtime) = build_http_test_stack(
-        "0.1.0-test",
-        Arc::new(Mutex::new(wire_with_a_lamp_in_group_5(board.epoch))),
-        BusConfig::default(),
-        DaliRuntimeConfig::default(),
-        None,
-        &[],
-        HttpTestPorts { network_link: Some(Arc::new(link)), cluster: Some(cluster), ..HttpTestPorts::default() },
-    );
-    Node { router, _runtime: runtime }
+    let wire = Arc::new(Mutex::new(wire_with_a_lamp_in_group_5(board.epoch)));
+    let (router, runtime) = stack_on(hub, board, PULSE_PERIOD_MS, Arc::clone(&wire));
+    Node { router, wire, _runtime: runtime }
 }
 
 impl Node {
@@ -106,6 +91,10 @@ impl Node {
 
     fn join(&self, node_number: u8) {
         self.send("PATCH", "/api/v1/cluster", &json!({ "cluster_name": "hall", "node_number": node_number, "enabled": true }).to_string());
+    }
+
+    fn frames_after(&self, mark: usize) -> Vec<u16> {
+        self.wire.lock().expect("the simulated wire").sent_frames().split_off(mark)
     }
 
     fn running(&self) -> bool {
@@ -273,4 +262,22 @@ fn a_channel_with_parts_on_both_nodes_is_on_when_one_node_s_member_is_lit() {
     let on_parts: Vec<&Value> = lit_parts.iter().filter(|part| part["state"]["on"] == json!(true)).collect();
     assert_eq!(on_parts.len(), 1, "only the second node's part is on: {parts}");
     assert_eq!(on_parts.first().map(|part| part["node"].clone()), Some(json!(1)), "{parts}");
+}
+
+#[test]
+fn a_lamp_command_put_on_one_node_lights_the_lamp_on_its_owner_s_wire_only_and_comes_back_as_its_state() {
+    let (_hub, first, second) = running_pair();
+    second.send("PATCH", "/api/v1/cluster", r#"{"accept_single_lamps":true}"#);
+    let path = format!("/api/v1/cluster/nodes/{SECOND_NODE}/lamps/{LAMP}");
+    first.wait(&path, "/source", &json!("cached"));
+    let marks = (first.frames_after(0).len(), second.frames_after(0).len());
+    let answer = first.send("PUT", &format!("{path}/target-state"), &json!({ "power": "on", "level": LEVEL }).to_string());
+    assert_eq!(answer["status"], "sent", "{answer}");
+    let reached = || second.frames_after(marks.1) == [DAPC_SHORT_0_AT_LEVEL];
+    assert!(try_wait_until(reached, SETTLE), "the owner's wire: {:04X?}", second.frames_after(marks.1));
+    first.wait(&path, "/state/level", &json!(LEVEL));
+    first.wait(&path, "/state/value_source", &json!("cluster"));
+    assert_eq!(first.frames_after(marks.0), Vec::<u16>::new(), "the sender's own wire stays quiet");
+    let own = second.read(&format!("/api/v1/cluster/nodes/{SECOND_NODE}/lamps/{LAMP}"));
+    assert_eq!((own["source"].clone(), own["state"]["value_source"].clone()), (json!("own"), json!("cluster")), "{own}");
 }

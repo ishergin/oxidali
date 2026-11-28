@@ -56,7 +56,7 @@ mod forward;
 mod inputs;
 
 pub use command::{
-    CLUSTER_BUSY, CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING, CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED,
+    command_refusal, CLUSTER_BUSY, CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING, CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED,
     CONTROLLER_PASSIVE,
 };
 
@@ -155,6 +155,7 @@ fn execution(ports: &ClusterWorkerPorts) -> Arc<ClusterExecution> {
         parts: Arc::clone(&ports.parts),
         settings: Arc::clone(&ports.settings),
         adapters: Arc::clone(&ports.adapters),
+        lamps: Arc::clone(&ports.lamps),
     };
     let bus = (ports.publisher.clone(), ports.bus_id);
     Arc::new(ClusterExecution::new(bus, reads, Arc::clone(&ports.counters)))

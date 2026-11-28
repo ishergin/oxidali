@@ -73,6 +73,10 @@ pub trait ClusterLampsHttpState: Send + Sync {
     fn lamp(&self, node: u8, lamp: u8) -> Option<ClusterLampDto>;
 
     fn part_lit(&self, node: u8, adapter: u8, group: u8, channel: ClusterRecordRef) -> ChannelPartLit;
+
+    fn own_node(&self) -> u8;
+
+    fn command_refusal(&self) -> Option<&'static str>;
 }
 
 pub fn ha_identity_dto(controller_id: &str, discovery_prefix: &str, adapter: u8, lamp: u8) -> ClusterLampHaDto {

@@ -58,6 +58,8 @@ pub struct ClusterCounters {
     pub input_events_unaddressed_total: AtomicU32,
     pub input_events_unsent_total: AtomicU32,
     pub input_events_dropped_total: AtomicU32,
+    pub lamp_commands_dropped_accept_off_total: AtomicU32,
+    pub lamp_commands_refused_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {

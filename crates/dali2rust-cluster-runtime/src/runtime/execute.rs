@@ -9,9 +9,12 @@ use dali2rust_contracts::msg::{
     DimDirection, LevelPreset, LevelTransition, LightSetpoint, Origin, StepKind,
 };
 use dali2rust_contracts::SOURCE_ID_UNSPECIFIED;
-use dali2rust_domain::registry::{AdapterReadPort, ClusterPartReadPort, ClusterPartView, ClusterSettingsReadPort};
+use dali2rust_domain::registry::{
+    capability_supports_color_mode, AdapterReadPort, CapabilityFlagsView, ClusterLampReadPort, ClusterPartReadPort,
+    ClusterPartView, ClusterSettingsReadPort,
+};
 
-use crate::frame::{Action, Command, LightVerb, RecallScope, RecordRef, SourceClass, Target};
+use crate::frame::{Action, Command, LampAddress, LightVerb, RecallScope, RecordRef, SourceClass, Target};
 
 use super::counters::{bump, ClusterCounters};
 
@@ -98,6 +101,64 @@ impl Outcome {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LampOutcome {
+    Unsupported,
+    NotOurs,
+    AcceptOff,
+    Refused,
+    Executed { queued: bool },
+}
+
+impl LampOutcome {
+    pub(crate) fn count_drop(self, counters: &ClusterCounters) {
+        let reason = match self {
+            Self::Unsupported => &counters.commands_dropped_unsupported_total,
+            Self::NotOurs => &counters.commands_dropped_no_part_total,
+            Self::AcceptOff => &counters.lamp_commands_dropped_accept_off_total,
+            Self::Refused => &counters.lamp_commands_refused_total,
+            Self::Executed { .. } => return,
+        };
+        bump(reason);
+    }
+}
+
+enum LampVerb {
+    Setpoint(LightSetpoint),
+    Preset(LevelPreset),
+}
+
+impl LampVerb {
+    fn of(verb: &LightVerb) -> Option<Self> {
+        match Verb::of(verb)? {
+            Verb::Setpoint(setpoint) => Some(Self::Setpoint(setpoint)),
+            Verb::Preset(preset) => Some(Self::Preset(preset)),
+            Verb::Dim(_) | Verb::Step(_) | Verb::StopFade => None,
+        }
+    }
+
+    fn fits(&self, capabilities: CapabilityFlagsView) -> bool {
+        let Self::Setpoint(setpoint) = self else {
+            return true;
+        };
+        let stated = setpoint.color.as_ref().filter(|_| setpoint.states_color());
+        stated.is_none_or(|color| capability_supports_color_mode(capabilities, color.mode))
+    }
+
+    fn on_lamp(&self, lamp: LampAddress, hold_hcl: bool) -> BusCommandPayload {
+        match self {
+            Self::Setpoint(setpoint) => {
+                let command = DaliSetTargetStateCommand::for_virtual_lamp(lamp.adapter, lamp.lamp, setpoint);
+                DaliSetTargetStateCommand { hold_hcl, ..command }.into()
+            }
+            Self::Preset(preset) => {
+                let command = DaliRecallLevelPresetCommand::for_virtual_lamp(lamp.adapter, lamp.lamp, *preset);
+                DaliRecallLevelPresetCommand { hold_hcl, ..command }.into()
+            }
+        }
+    }
+}
+
 enum Verb {
     Setpoint(LightSetpoint),
     Preset(LevelPreset),
@@ -168,7 +229,7 @@ impl Verb {
 pub(crate) fn is_supported(action: &Action) -> bool {
     match action {
         Action::Light { target: Target::Channel(_) | Target::All, verb } => Verb::of(verb).is_some(),
-        Action::Light { target: Target::Lamp(_), .. } => false,
+        Action::Light { target: Target::Lamp(_), verb } => LampVerb::of(verb).is_some(),
         Action::RecallScene { .. } => true,
     }
 }
@@ -177,6 +238,7 @@ pub(crate) struct ExecutionReads {
     pub(crate) parts: Arc<dyn ClusterPartReadPort>,
     pub(crate) settings: Arc<dyn ClusterSettingsReadPort>,
     pub(crate) adapters: Arc<dyn AdapterReadPort>,
+    pub(crate) lamps: Arc<dyn ClusterLampReadPort>,
 }
 
 pub struct ClusterExecution {
@@ -213,13 +275,35 @@ impl ClusterExecution {
                     self.on_channel(*channel, pass, |part| verb.on_group(part, pass.hold_hcl()))
                 }
                 (Target::All, Some(verb)) => self.on_all(&verb, pass),
-                (Target::Lamp(_), _) | (_, None) => Outcome::UNSUPPORTED,
+                (Target::Lamp(_), _) => Outcome::default(),
+                (_, None) => Outcome::UNSUPPORTED,
             },
             Action::RecallScene { scene, scope: RecallScope::Node } => self.on_node(*scene, pass),
             Action::RecallScene { scene, scope: RecallScope::Channel(channel) } => {
                 self.on_channel_scene(*scene, *channel, pass)
             }
         }
+    }
+
+    pub(crate) fn execute_lamp(&self, lamp: LampAddress, verb: &LightVerb, stamp: Stamp, node: u8) -> LampOutcome {
+        let Some(verb) = LampVerb::of(verb) else {
+            return LampOutcome::Unsupported;
+        };
+        if lamp.node != node {
+            return LampOutcome::NotOurs;
+        }
+        if !self.reads.settings.cluster_settings_view().accept_single_lamps {
+            return LampOutcome::AcceptOff;
+        }
+        if !self.takes(lamp, &verb) {
+            return LampOutcome::Refused;
+        }
+        LampOutcome::Executed { queued: self.publish(verb.on_lamp(lamp, stamp.hold_hcl), stamp.origin) }
+    }
+
+    fn takes(&self, lamp: LampAddress, verb: &LampVerb) -> bool {
+        let info = self.reads.lamps.cluster_lamp_info(lamp.adapter, lamp.lamp);
+        info.is_some_and(|info| info.bound && verb.fits(info.capabilities))
     }
 
     fn on_all(&self, verb: &Verb, pass: Pass) -> Outcome {

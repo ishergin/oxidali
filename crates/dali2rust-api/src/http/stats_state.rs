@@ -250,6 +250,8 @@ pub struct StatsClusterDto {
     pub input_events_unaddressed_total: u32,
     pub input_events_unsent_total: u32,
     pub input_events_dropped_total: u32,
+    pub lamp_commands_dropped_accept_off_total: u32,
+    pub lamp_commands_refused_total: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -364,6 +366,7 @@ declare_widest_dtos! {
         foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
         copies_stored_total, records_taken_back_total, input_events_sent_total, input_events_received_total,
         input_events_unaddressed_total, input_events_unsent_total, input_events_dropped_total,
+        lamp_commands_dropped_accept_off_total, lamp_commands_refused_total,
     }
     StatsReportDto {
         controller = StatsControllerDto::widest(),

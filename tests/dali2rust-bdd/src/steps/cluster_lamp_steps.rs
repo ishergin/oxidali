@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use cucumber::{then, when};
 use dali2rust_cluster_runtime::frame::{
-    decode, AdapterScope, BirthMark, DatagramBuffer, Frame, HaIdentity, Header, LampCapabilities, LampColour,
+    decode, AdapterScope, BirthMark, DatagramBuffer, Frame, HaIdentity, Header, KelvinRange, LampCapabilities, LampColour,
     LampInfo, LampInfoElement, LampInfoWriter, LampState, LampStateWriter, PagePlace, PartState, RecordRef,
     StateElement,
 };
@@ -72,6 +72,8 @@ struct InfoSpec {
     lamp: Option<u8>,
     #[serde(default)]
     name: String,
+    bound: Option<bool>,
+    cct: Option<[u16; 2]>,
 }
 
 impl InfoSpec {
@@ -87,9 +89,9 @@ impl InfoSpec {
             device_types: 0,
             color_mode: ColorMode::Brightness,
             color_mode_overridden: false,
-            capabilities: LampCapabilities { brightness: true, ..LampCapabilities::default() },
-            kelvin_range: None,
-            bound: true,
+            capabilities: LampCapabilities { brightness: true, cct: self.cct.is_some(), ..LampCapabilities::default() },
+            kelvin_range: self.cct.map(|[min, max]| KelvinRange { min, max }),
+            bound: self.bound.unwrap_or(true),
             ha_entity: true,
         })
     }
@@ -119,7 +121,7 @@ fn info_datagram(header: &Header, (set, page, last): (u32, u8, bool), specs: &[I
     buffer.get(..len).expect("the encoded length").to_vec()
 }
 
-// CLU-200 CLU-201 CLU-202 CLU-203 CLU-204 CLU-205 CLU-209 CLU-210
+// CLU-200 CLU-201 CLU-202 CLU-203 CLU-204 CLU-205 CLU-209 CLU-210 CLU-227 CLU-228 CLU-230
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends lamp state page (\d+) of set (\d+) as (the last page|a page before the last) with (\[.*\])$"#)]
 async fn board_sends_state(world: &mut DaliWorld, mac: String, page: u8, set: u32, last: String, json: String) {
     let specs: Vec<StateSpec> = serde_json::from_str(&json).expect("a JSON array of lamp state elements");
@@ -127,7 +129,7 @@ async fn board_sends_state(world: &mut DaliWorld, mac: String, page: u8, set: u3
     rig(world).speaker(hardware_address(&mac)).speak(|header| state_datagram(header, at, &specs));
 }
 
-// CLU-200 CLU-201 CLU-202 CLU-203 CLU-204 CLU-205 CLU-210
+// CLU-200 CLU-201 CLU-202 CLU-203 CLU-204 CLU-205 CLU-210 CLU-227 CLU-228 CLU-230
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends lamp info page (\d+) of set (\d+) as (the last page|a page before the last) with (\[.*\])$"#)]
 async fn board_sends_info(world: &mut DaliWorld, mac: String, page: u8, set: u32, last: String, json: String) {
     let specs: Vec<InfoSpec> = serde_json::from_str(&json).expect("a JSON array of lamp info elements");

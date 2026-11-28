@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use cucumber::{then, when};
 use dali2rust_cluster_runtime::frame::{
-    decode, encode, Action, BirthMark, Command, DatagramBuffer, Frame, Header, LightVerb, NoteDeed, NoteReach,
+    decode, encode, Action, BirthMark, Command, DatagramBuffer, Frame, Header, LampAddress, LightVerb, NoteDeed, NoteReach,
     RecallScope, RecordRef, SourceClass, Target, WireNote,
 };
-use dali2rust_contracts::msg::{LevelTransition, LightSetpoint, PowerState};
+use dali2rust_contracts::msg::{ColorMode, ColorValue, LevelTransition, LightSetpoint, PowerState};
 use dali2rust_platform::cluster_link::MAX_CLUSTER_DATAGRAM_BYTES;
 use dali2rust_test_support::{try_wait_until, HubDatagram};
 use serde::Deserialize;
@@ -25,6 +25,9 @@ const COPIES: usize = 2;
 struct CommandSpec {
     channel: Option<[u32; 3]>,
     scene: Option<[u32; 3]>,
+    lamp: Option<[u8; 3]>,
+    rgb: Option<[u8; 3]>,
+    kelvin: Option<u16>,
     level: Option<u8>,
     power: Option<String>,
     recall: Option<String>,
@@ -52,8 +55,24 @@ impl CommandSpec {
             (Some(scene), Some(channel)) => Action::RecallScene { scene, scope: RecallScope::Channel(channel) },
             (None, Some(channel)) => Action::Light { target: Target::Channel(channel), verb: self.verb() },
             (None, None) if self.all == Some(true) => Action::Light { target: Target::All, verb: self.verb() },
-            (None, None) => panic!("a command names a channel, all lamps or a scene"),
+            (None, None) if self.lamp.is_some() => Action::Light { target: self.lamp_target(), verb: self.verb() },
+            (None, None) => panic!("a command names a channel, all lamps, a lamp or a scene"),
         }
+    }
+
+    fn lamp_target(&self) -> Target {
+        let [node, adapter, lamp] = self.lamp.expect("a lamp address");
+        Target::Lamp(LampAddress { node, adapter, lamp })
+    }
+
+    fn colour(&self) -> Option<ColorValue> {
+        let rgb = self.rgb.map(|[r, g, b]| ColorValue { mode: ColorMode::Rgb, r, g, b, ..ColorValue::default() });
+        let kelvin = self.kelvin.map(|kelvin| ColorValue {
+            mode: ColorMode::Cct,
+            color_temperature_kelvin: kelvin,
+            ..ColorValue::default()
+        });
+        rgb.or(kelvin)
     }
 
     fn verb(&self) -> LightVerb {
@@ -66,10 +85,12 @@ impl CommandSpec {
                 "off" => PowerState::Off,
                 other => panic!("no power {other}"),
             };
-            return LightVerb::Setpoint(LightSetpoint { power, level: self.level, color: None });
+            return LightVerb::Setpoint(LightSetpoint { power, level: self.level, color: self.colour() });
         }
         match (self.level, self.recall.as_deref()) {
-            (Some(level), None) => LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: Some(level), color: None }),
+            (Some(level), None) => {
+                LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: Some(level), color: self.colour() })
+            }
             (None, Some("max_level")) => LightVerb::Transition(LevelTransition::RecallMaxLevel),
             (None, Some("min_level")) => LightVerb::Transition(LevelTransition::RecallMinLevel),
             (None, Some("up")) => LightVerb::Transition(LevelTransition::Up),
@@ -150,7 +171,7 @@ async fn board_notes_frame_twice(world: &mut DaliWorld, mac: String, json: Strin
     speaker.repeat(&bytes);
 }
 
-// CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-086 CLU-087 CLU-088 CLU-089 CLU-098 CLU-100 CLU-102 CLU-103 CLU-109 CLU-111 CLU-178 CLU-179 CLU-187
+// CLU-076 CLU-077 CLU-078 CLU-079 CLU-080 CLU-081 CLU-082 CLU-086 CLU-087 CLU-088 CLU-089 CLU-098 CLU-100 CLU-102 CLU-103 CLU-109 CLU-111 CLU-178 CLU-179 CLU-187 CLU-220 CLU-221 CLU-222 CLU-223 CLU-224 CLU-225 CLU-226
 #[when(regex = r#"^the board "([0-9a-f:]{17})" sends the command (\{.*\}) twice with one sequence number$"#)]
 async fn board_sends_command_twice(world: &mut DaliWorld, mac: String, json: String) {
     let command = CommandSpec::parse(&json).command();
@@ -169,7 +190,7 @@ async fn board_loses_command(world: &mut DaliWorld, mac: String) {
     rig(world).speaker(hardware_address(&mac)).lose();
 }
 
-// CLU-078
+// CLU-078 CLU-223
 #[when(regex = r#"^a datagram with this controller's own hardware address carries the command (\{.*\}) as node (\d) of cluster "([^"]*)"$"#)]
 async fn own_address_sends_command(world: &mut DaliWorld, json: String, node: u8, name: String) {
     let command = CommandSpec::parse(&json).command();
@@ -203,7 +224,7 @@ fn colour_stated_or_none(mut command: Command) -> Command {
     command
 }
 
-// CLU-083 CLU-090 CLU-092 CLU-094 CLU-095 CLU-097 CLU-099 CLU-101 CLU-170 CLU-171 CLU-172 CLU-173 CLU-176 CLU-177 CLU-178 CLU-179 CLU-185
+// CLU-083 CLU-090 CLU-092 CLU-094 CLU-095 CLU-097 CLU-099 CLU-101 CLU-170 CLU-171 CLU-172 CLU-173 CLU-176 CLU-177 CLU-178 CLU-179 CLU-185 CLU-227 CLU-228
 #[then(regex = r"^the cluster hub should carry from this controller the command (\{.*\}) twice with one sequence number$")]
 async fn hub_carries_command_twice(world: &mut DaliWorld, json: String) {
     let wanted = CommandSpec::parse(&json).command();
@@ -217,7 +238,7 @@ async fn hub_carries_command_twice(world: &mut DaliWorld, json: String) {
     assert_eq!(first_bytes.bytes, second_bytes.bytes, "the copies are the same datagram");
 }
 
-// CLU-076 CLU-081 CLU-091 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-102 CLU-108 CLU-109 CLU-110 CLU-171 CLU-173 CLU-174 CLU-175 CLU-177 CLU-178 CLU-179 CLU-185 CLU-187 CLU-180
+// CLU-076 CLU-081 CLU-091 CLU-093 CLU-094 CLU-095 CLU-096 CLU-097 CLU-098 CLU-099 CLU-100 CLU-102 CLU-108 CLU-109 CLU-110 CLU-171 CLU-173 CLU-174 CLU-175 CLU-177 CLU-178 CLU-179 CLU-185 CLU-187 CLU-180 CLU-220 CLU-226 CLU-228
 #[then(regex = r"^the cluster hub should carry no command from this controller within (\d+) ms$")]
 async fn hub_carries_no_command(world: &mut DaliWorld, window_ms: u64) {
     let sent = sent_commands(rig(world), Duration::from_millis(window_ms), 1);
@@ -242,7 +263,7 @@ fn assert_rising(pairs: &[(u32, Command)]) {
     assert!(seqs.windows(2).all(|two| two.first() < two.get(1)), "the commands left in their order: {seqs:?}");
 }
 
-// CLU-104 CLU-105
+// CLU-104 CLU-105 CLU-230
 #[then(regex = r"^the cluster hub should carry from this controller the commands (\[.*\]) in this order, each twice with one sequence number$")]
 async fn hub_carries_commands_in_order(world: &mut DaliWorld, json: String) {
     let specs: Vec<serde_json::Value> = serde_json::from_str(&json).expect("a list of command specs");

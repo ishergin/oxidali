@@ -143,7 +143,7 @@ async fn then_forward_frame_eventually_sent(world: &mut DaliWorld, hex: String) 
     );
 }
 
-// RULE-092 RULE-093 RULE-094 RULE-095 CLU-076 CLU-078 CLU-081 CLU-082 CLU-083 CLU-084 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-096 CLU-098 CLU-099 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-107 CLU-109 CLU-110 CLU-111 GRP-079 CLU-187
+// RULE-092 RULE-093 RULE-094 RULE-095 CLU-076 CLU-078 CLU-081 CLU-082 CLU-083 CLU-084 CLU-088 CLU-089 CLU-090 CLU-091 CLU-092 CLU-093 CLU-096 CLU-098 CLU-099 CLU-101 CLU-102 CLU-103 CLU-104 CLU-105 CLU-106 CLU-107 CLU-109 CLU-110 CLU-111 GRP-079 CLU-187 CLU-220 CLU-221 CLU-223 CLU-225 CLU-226
 #[then(regex = r#"^the DALI mock transport forward trace should eventually be exactly "([0-9A-Fa-f, ]+)"$"#)]
 async fn then_forward_trace_eventually_exactly(world: &mut DaliWorld, trace: String) {
     let expected: Vec<u16> = trace

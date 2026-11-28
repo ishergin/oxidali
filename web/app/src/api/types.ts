@@ -1523,6 +1523,8 @@ export type StatsCluster = {
   input_events_unaddressed_total: number
   input_events_unsent_total: number
   input_events_dropped_total: number
+  lamp_commands_dropped_accept_off_total: number
+  lamp_commands_refused_total: number
 }
 
 export type InputDeviceSummary = {

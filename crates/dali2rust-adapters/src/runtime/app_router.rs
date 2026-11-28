@@ -59,6 +59,7 @@ use dali2rust_api::http::cluster_inputs_state::ClusterInputsHttpState;
 use dali2rust_api::http::handlers::cluster_commands::{ClusterCommandDeps, ClusterCommandHandler, ClusterCommandRoute};
 use dali2rust_api::http::handlers::cluster_info::{ClusterInfoGetHandler, ClusterNodeInputsHandler, ClusterNodePartsHandler};
 use dali2rust_api::http::cluster_lamps_state::ClusterLampsHttpState;
+use dali2rust_api::http::handlers::cluster_lamp_commands::ClusterLampTargetStateHandler;
 use dali2rust_api::http::handlers::cluster_lamps::{ClusterLampsHandler, ClusterLampsRoute};
 use dali2rust_api::http::handlers::cluster_parts::{ClusterPartDeps, ClusterPartHandler, ClusterPartRoute};
 use dali2rust_api::http::handlers::cluster_records::{
@@ -305,6 +306,7 @@ pub(super) fn build_app_router(
     let (bus, registry, adapter_count) = (&parts.dispatch, &parts.registry_http, parts.adapter_count);
     let redundancy_read = Arc::clone(&parts.read_models.redundancy);
     let cluster_info = Arc::clone(&parts.read_models.cluster_info);
+    let cluster_lamps = Arc::clone(&parts.read_models.cluster_lamps);
     let presence = Arc::clone(&parts.read_models.cluster);
     let uptime = parts.read_models.uptime.clone();
     let base = AppBuilder::new(Arc::clone(&parts.read_models.health))
@@ -322,6 +324,7 @@ pub(super) fn build_app_router(
     let builder = wire_rules(builder, bus, &parts.rules);
     let builder = wire_settings_and_lamps(builder, bus, registry, (&redundancy_read, &presence));
     let builder = wire_cluster_records(builder, bus, &registry.cluster, &cluster_info);
+    let builder = wire_cluster_lamp_commands(builder, bus, registry, (&cluster_info, &cluster_lamps));
     let builder = wire_time(builder, parts.wall_clock, parts.persist_timezone);
     wire_web_ui(builder, parts.web_assets).build()
 }
@@ -956,18 +959,34 @@ fn wire_cluster_lamps(builder: AppBuilder, lamps: &Arc<dyn ClusterLampsHttpState
 
 #[inline(never)]
 fn wire_cluster_commands(builder: AppBuilder, bus: &HttpBusDispatch, info: &Arc<dyn ClusterInfoHttpState>) -> AppBuilder {
-    let deps = Arc::new(ClusterCommandDeps {
+    let deps = cluster_command_deps(bus, info);
+    let handler = |route| -> Box<dyn ApiHandler> { Box::new(ClusterCommandHandler::new(Arc::clone(&deps), route)) };
+    builder
+        .with_handler(RouteKey::ClusterChannelTargetState, handler(ClusterCommandRoute::ChannelTargetState))
+        .with_handler(RouteKey::ClusterSceneRecall, handler(ClusterCommandRoute::SceneRecall))
+}
+
+fn cluster_command_deps(bus: &HttpBusDispatch, info: &Arc<dyn ClusterInfoHttpState>) -> Arc<ClusterCommandDeps> {
+    Arc::new(ClusterCommandDeps {
         publisher: bus.publisher.clone(),
         slots: Arc::clone(&bus.slots),
         correlation: Arc::clone(&bus.correlation),
         cluster: Arc::clone(info),
         bus_id: bus.bus_id,
         timeout_ms: bus.confirmation_timeout_ms,
-    });
-    let handler = |route| -> Box<dyn ApiHandler> { Box::new(ClusterCommandHandler::new(Arc::clone(&deps), route)) };
-    builder
-        .with_handler(RouteKey::ClusterChannelTargetState, handler(ClusterCommandRoute::ChannelTargetState))
-        .with_handler(RouteKey::ClusterSceneRecall, handler(ClusterCommandRoute::SceneRecall))
+    })
+}
+
+#[inline(never)]
+fn wire_cluster_lamp_commands(
+    builder: AppBuilder,
+    bus: &HttpBusDispatch,
+    registry: &RegistryHttpPorts,
+    (info, lamps): (&Arc<dyn ClusterInfoHttpState>, &Arc<dyn ClusterLampsHttpState>),
+) -> AppBuilder {
+    let own = target_state(bus, &registry.vl_state, VirtualLampTargetStateHandler::new);
+    let handler = ClusterLampTargetStateHandler::new(cluster_command_deps(bus, info), Arc::clone(lamps), own);
+    builder.with_handler(RouteKey::ClusterNodeLampTargetState, Box::new(handler))
 }
 
 const CLUSTER_RECORD_ROUTES: [(RouteKey, ClusterRecordKind, ClusterRecordRoute); 10] = [
