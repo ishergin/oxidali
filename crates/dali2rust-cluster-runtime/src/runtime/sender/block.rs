@@ -31,8 +31,7 @@ impl NodeSender<'_> {
     fn sync_copies(&mut self, own: u8, now_ms: u32) {
         let home = HomeReads { presence: &*self.ports.presence, info: &*self.ports.info };
         let timing = self.ports.presence.timing();
-        let own_block = self.ports.presence.own_status().block;
-        let announced = Announced::of(self.announcer.sets_sent(now_ms), own_block, now_ms, timing);
+        let announced = Announced { sets_sent: self.announcer.sets_sent(now_ms), now_ms, timing };
         let reads = CopyReads { home, parts: &*self.ports.parts, copies: &*self.ports.copies, announced };
         let commands = copy_commands(own, reads);
         let full = commands.len() >= COPY_COMMANDS_PER_PASS;

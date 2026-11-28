@@ -28,6 +28,7 @@ pub(crate) struct Turn {
     pub(crate) node: u8,
     pub(crate) now_ms: u32,
     pub(crate) hello: bool,
+    pub(crate) split: bool,
     pub(crate) timing: PresenceTiming,
 }
 
@@ -47,6 +48,7 @@ pub(crate) struct Announcer {
     paging: Option<Paging>,
     next_set: u32,
     sets_sent: [Option<u32>; 2],
+    split: bool,
 }
 
 impl Announcer {
@@ -61,6 +63,7 @@ impl Announcer {
             paging: None,
             next_set: 0,
             sets_sent: [None; 2],
+            split: false,
         }
     }
 
@@ -77,7 +80,8 @@ impl Announcer {
     }
 
     pub(crate) fn plan(&mut self, turn: Turn, own: OwnInfo<'_>) {
-        self.sets_sent = self.sets_sent(turn.now_ms);
+        self.split = turn.split;
+        self.sets_sent = if turn.split { [None; 2] } else { self.sets_sent(turn.now_ms) };
         if !turn.running {
             self.stand_down();
             return;
@@ -151,7 +155,7 @@ impl Announcer {
         let written = paging.cursor.write_next(buffer, header, self.snapshot.elements().chain(self.copies.elements()));
         let closes_set = paging.cursor.finished();
         paging.next_ms = now_ms.wrapping_add(PAGE_GAP_MS);
-        if closes_set && written.is_ok() {
+        if closes_set && written.is_ok() && !self.split {
             self.sets_sent = [self.sets_sent[1], Some(now_ms)];
         }
         if closes_set || written.is_err() {

@@ -191,18 +191,6 @@ fn a_copy_its_home_holds_nothing_for_is_dropped_only_once_two_sets_carrying_it_r
 }
 
 #[test]
-fn a_keeper_whose_own_node_number_two_boards_hold_counts_none_of_its_sets_as_reached() {
-    let world = World { parts: vec![(0, record(NUMBER, 2))], copies: Mutex::new(vec![(record(NUMBER, 2), 3)]), ..base() };
-    let sets_sent = answered().sets_sent;
-    let settled = Announced::of(sets_sent, BlockState::Settled, NOW_MS, TIMING);
-    assert_eq!(actions_after(&world, settled), [(NUMBER, ClusterCopyAction::Drop)]);
-    let contested = Announced::of(sets_sent, BlockState::Contested, NOW_MS, TIMING);
-    assert!(actions_after(&world, contested).is_empty(), "the home may hear only the other board");
-    let reissued = World { home: Some((mark(3, 1), 1)), ..world };
-    assert_eq!(actions_after(&reissued, contested), [(NUMBER, ClusterCopyAction::Drop)], "the home's own newer generation needs no answer");
-}
-
-#[test]
 fn a_home_showing_revision_zero_writes_no_copy() {
     let world = World { home: Some((mark(2, 7), 0)), parts: vec![(0, record(NUMBER, 2))], ..base() };
     assert!(actions(&world).is_empty());
