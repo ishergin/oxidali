@@ -9,8 +9,8 @@ use super::counters::{bump, ClusterCounters};
 use super::execute::{ClusterExecution, Gate, Stamp};
 use super::forwarding::Fact;
 use super::hold::{Carrier, ForeignHold};
-use super::shared::{CommandAdmission, Heard, HeardCommand};
-use crate::frame::{Action, Command, WireNote};
+use super::shared::{CommandAdmission, CommandStanding, Heard, HeardCommand};
+use crate::frame::{Action, Command, Target, WireNote};
 
 pub(crate) struct CommandIntake {
     pub(crate) execution: Arc<ClusterExecution>,
@@ -44,24 +44,31 @@ impl CommandIntake {
 
     fn take_command(&self, command: &Command, admission: CommandAdmission, counters: &ClusterCounters) {
         bump(&counters.commands_received_total);
-        let standing = match admission {
-            CommandAdmission::NotMember => return bump(&counters.commands_dropped_not_member_total),
-            CommandAdmission::Duplicate => return bump(&counters.commands_dropped_duplicate_total),
-            CommandAdmission::Taken(standing) => standing,
+        let Some(standing) = running_standing(admission, counters) else {
+            return;
         };
-        if !standing.running {
-            return bump(&counters.commands_dropped_not_running_total);
+        if let Action::Light { target: Target::Lamp(lamp), verb } = &command.action {
+            return self.execution.execute_lamp(*lamp, verb, Stamp::of(command), standing.node).count_drop(counters);
         }
-        if self.settings.cluster_settings_view().wire_protection {
-            if command.executed_on_wire == Some(standing.wire) {
-                self.cancel_held(&command.action, Carrier::Command, counters);
-                return bump(&counters.commands_dropped_executed_on_wire_total);
-            }
-            if !standing.owns_wire {
-                return bump(&counters.commands_dropped_not_wire_owner_total);
-            }
+        if !self.wire_drops(command, standing, counters) {
+            self.execution.execute(&command.action, Stamp::of(command), Gate::Accepting).count_drop(counters);
         }
-        self.execution.execute(&command.action, Stamp::of(command), Gate::Accepting).count_drop(counters);
+    }
+
+    fn wire_drops(&self, command: &Command, standing: CommandStanding, counters: &ClusterCounters) -> bool {
+        if !self.settings.cluster_settings_view().wire_protection {
+            return false;
+        }
+        if command.executed_on_wire == Some(standing.wire) {
+            self.cancel_held(&command.action, Carrier::Command, counters);
+            bump(&counters.commands_dropped_executed_on_wire_total);
+            return true;
+        }
+        let foreign_wire = !standing.owns_wire;
+        if foreign_wire {
+            bump(&counters.commands_dropped_not_wire_owner_total);
+        }
+        foreign_wire
     }
 
     fn cancel_held(&self, action: &Action, carrier: Carrier, counters: &ClusterCounters) {
@@ -79,4 +86,23 @@ impl CommandIntake {
             }
         }
     }
+}
+
+fn running_standing(admission: CommandAdmission, counters: &ClusterCounters) -> Option<CommandStanding> {
+    let standing = match admission {
+        CommandAdmission::NotMember => {
+            bump(&counters.commands_dropped_not_member_total);
+            return None;
+        }
+        CommandAdmission::Duplicate => {
+            bump(&counters.commands_dropped_duplicate_total);
+            return None;
+        }
+        CommandAdmission::Taken(standing) => standing,
+    };
+    if !standing.running {
+        bump(&counters.commands_dropped_not_running_total);
+        return None;
+    }
+    Some(standing)
 }

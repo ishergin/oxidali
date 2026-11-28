@@ -135,6 +135,7 @@ pub(crate) enum Forgotten {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandStanding {
     pub(crate) running: bool,
+    pub(crate) node: u8,
     pub(crate) owns_wire: bool,
     pub(crate) wire: u8,
 }
@@ -424,7 +425,8 @@ impl PresenceState {
 
     fn command_standing(&self, now_ms: u32, timing: PresenceTiming) -> CommandStanding {
         let owner = self.roster(now_ms, timing).wire_owner();
-        CommandStanding { running: self.mode == OwnMode::Running, owns_wire: owner == WireOwner::ThisNode, wire: self.own.wire }
+        let running = self.mode == OwnMode::Running;
+        CommandStanding { running, node: self.own.node_no, owns_wire: owner == WireOwner::ThisNode, wire: self.own.wire }
     }
 
     fn speaks_for_its_node(&self, header: &Header, now_ms: u32, timing: PresenceTiming) -> bool {

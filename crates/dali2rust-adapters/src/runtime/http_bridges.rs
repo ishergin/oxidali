@@ -407,6 +407,7 @@ declare_counter_mapping! {
         foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
         copies_stored_total = 0, records_taken_back_total = 0, input_events_sent_total, input_events_received_total,
         input_events_unaddressed_total, input_events_unsent_total, input_events_dropped_total,
+        lamp_commands_dropped_accept_off_total, lamp_commands_refused_total,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,
@@ -1829,10 +1830,6 @@ impl ClusterLampsBridge {
         Self { own, cache, presence }
     }
 
-    fn own_node(&self) -> u8 {
-        self.own.settings.cluster_settings_view().node_number
-    }
-
     fn source(&self, node: u8, mac: [u8; 6], fresh: bool) -> ClusterInfoSource {
         let heard = self.presence.heard_node(node).is_some_and(|view| view.live && view.mac == mac);
         if heard && fresh {
@@ -1976,6 +1973,14 @@ impl ClusterLampsHttpState for ClusterLampsBridge {
         let state = part.state;
         let lit = ClusterGroupLitView { commanded: state.commanded, lit: state.lit, known: state.known, members: state.members };
         ChannelPartLit { lit: Some(lit), fresh: self.source(node, part.mac, part.fresh) == ClusterInfoSource::Cached }
+    }
+
+    fn own_node(&self) -> u8 {
+        self.own.settings.cluster_settings_view().node_number
+    }
+
+    fn command_refusal(&self) -> Option<&'static str> {
+        dali2rust_cluster_runtime::command_refusal(self.presence.own_status().mode)
     }
 }
 

@@ -211,7 +211,7 @@ pub fn refusal_before_the_wire(confirmation: &serde_json::Value) -> Option<HttpR
     (field("error_code") == Some("conflict")).then(|| gate_refusal(field("message").unwrap_or("")))
 }
 
-fn gate_refusal(message: &str) -> HttpResponse {
+pub(crate) fn gate_refusal(message: &str) -> HttpResponse {
     match message {
         CONTROLLER_PASSIVE => standby_refusal(),
         CONTROLLER_QUIESCENT => quiescent_refusal(),

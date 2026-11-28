@@ -100,6 +100,7 @@ pub enum RouteKey {
     ClusterNodeLampsList,
     ClusterNodeLampGet,
     ClusterNodeInputsList,
+    ClusterNodeLampTargetState,
     SettingsDaliGet,
     SettingsDaliPatch,
     SettingsRedundancyGet,
@@ -463,6 +464,11 @@ const ROUTE_TABLE: &[(RouteKey, HttpMethod, &str)] = &[
         "/api/v1/cluster/nodes/{node}/inputs",
     ),
     (
+        RouteKey::ClusterNodeLampTargetState,
+        HttpMethod::Put,
+        "/api/v1/cluster/nodes/{node}/lamps/{lamp}/target-state",
+    ),
+    (
         RouteKey::SettingsDaliGet,
         HttpMethod::Get,
         "/api/v1/settings/dali",
@@ -676,7 +682,7 @@ mod route_table_tests {
 
     #[test]
     fn route_table_is_complete_and_unique() {
-        assert_eq!(ROUTE_TABLE.len(), 127, "route table row count");
+        assert_eq!(ROUTE_TABLE.len(), 128, "route table row count");
         let mut keys = HashSet::new();
         let mut routes = HashSet::new();
         for (key, method, path) in ROUTE_TABLE {

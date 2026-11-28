@@ -4,9 +4,12 @@ use std::time::Duration;
 use dali2rust_bus::{BusConfig, BusHost, BusSubscriberRx};
 use dali2rust_contracts::bus::{build_confirmation_envelope, build_confirmation_envelope_with_product_error};
 use dali2rust_contracts::msg::{
-    CommandEnvelope, ErrorCode, PowerState, COMMAND_VARIANT_NAMES,
+    ColorMode, ColorValue, CommandEnvelope, DeviceType, ErrorCode, FixedText64, PowerState, COMMAND_VARIANT_NAMES,
 };
-use dali2rust_domain::registry::{AdapterView, ClusterPartKeys, ClusterSettingsView};
+use dali2rust_domain::registry::{
+    AdapterView, ClusterGroupLitView, ClusterHaIdentityView, ClusterLampInfoView, ClusterLampStateView, ClusterPartKeys,
+    ClusterSettingsView,
+};
 
 use super::*;
 use crate::frame::BirthMark;
@@ -40,6 +43,51 @@ impl ClusterSettingsReadPort for Settings {
         self.0.clone()
     }
 }
+
+struct Lamps(Vec<(u8, ClusterLampInfoView)>);
+
+impl ClusterLampReadPort for Lamps {
+    fn cluster_ha_identity(&self) -> ClusterHaIdentityView {
+        ClusterHaIdentityView::default()
+    }
+
+    fn cluster_lamp_ids(&self, _adapter: u8) -> u64 {
+        self.0.iter().fold(0, |ids, (lamp, _)| ids | 1 << lamp)
+    }
+
+    fn cluster_lamp_state(&self, _adapter: u8, _lamp: u8) -> Option<ClusterLampStateView> {
+        None
+    }
+
+    fn cluster_lamp_info(&self, adapter: u8, lamp: u8) -> Option<ClusterLampInfoView> {
+        let held = self.0.iter().find(|(held, _)| adapter == 0 && *held == lamp);
+        held.map(|(_, info)| info.clone())
+    }
+
+    fn cluster_group_lit(&self, _adapter: u8, _group: u8) -> ClusterGroupLitView {
+        ClusterGroupLitView::default()
+    }
+}
+
+fn lamp_info(bound: bool, capabilities: CapabilityFlagsView) -> ClusterLampInfoView {
+    ClusterLampInfoView {
+        name: FixedText64::default(),
+        device_type: DeviceType::Dt6Led,
+        device_type_overridden: false,
+        device_types: None,
+        color_mode: ColorMode::Brightness,
+        color_mode_overridden: false,
+        capabilities,
+        kelvin_range: None,
+        bound,
+        ha_entity: false,
+    }
+}
+
+const DIMMABLE: CapabilityFlagsView =
+    CapabilityFlagsView { brightness: true, cct: false, xy: false, rgb: false, rgbwaf: false, scenes: true, groups: true };
+
+const TUNABLE: CapabilityFlagsView = CapabilityFlagsView { cct: true, ..DIMMABLE };
 
 struct OneAdapter;
 
@@ -85,6 +133,10 @@ fn rig(parts: Vec<ClusterPartView>) -> Rig {
 }
 
 fn rig_with(parts: Vec<ClusterPartView>, settings: ClusterSettingsView) -> Rig {
+    rig_with_lamps(parts, settings, Vec::new())
+}
+
+fn rig_with_lamps(parts: Vec<ClusterPartView>, settings: ClusterSettingsView, lamps: Vec<(u8, ClusterLampInfoView)>) -> Rig {
     let (host, publisher, commands) =
         BusHost::spawn(BusConfig::default(), |reg| reg.subscribe_commands(16, COMMAND_VARIANT_NAMES));
     let counters = Arc::new(ClusterCounters::default());
@@ -92,6 +144,7 @@ fn rig_with(parts: Vec<ClusterPartView>, settings: ClusterSettingsView) -> Rig {
         parts: Arc::new(Parts(parts)),
         settings: Arc::new(Settings(settings)),
         adapters: Arc::new(OneAdapter),
+        lamps: Arc::new(Lamps(lamps)),
     };
     let execution = ClusterExecution::new((publisher, BUS), reads, Arc::clone(&counters));
     Rig { _host: host, execution, commands, counters }
@@ -225,21 +278,118 @@ fn a_scene_recalled_on_a_channel_needs_both_parts_to_accept_and_runs_on_the_chan
 }
 
 #[test]
-fn a_lamp_target_and_go_to_last_active_level_are_not_executed_by_this_stage() {
+fn go_to_last_active_level_is_not_executed_on_a_channel_or_on_all_lamps() {
     let rig = rig(vec![group(0, 3, true)]);
     let actions = [
         on_channel(LightVerb::Transition(LevelTransition::GoToLastActiveLevel)),
         Action::Light { target: Target::All, verb: LightVerb::Transition(LevelTransition::GoToLastActiveLevel) },
-        Action::Light { target: Target::Lamp(LAMP), verb: LightVerb::Setpoint(level(1)) },
-        Action::Light { target: Target::Lamp(LAMP), verb: LightVerb::StopFade },
     ];
     for action in actions {
         assert!(!is_supported(&action));
         let outcome = rig.execution.execute(&action, stamp(true), Gate::Accepting);
         outcome.count_drop(&rig.counters);
     }
-    assert_eq!(rig.read(|c| &c.commands_dropped_unsupported_total), 4);
+    assert_eq!(rig.read(|c| &c.commands_dropped_unsupported_total), 2);
     rig.published(0);
+}
+
+fn single_lamps(node_number: u8, accept_single_lamps: bool) -> ClusterSettingsView {
+    ClusterSettingsView { node_number, accept_single_lamps, ..ClusterSettingsView::default() }
+}
+
+fn lamp_rig(node_number: u8, accept_single_lamps: bool) -> Rig {
+    let lamps = vec![(LAMP.lamp, lamp_info(true, TUNABLE)), (5, lamp_info(false, TUNABLE)), (6, lamp_info(true, DIMMABLE))];
+    rig_with_lamps(vec![group(0, 3, true)], single_lamps(node_number, accept_single_lamps), lamps)
+}
+
+fn to_lamp(lamp: u8, verb: LightVerb) -> Action {
+    Action::Light { target: Target::Lamp(crate::frame::LampAddress { lamp, ..LAMP }), verb }
+}
+
+fn cct(kelvin: u16) -> LightSetpoint {
+    let color = ColorValue { mode: ColorMode::Cct, color_temperature_kelvin: kelvin, ..ColorValue::default() };
+    LightSetpoint { power: PowerState::On, level: None, color: Some(color) }
+}
+
+fn take_lamp(rig: &Rig, claimed: u8, action: &Action, hold_hcl: bool) -> LampOutcome {
+    let Action::Light { target: Target::Lamp(lamp), verb } = action else {
+        panic!("a lamp command");
+    };
+    let outcome = rig.execution.execute_lamp(*lamp, verb, stamp(hold_hcl), claimed);
+    outcome.count_drop(&rig.counters);
+    outcome
+}
+
+#[test]
+fn the_owning_node_runs_a_neighbour_s_lamp_command_as_its_own_virtual_lamp_s_command() {
+    let rig = lamp_rig(LAMP.node, true);
+    let setpoint = take_lamp(&rig, LAMP.node, &to_lamp(LAMP.lamp, LightVerb::Setpoint(level(200))), false);
+    let preset = take_lamp(&rig, LAMP.node, &to_lamp(LAMP.lamp, LightVerb::Transition(LevelTransition::RecallMaxLevel)), true);
+    assert_eq!((setpoint, preset), (LampOutcome::Executed { queued: true }, LampOutcome::Executed { queued: true }));
+    let published = rig.published(2);
+    let set = DaliSetTargetStateCommand::for_virtual_lamp(0, LAMP.lamp, &level(200));
+    assert_eq!(published[0].payload, BusCommandPayload::from(DaliSetTargetStateCommand { hold_hcl: false, ..set }));
+    let max = DaliRecallLevelPresetCommand::for_virtual_lamp(0, LAMP.lamp, LevelPreset::MaxLevel);
+    assert_eq!(published[1].payload, BusCommandPayload::from(DaliRecallLevelPresetCommand { hold_hcl: true, ..max }));
+    assert!(published.iter().all(|command| command.meta.origin == Origin::Cluster));
+    assert_eq!(rig.read(|c| &c.commands_executed_total), 2);
+}
+
+#[test]
+fn a_lamp_command_runs_only_on_the_node_it_names_and_only_while_that_node_accepts_single_lamps() {
+    let action = to_lamp(LAMP.lamp, LightVerb::Setpoint(level(200)));
+    let other_node = lamp_rig(LAMP.node + 1, true);
+    assert_eq!(take_lamp(&other_node, LAMP.node + 1, &action, true), LampOutcome::NotOurs);
+    assert_eq!(other_node.read(|c| &c.commands_dropped_no_part_total), 1);
+    other_node.published(0);
+    let switched_off = lamp_rig(LAMP.node, false);
+    assert_eq!(take_lamp(&switched_off, LAMP.node, &action, true), LampOutcome::AcceptOff);
+    assert_eq!(switched_off.read(|c| &c.lamp_commands_dropped_accept_off_total), 1);
+    switched_off.published(0);
+}
+
+#[test]
+fn the_owner_refuses_a_lamp_it_does_not_hold_an_unbound_lamp_and_a_colour_its_lamp_cannot_take() {
+    let rig = lamp_rig(LAMP.node, true);
+    let refused = [
+        to_lamp(9, LightVerb::Setpoint(level(200))),
+        to_lamp(5, LightVerb::Setpoint(level(200))),
+        to_lamp(6, LightVerb::Setpoint(cct(3000))),
+        Action::Light { target: Target::Lamp(crate::frame::LampAddress { adapter: 1, ..LAMP }), verb: LightVerb::Setpoint(level(1)) },
+    ];
+    for action in &refused {
+        assert_eq!(take_lamp(&rig, LAMP.node, action, true), LampOutcome::Refused, "{action:?}");
+    }
+    assert_eq!(rig.read(|c| &c.lamp_commands_refused_total), 4);
+    rig.published(0);
+    assert_eq!(take_lamp(&rig, LAMP.node, &to_lamp(LAMP.lamp, LightVerb::Setpoint(cct(3000))), true), LampOutcome::Executed { queued: true });
+    rig.published(1);
+}
+
+#[test]
+fn a_relative_verb_or_go_to_last_active_level_to_a_lamp_is_unsupported() {
+    let rig = lamp_rig(LAMP.node, true);
+    let mut verbs: Vec<LightVerb> = relative_verbs().into_iter().map(|(verb, _)| verb).collect();
+    verbs.push(LightVerb::Transition(LevelTransition::GoToLastActiveLevel));
+    for verb in verbs {
+        let action = to_lamp(LAMP.lamp, verb);
+        assert!(!is_supported(&action), "{action:?}");
+        assert_eq!(take_lamp(&rig, LAMP.node, &action, true), LampOutcome::Unsupported);
+    }
+    assert_eq!(rig.read(|c| &c.commands_dropped_unsupported_total), 8);
+    rig.published(0);
+    assert!(is_supported(&to_lamp(LAMP.lamp, LightVerb::Transition(LevelTransition::RecallMinLevel))));
+}
+
+#[test]
+fn the_sender_never_executes_a_lamp_command_on_its_own_node_whichever_node_it_names() {
+    for node_number in [LAMP.node, LAMP.node + 1] {
+        let rig = lamp_rig(node_number, true);
+        let action = to_lamp(LAMP.lamp, LightVerb::Setpoint(level(200)));
+        assert_eq!(rig.execution.plan(&action, Gate::Own), Outcome::default());
+        assert_eq!(rig.execution.execute(&action, stamp(true), Gate::Own), Outcome::default());
+        rig.published(0);
+    }
 }
 
 fn relative_verbs() -> Vec<(LightVerb, BusCommandPayload)> {
@@ -339,4 +489,15 @@ fn only_a_refused_confirmation_of_its_own_command_counts_as_rejected() {
     let someone_else_s = build_confirmation_envelope_with_product_error(4, DeliveryStatus::ExecutionFailed, 0, 0, refusal);
     rig.execution.note_confirmation(&someone_else_s);
     assert_eq!(rig.read(|c| &c.commands_rejected_total), 1);
+}
+
+#[test]
+fn a_lamp_command_is_matched_against_the_number_the_node_holds_not_the_one_it_is_set_to() {
+    let action = to_lamp(LAMP.lamp, LightVerb::Setpoint(level(200)));
+    let renumbered_to_the_lamp_s_node = lamp_rig(LAMP.node, true);
+    assert_eq!(take_lamp(&renumbered_to_the_lamp_s_node, LAMP.node + 1, &action, true), LampOutcome::NotOurs);
+    renumbered_to_the_lamp_s_node.published(0);
+    let renumbered_away = lamp_rig(LAMP.node + 1, true);
+    assert_eq!(take_lamp(&renumbered_away, LAMP.node, &action, true), LampOutcome::Executed { queued: true });
+    renumbered_away.published(1);
 }

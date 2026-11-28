@@ -254,6 +254,14 @@ mod tests {
         fn part_lit(&self, _node: u8, _adapter: u8, _group: u8, _channel: ClusterRecordRef) -> ChannelPartLit {
             ChannelPartLit::UNHEARD
         }
+
+        fn own_node(&self) -> u8 {
+            0
+        }
+
+        fn command_refusal(&self) -> Option<&'static str> {
+            None
+        }
     }
 
     #[test]

@@ -204,7 +204,7 @@ fn a_member_s_command_is_taken_once_and_its_copy_is_a_duplicate() {
     let (presence, counters) = present();
     deliver(&presence, &counters, &pulse(NAME, BARN, 1, 10), presence.link(), START_MS);
     let command = command_from(NEIGHBOUR_MAC, NAME, 1, 11);
-    let standby = CommandStanding { running: false, owns_wire: false, wire: 0 };
+    let standby = CommandStanding { running: false, node: 0, owns_wire: false, wire: 0 };
     assert_eq!(heard(&presence, &counters, &command), Some(CommandAdmission::Taken(standby)));
     assert_eq!(heard(&presence, &counters, &command), Some(CommandAdmission::Duplicate));
 }
@@ -214,7 +214,7 @@ fn a_member_s_command_that_arrives_late_is_still_taken() {
     let (presence, counters) = present();
     deliver(&presence, &counters, &pulse(NAME, BARN, 1, 10), presence.link(), START_MS);
     deliver(&presence, &counters, &pulse(NAME, BARN, 1, 12), presence.link(), START_MS);
-    let standby = CommandStanding { running: false, owns_wire: false, wire: 0 };
+    let standby = CommandStanding { running: false, node: 0, owns_wire: false, wire: 0 };
     let late = command_from(NEIGHBOUR_MAC, NAME, 1, 11);
     assert_eq!(heard(&presence, &counters, &late), Some(CommandAdmission::Taken(standby)));
     assert_eq!(heard(&presence, &counters, &late), Some(CommandAdmission::Duplicate));
@@ -237,7 +237,7 @@ fn a_running_node_that_owns_its_wire_stands_to_execute_a_member_s_command() {
     let counters = ClusterCounters::default();
     assert!(presence.settle(identity(0), None, TIMING.listen_ms(), START_MS).entered_running);
     deliver(&presence, &counters, &pulse(NAME, BARN, 1, 10), presence.link(), START_MS);
-    let running = CommandStanding { running: true, owns_wire: true, wire: 0 };
+    let running = CommandStanding { running: true, node: 0, owns_wire: true, wire: 0 };
     let admission = heard(&presence, &counters, &command_from(NEIGHBOUR_MAC, NAME, 1, 11));
     assert_eq!(admission, Some(CommandAdmission::Taken(running)));
 }

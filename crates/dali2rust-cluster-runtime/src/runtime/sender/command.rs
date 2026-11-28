@@ -1,7 +1,7 @@
 use dali2rust_contracts::msg::{ClusterCommandCommand, ErrorCode};
 use dali2rust_platform::liveness::monotonic_ms;
 
-use crate::frame::{encode, Action, Command, Frame, Header};
+use crate::frame::{encode, Action, Command, Frame, Header, Target};
 use crate::presence::OwnMode;
 
 use super::super::counters::bump;
@@ -38,20 +38,15 @@ impl NodeSender<'_> {
     }
 
     fn refusal(&self, reading: &Reading, request: &ClusterCommandCommand) -> Option<&'static str> {
-        let unsupported = || (!is_supported(&request.action)).then_some(CLUSTER_COMMAND_UNSUPPORTED);
-        self.mode_refusal(reading).or_else(unsupported)
+        let node_number = reading.settings.node_number;
+        self.mode_refusal(reading).or_else(|| action_refusal(&request.action, node_number))
     }
 
     pub(super) fn mode_refusal(&self, reading: &Reading) -> Option<&'static str> {
         if !reading.active {
             return Some(CONTROLLER_PASSIVE);
         }
-        match self.mode {
-            OwnMode::Off => Some(CLUSTER_OFF),
-            OwnMode::NoAddress => Some(CLUSTER_NO_ADDRESS),
-            OwnMode::Running => None,
-            OwnMode::BindFailed | OwnMode::Standby | OwnMode::Listening | OwnMode::Waiting => Some(CLUSTER_NOT_RUNNING),
-        }
+        command_refusal(self.mode)
     }
 
     fn delayed(&self, superseded: Option<Queued>) {
@@ -126,8 +121,29 @@ impl NodeSender<'_> {
     }
 }
 
+fn action_refusal(action: &Action, node_number: u8) -> Option<&'static str> {
+    (names_own_lamp(action, node_number) || !is_supported(action)).then_some(CLUSTER_COMMAND_UNSUPPORTED)
+}
+
+const fn names_own_lamp(action: &Action, node_number: u8) -> bool {
+    matches!(action, Action::Light { target: Target::Lamp(lamp), .. } if lamp.node == node_number)
+}
+
+pub const fn command_refusal(mode: OwnMode) -> Option<&'static str> {
+    match mode {
+        OwnMode::Off => Some(CLUSTER_OFF),
+        OwnMode::NoAddress => Some(CLUSTER_NO_ADDRESS),
+        OwnMode::Standby => Some(CONTROLLER_PASSIVE),
+        OwnMode::Running => None,
+        OwnMode::BindFailed | OwnMode::Listening | OwnMode::Waiting => Some(CLUSTER_NOT_RUNNING),
+    }
+}
+
 fn count_unsent(ports: &ClusterWorkerPorts, queued: &Queued) {
     if queued.relative() {
         bump(&ports.counters.relative_verbs_dropped_total);
     }
 }
+
+#[cfg(test)]
+mod tests;

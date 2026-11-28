@@ -73,7 +73,7 @@ impl ApiHandler for ClusterCommandHandler {
             ClusterCommandRoute::ChannelTargetState => self.channel_action(params, body),
             ClusterCommandRoute::SceneRecall => self.recall_action(params, body),
         };
-        action.and_then(|action| self.publish(action)).unwrap_or_else(|refusal| refusal)
+        action.and_then(|action| publish_cluster_command(&self.deps, action)).unwrap_or_else(|refusal| refusal)
     }
 }
 
@@ -100,16 +100,16 @@ impl ClusterCommandHandler {
         Ok(ClusterRecordRef { number, mark })
     }
 
-    fn publish(&self, action: ClusterAction) -> Result<HttpResponse, HttpResponse> {
-        let deps = &self.deps;
-        let correlation_id = deps.correlation.next_id();
-        let command = ClusterCommandCommand { action, source: ClusterSourceClass::Operator, hold_hcl: true };
-        let envelope = command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, deps.bus_id.0, Some(Origin::Api), command);
-        let frame = BusFrame::command(envelope);
-        dispatch_and_wait_for_success(&deps.publisher, &deps.slots, correlation_id, deps.timeout_ms, frame)?;
-        let body = serde_json::json!({ "correlation_id": correlation_id, "status": "sent" });
-        Ok(HttpResponse::json(200, serialize_or_log(&body)))
-    }
+}
+
+pub(crate) fn publish_cluster_command(deps: &ClusterCommandDeps, action: ClusterAction) -> Result<HttpResponse, HttpResponse> {
+    let correlation_id = deps.correlation.next_id();
+    let command = ClusterCommandCommand { action, source: ClusterSourceClass::Operator, hold_hcl: true };
+    let envelope = command_envelope(SOURCE_ID_UNSPECIFIED, correlation_id, deps.bus_id.0, Some(Origin::Api), command);
+    let frame = BusFrame::command(envelope);
+    dispatch_and_wait_for_success(&deps.publisher, &deps.slots, correlation_id, deps.timeout_ms, frame)?;
+    let body = serde_json::json!({ "correlation_id": correlation_id, "status": "sent" });
+    Ok(HttpResponse::json(200, serialize_or_log(&body)))
 }
 
 fn path_number(params: &HashMap<String, String>) -> Result<u8, HttpResponse> {
@@ -125,7 +125,7 @@ fn recall_channel(body: &[u8]) -> Result<Option<u8>, HttpResponse> {
     number.and_then(|number| u8::try_from(number).ok()).map(Some).ok_or_else(|| json_err(422, "invalid_value"))
 }
 
-const fn light_verb(request: GroupTargetRequest) -> ClusterLightVerb {
+pub(crate) const fn light_verb(request: GroupTargetRequest) -> ClusterLightVerb {
     match request {
         GroupTargetRequest::Target(TargetRequest::Setpoint(setpoint)) => ClusterLightVerb::Setpoint(setpoint),
         GroupTargetRequest::Target(TargetRequest::Recall(LevelPreset::MaxLevel)) => {
