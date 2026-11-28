@@ -94,17 +94,17 @@ test('a channel off is drawn off only when the controller says off', () => {
 })
 
 test('partial knowledge counts the known members and names what is missing, with the nodes not heard', () => {
-  const view = channelState(channel({ on: true, lit: 3, known: 5, members: 9, parts_unknown: 1 }), { notHeard: [2], unchecked: 0 })
+  const view = channelState(channel({ on: true, lit: 3, known: 5, members: 9, parts_unknown: 1 }), { notHeard: [2], unchecked: 0, unread: false })
   assert.deepEqual(view, { cls: 'on', label: '3 of 5 known lit', tail: '4 of 9 not known · node 2 not heard' })
 })
 
 test('a part whose link cannot be checked is named beside members not known', () => {
-  const view = channelState(channel({ on: null, lit: 3, known: 5, members: 9, parts_unknown: 2 }), { notHeard: [2], unchecked: 1 })
+  const view = channelState(channel({ on: null, lit: 3, known: 5, members: 9, parts_unknown: 2 }), { notHeard: [2], unchecked: 1, unread: false })
   assert.equal(view.tail, '4 of 9 not known · 1 part not known · node 2 not heard')
 })
 
 test('nothing known reads as not known, never as 0 lit or off', () => {
-  const view = channelState(channel({ on: null, known: 0, members: 4, parts_unknown: 1 }), { notHeard: [2], unchecked: 0 })
+  const view = channelState(channel({ on: null, known: 0, members: 4, parts_unknown: 1 }), { notHeard: [2], unchecked: 0, unread: false })
   assert.deepEqual(view, { cls: 'unknown', label: 'not known', tail: '4 not known · node 2 not heard' })
   assert.notEqual(view.cls, 'off')
   assert.doesNotMatch(view.label, /\d/)
@@ -119,7 +119,7 @@ test('lit members without a known command leave the channel unknown, and say why
 })
 
 test('a part whose link cannot be checked is counted as a part, not as members', () => {
-  assert.deepEqual(channelState(channel({ on: null, parts_unknown: 1 }), { notHeard: [], unchecked: 1 }), {
+  assert.deepEqual(channelState(channel({ on: null, parts_unknown: 1 }), { notHeard: [], unchecked: 1, unread: false }), {
     cls: 'unknown',
     label: 'not known',
     tail: '1 part not known',
@@ -140,7 +140,7 @@ test('a stale or copied record keeps its row with the state unknown', () => {
 
 test('a node not heard is named even when every counted member is known: its own members may not be counted', () => {
   const all = channel({ on: true, lit: 1, known: 1, members: 1, parts_unknown: 1 })
-  assert.equal(channelState(all, { notHeard: [2], unchecked: 0 }).tail, 'node 2 not heard')
+  assert.equal(channelState(all, { notHeard: [2], unchecked: 0, unread: false }).tail, 'node 2 not heard')
   assert.equal(channelState(all, NO_GAPS).tail, null)
 })
 
@@ -153,18 +153,29 @@ test('a node whose part is stale, from an old set, or silent in the status is no
     part(5, { link: 'orphan', source: 'stale' }),
     part(6, { record: { number: 25, birth_mark: { generation: 1, nonce: 5 } }, source: 'stale' }),
   ]
-  assert.deepEqual(channelGaps({ number: 24 }, parts, heard([[1, true], [4, false]])), { notHeard: [2, 3, 4], unchecked: 0 })
+  assert.deepEqual(channelGaps({ number: 24 }, parts, heard([[1, true], [4, false]])), { notHeard: [2, 3, 4], unchecked: 0, unread: false })
 })
 
 test('a part whose link is not checked is counted as one, and a part behind the bus owner is not counted at all', () => {
   const status = heard([[1, true], [7, false], [8, false]])
   status.nodes[2].wire = 1
   const parts = [part(1), part(7, { link: 'unknown' }), part(8, { source: 'stale' }), part(9, { link: 'unknown', record: { number: 25, birth_mark: { generation: 1, nonce: 5 } } })]
-  assert.deepEqual(channelGaps({ number: 24 }, parts, status), { notHeard: [], unchecked: 1 })
+  assert.deepEqual(channelGaps({ number: 24 }, parts, status), { notHeard: [], unchecked: 1, unread: false })
+})
+
+test('while some node is not read, lit members are not said to lack a command, and no member is not no lamps', () => {
+  const unread = { ...NO_GAPS, unread: true }
+  assert.equal(channelState(channel({ on: null, lit: 4, known: 4, members: 4, parts_unknown: 1 }), unread).tail, null)
+  assert.equal(channelState(channel({ on: null, parts_unknown: 1 }), unread).label, 'not known')
+})
+
+test('a linked group with no lamps reads no lamps, and a missing state names the parts not known', () => {
+  assert.equal(channelState(channel({ on: null, parts_unknown: 1 }), NO_GAPS).label, 'no lamps')
+  assert.equal(channelState(undefined, { notHeard: [2], unchecked: 1, unread: false }).tail, '1 part not known · node 2 not heard')
 })
 
 test('a heard part lit without a command beside a silent node is not called a part not known', () => {
-  const view = channelState(channel({ on: null, lit: 4, known: 4, members: 8, parts_unknown: 2 }), { notHeard: [2], unchecked: 0 })
+  const view = channelState(channel({ on: null, lit: 4, known: 4, members: 8, parts_unknown: 2 }), { notHeard: [2], unchecked: 0, unread: false })
   assert.equal(view.tail, '4 of 8 not known · node 2 not heard')
 })
 

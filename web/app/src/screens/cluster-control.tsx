@@ -347,7 +347,7 @@ function StateMark({ view }: { view: StateView }) {
 }
 
 function StateCell({ ctx, rec }: { ctx: Ctx; rec: ClusterRecordItem }) {
-  const view = channelState(rec.state, channelGaps(rec, ctx.world.all.channel, ctx.status), rec.source)
+  const view = channelState(rec.state, channelGaps(rec, ctx.world.all.channel, ctx.status, ctx.world.unread.channel.length > 0 || ctx.world.infoUnread), rec.source)
   return (
     <td class="state-col">
       <StateMark view={view} />

@@ -54,12 +54,17 @@ function joined(bits: (string | null)[]): string | null {
 export interface ChannelGaps {
   notHeard: number[]
   unchecked: number
+  unread: boolean
 }
 
-export const NO_GAPS: ChannelGaps = { notHeard: [], unchecked: 0 }
+export const NO_GAPS: ChannelGaps = { notHeard: [], unchecked: 0, unread: false }
+
+function partsGap(gaps: ChannelGaps): boolean {
+  return gaps.notHeard.length > 0 || gaps.unchecked > 0 || gaps.unread
+}
 
 function hasGaps(state: ClusterChannelState, gaps: ChannelGaps): boolean {
-  return state.members > state.known || gaps.notHeard.length > 0 || gaps.unchecked > 0
+  return state.members > state.known || partsGap(gaps)
 }
 
 function uncheckedText(unchecked: number): string | null {
@@ -81,8 +86,8 @@ export function channelState(
   gaps: ChannelGaps,
   source: ClusterRecord['source'] = 'own',
 ): StateView {
-  if (!state) return { cls: 'unknown', label: NOT_KNOWN, tail: notHeardText(gaps.notHeard) }
-  if (state.members === 0 && state.parts_unknown === 0) return { cls: 'unknown', label: NO_LAMPS, tail: null }
+  if (!state) return { cls: 'unknown', label: NOT_KNOWN, tail: joined([uncheckedText(gaps.unchecked), notHeardText(gaps.notHeard)]) }
+  if (state.members === 0 && !partsGap(gaps)) return { cls: 'unknown', label: NO_LAMPS, tail: null }
   const trusted = source !== 'stale' && source !== 'copy'
   return {
     cls: trusted ? classOf(state.on) : 'unknown',
@@ -140,12 +145,14 @@ export function channelGaps(
   rec: Pick<ClusterRecord, 'number'>,
   parts: ClusterNodePart[],
   status: ClusterStatus | null,
+  unread = false,
 ): ChannelGaps {
   const counted = countedParts(rec, parts, status)
   const silent = counted.filter((p) => p.link === 'live' && partSilent(p, status)).map((p) => p.node)
   return {
     notHeard: [...new Set(silent)].sort((a, b) => a - b),
     unchecked: counted.filter((p) => p.link === 'unknown').length,
+    unread,
   }
 }
 
