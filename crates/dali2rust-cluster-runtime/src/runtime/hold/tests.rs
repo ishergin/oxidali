@@ -291,3 +291,12 @@ fn an_echo_is_forgotten_once_another_command_on_its_target_is_heard() {
     assert_eq!(drain(&mut line, START_MS + 30 + ABSOLUTE_HOLD_MS), [recall, light(3, level(50))]);
 }
 
+
+#[test]
+fn a_neighbour_level_without_a_colour_leaves_an_earlier_foreign_colour_to_leave() {
+    let mut line = HoldLine::new();
+    line.hold(foreign(light(3, warm())), true, START_MS);
+    line.hold(foreign(light(3, level(200))), true, START_MS + 20);
+    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 25), (1, false));
+    assert_eq!(drain(&mut line, START_MS + 20 + ABSOLUTE_HOLD_MS), [light(3, warm())]);
+}
