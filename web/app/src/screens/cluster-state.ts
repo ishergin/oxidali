@@ -51,36 +51,43 @@ function joined(bits: (string | null)[]): string | null {
   return kept.length === 0 ? null : kept.join(' · ')
 }
 
-function hasGaps(state: ClusterChannelState): boolean {
-  return state.members > state.known || state.parts_unknown > 0
+export interface ChannelGaps {
+  notHeard: number[]
+  unchecked: number
 }
 
-function uncheckedParts(state: ClusterChannelState, notHeard: number[]): string | null {
-  const members = missingMembers(state.known, state.members)
-  const unchecked = members === null ? state.parts_unknown : state.parts_unknown - notHeard.length
+export const NO_GAPS: ChannelGaps = { notHeard: [], unchecked: 0 }
+
+function hasGaps(state: ClusterChannelState, gaps: ChannelGaps): boolean {
+  return state.members > state.known || gaps.notHeard.length > 0 || gaps.unchecked > 0
+}
+
+function uncheckedText(unchecked: number): string | null {
   return unchecked > 0 ? `${unchecked} ${PART_NOUN(unchecked)} not known` : null
 }
 
-function channelTail(state: ClusterChannelState, notHeard: number[]): string | null {
-  const members = missingMembers(state.known, state.members)
-  const parts = uncheckedParts(state, notHeard)
-  const nodes = hasGaps(state) ? notHeardText(notHeard) : null
-  const uncommanded = state.on === null && !hasGaps(state) && state.lit > 0 ? NOT_COMMANDED_ON : null
-  return joined([members, parts, nodes, uncommanded])
+function channelTail(state: ClusterChannelState, gaps: ChannelGaps): string | null {
+  const uncommanded = state.on === null && !hasGaps(state, gaps) && state.lit > 0 ? NOT_COMMANDED_ON : null
+  return joined([
+    missingMembers(state.known, state.members),
+    uncheckedText(gaps.unchecked),
+    notHeardText(gaps.notHeard),
+    uncommanded,
+  ])
 }
 
 export function channelState(
   state: ClusterChannelState | undefined,
-  notHeard: number[],
+  gaps: ChannelGaps,
   source: ClusterRecord['source'] = 'own',
 ): StateView {
-  if (!state) return { cls: 'unknown', label: NOT_KNOWN, tail: notHeardText(notHeard) }
+  if (!state) return { cls: 'unknown', label: NOT_KNOWN, tail: notHeardText(gaps.notHeard) }
   if (state.members === 0 && state.parts_unknown === 0) return { cls: 'unknown', label: NO_LAMPS, tail: null }
   const trusted = source !== 'stale' && source !== 'copy'
   return {
     cls: trusted ? classOf(state.on) : 'unknown',
     label: countLabel(state.lit, state.known, state.members),
-    tail: channelTail(state, notHeard),
+    tail: channelTail(state, gaps),
   }
 }
 
@@ -109,15 +116,37 @@ export function partSilent(part: ClusterNodePart, status: ClusterStatus | null):
   return row !== undefined && !row.heard
 }
 
-export function notHeardNodes(
+function wireOf(node: number, status: ClusterStatus | null): number | null {
+  if (!status) return null
+  if (status.own.node_number === node) return status.own.wire
+  return status.nodes.find((n) => n.node === node)?.wire ?? null
+}
+
+export function countedParts(
   rec: Pick<ClusterRecord, 'number'>,
   parts: ClusterNodePart[],
   status: ClusterStatus | null,
-): number[] {
-  const nodes = parts
-    .filter((p) => p.record.number === rec.number && p.link === 'live' && partSilent(p, status))
-    .map((p) => p.node)
-  return [...new Set(nodes)].sort((a, b) => a - b)
+): ClusterNodePart[] {
+  const held = parts.filter((p) => p.record.number === rec.number && p.link !== 'orphan')
+  const liveNodes = new Set(held.filter((p) => p.link === 'live').map((p) => p.node))
+  const behindOwner = (node: number) => {
+    const wire = wireOf(node, status)
+    return wire !== null && wire !== node && liveNodes.has(wire)
+  }
+  return held.filter((p) => !behindOwner(p.node))
+}
+
+export function channelGaps(
+  rec: Pick<ClusterRecord, 'number'>,
+  parts: ClusterNodePart[],
+  status: ClusterStatus | null,
+): ChannelGaps {
+  const counted = countedParts(rec, parts, status)
+  const silent = counted.filter((p) => p.link === 'live' && partSilent(p, status)).map((p) => p.node)
+  return {
+    notHeard: [...new Set(silent)].sort((a, b) => a - b),
+    unchecked: counted.filter((p) => p.link === 'unknown').length,
+  }
 }
 
 const RECORD_NOUN: Record<ClusterRecordKind, string> = { channel: 'channel', scene: 'scene' }

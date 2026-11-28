@@ -11,6 +11,7 @@ import {
   type NodeGroup,
   type NodeRead,
   PENDING,
+  coalesced,
   filterGroups,
   inputNodes,
   liveOf,
@@ -72,6 +73,9 @@ function useInputsFeed(me: number, status: ClusterStatus | null) {
       return next
     })
   }
+  const meRef = useRef(me)
+  meRef.current = me
+  const refetchOwn = useRef(coalesced(() => fetchNodes([meRef.current]))).current
   const onEvent = (event: WsEvent): boolean => {
     if (event.type === INPUTS_FRAME && event.payload) {
       const after = (event.payload as ClusterInputs).nodes
@@ -83,7 +87,7 @@ function useInputsFeed(me: number, status: ClusterStatus | null) {
       const entry = liveOf(event.payload as LivePayload, me, Date.now())
       if (entry) setLive((now) => new Map(now).set(entry[0], entry[1]))
     } else if (OWN_DEVICE_TYPES.has(event.type)) {
-      void fetchNodes([me])
+      refetchOwn()
     }
     return true
   }

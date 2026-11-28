@@ -190,9 +190,26 @@ function nodeHead(node: number, ctx: GroupCtx): string {
 }
 
 function listedText(data: ClusterNodeInputs): string {
-  const instances = data.devices.reduce((n, d) => n + d.instance_count, 0)
-  const listed = data.devices.length < data.device_count ? ` · ${data.devices.length} listed` : ''
-  return `${countText(data.device_count, instances)}${listed}`
+  const devices = data.device_count === 1 ? '1 device' : `${data.device_count} devices`
+  if (data.devices.length < data.device_count) return `${devices} · ${data.devices.length} listed`
+  return countText(data.device_count, data.devices.reduce((n, d) => n + d.instances.length, 0))
+}
+
+export function coalesced(run: () => Promise<void>): () => void {
+  let busy = false
+  let again = false
+  const start = (): void => {
+    busy = true
+    again = false
+    void run().finally(() => {
+      busy = false
+      if (again) start()
+    })
+  }
+  return () => {
+    if (busy) again = true
+    else start()
+  }
 }
 
 function readNote(node: number, data: ClusterNodeInputs, ctx: GroupCtx, stale: boolean): string {

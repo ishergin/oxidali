@@ -8,6 +8,7 @@ import {
   NOTHING_ANNOUNCED,
   NOT_READ,
   NOT_SHARED,
+  coalesced,
   filterGroups,
   inputNodes,
   liveOf,
@@ -191,9 +192,26 @@ test('devices of two adapters keep their own rows and their own live events', ()
 
 test('the note counts what the node announced, says when the list is cut, and a silent node stays silent', () => {
   const cut = inputs(1, [device(5, [instance(0), instance(1)], { node: 1 })], { device_count: 40 })
-  assert.equal(nodeGroup(1, { kind: 'read', data: cut, at: 1 }, ctx()).note, '40 devices · 2 instances · 1 listed')
+  assert.equal(nodeGroup(1, { kind: 'read', data: cut, at: 1 }, ctx()).note, '40 devices · 1 listed')
   const quiet = inputs(2, [], { source: 'stale', age_ms: null })
   assert.equal(nodeGroup(2, { kind: 'read', data: quiet, at: 1 }, ctx()).note, 'silent · devices as last heard')
   const bare = inputs(1, [device(5, [], { node: 1 })])
   assert.equal(totalsText([nodeGroup(1, { kind: 'read', data: bare, at: 1 }, ctx())]), '0 instances on 1 node')
+})
+
+test('a burst of refetches runs one at a time, with at most one more after the one in flight', async () => {
+  const finish: (() => void)[] = []
+  let runs = 0
+  const trigger = coalesced(() => {
+    runs += 1
+    return new Promise<void>((done) => finish.push(done))
+  })
+  for (let i = 0; i < 20; i += 1) trigger()
+  assert.equal(runs, 1)
+  finish.shift()?.()
+  await new Promise((r) => setImmediate(r))
+  assert.equal(runs, 2)
+  finish.shift()?.()
+  await new Promise((r) => setImmediate(r))
+  assert.equal(runs, 2)
 })
