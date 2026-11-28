@@ -17,6 +17,7 @@ ClusterPartDto ClusterPart
 ClusterPartRecordDto ClusterPartRecord
 ClusterRecordDto ClusterRecord
 ClusterSettingsDto ClusterSettings
+ClusterWireFaultDto ClusterWireFault
 ClusterWireOwnerDto ClusterWireOwner
 ColorTemperatureRangeDto ColorTemperatureRange
 CommissioningAddressChangeRequest CommissioningAddressChangeRequest
