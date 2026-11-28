@@ -287,19 +287,19 @@ mod tests {
             SliceKey::Rules { bank: 3 },
         ];
         for adapter_id in 0..MAX_ADAPTERS as u8 {
-            keys.push(SliceKey::VirtualLamps { adapter_id });
-            keys.push(SliceKey::Groups { adapter_id });
-            keys.push(SliceKey::PhysicalDevices { adapter_id });
-            for bank in 0..PD_BANKS_PER_ADAPTER as u8 {
-                keys.push(SliceKey::PhysicalDeviceBank { adapter_id, bank });
-            }
-            for scene_id in 0..SCENES_PER_ADAPTER as u8 {
-                keys.push(SliceKey::Scene {
-                    adapter_id,
-                    scene_id,
-                });
-            }
+            keys.extend(adapter_keys(adapter_id));
         }
+        keys
+    }
+
+    fn adapter_keys(adapter_id: u8) -> Vec<SliceKey> {
+        let mut keys = vec![
+            SliceKey::VirtualLamps { adapter_id },
+            SliceKey::Groups { adapter_id },
+            SliceKey::PhysicalDevices { adapter_id },
+        ];
+        keys.extend((0..PD_BANKS_PER_ADAPTER as u8).map(|bank| SliceKey::PhysicalDeviceBank { adapter_id, bank }));
+        keys.extend((0..SCENES_PER_ADAPTER as u8).map(|scene_id| SliceKey::Scene { adapter_id, scene_id }));
         keys
     }
 
