@@ -15,6 +15,8 @@ pub struct OwnFacts {
     pub mac: [u8; 6],
     pub node_no: u8,
     pub wire: u8,
+    pub wire_protection: bool,
+    pub forwards_foreign: bool,
     pub running_since_ms: Option<u32>,
 }
 
@@ -48,6 +50,7 @@ pub enum WireOwner {
 pub struct OwnFaults {
     pub split_pair: bool,
     pub wire_chain: bool,
+    pub unprotected_wire: bool,
 }
 
 const NODES: usize = NODE_COUNT as usize;
@@ -186,7 +189,32 @@ impl<'a> Roster<'a> {
         OwnFaults {
             split_pair: own.holds(own.node_no) && self.split_with_this_node(),
             wire_chain: self.chained(own.node_no, own.wire),
+            unprotected_wire: self.unprotected_wire(),
         }
+    }
+
+    fn neighbours_on_wire(&self) -> impl Iterator<Item = &'a HeardBoard> + '_ {
+        self.table.iter().filter(|board| {
+            board.node_no != self.own.node_no
+                && board.pulse.wire == self.own.wire
+                && self.live(board)
+                && self.standing(board) == Standing::Holder
+        })
+    }
+
+    pub fn shares_wire(&self) -> bool {
+        self.neighbours_on_wire().next().is_some()
+    }
+
+    fn unprotected_wire(&self) -> bool {
+        let neighbour_unprotected = || self.neighbours_on_wire().any(|board| !board.pulse.wire_protection);
+        let shared = self.shares_wire();
+        self.own.forwards_foreign && shared && (!self.own.wire_protection || neighbour_unprotected())
+    }
+
+    pub fn forwards_foreign(&self) -> bool {
+        let faults = self.faults();
+        self.wire_owner() == WireOwner::ThisNode && !faults.wire_chain && !faults.unprotected_wire
     }
 
     pub fn wire_owner(&self) -> WireOwner {

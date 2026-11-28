@@ -59,6 +59,7 @@ pub const SNIFFER_TRANSLATOR_REQUIRED_EVENTS: &[&str] = &[
     "BusUnitNvmObservedEvent",
     "BusUnitQuiescenceObservedEvent",
     "BusUnitIdentificationObservedEvent",
+    "DaliObservedFrameEvent",
 ];
 
 #[derive(Debug, Default)]
@@ -425,12 +426,13 @@ fn publish_standard(
         Some(observed) => {
             publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed);
         }
-        None if is_unprojectable_dimming(command) => {
-            counters
-                .dimming_unprojectable
-                .fetch_add(1, Ordering::Relaxed);
-        }
-        None => count_unknown(counters),
+        None => match unprojectable_dimming(target, command) {
+            Some(observed) => {
+                counters.dimming_unprojectable.fetch_add(1, Ordering::Relaxed);
+                publish_observed(publisher, bus_id, registry_adapter_id, counters, raw, observed);
+            }
+            None => count_unknown(counters),
+        },
     }
 }
 
@@ -551,9 +553,29 @@ fn level_transition_of(command: StandardCommand) -> Option<LevelTransition> {
     })
 }
 
-// IEC 62386-102 §9.5.6
-fn is_unprojectable_dimming(command: StandardCommand) -> bool {
-    matches!(command, StandardCommand::Up | StandardCommand::Down)
+// IEC 62386-102 §9.5.6, §9.7.3
+fn unprojectable_dimming(
+    (scope, short_address, group_id): Target,
+    command: StandardCommand,
+) -> Option<ObservedFact> {
+    let (kind, level_transition) = match command {
+        StandardCommand::Up => (ObservedKind::DimmingObserved, Some(LevelTransition::Up)),
+        StandardCommand::Down => (ObservedKind::DimmingObserved, Some(LevelTransition::Down)),
+        StandardCommand::DirectArcPower { level } if level == DAPC_MASK_LEVEL => {
+            (ObservedKind::FadeStopObserved, None)
+        }
+        _ => return None,
+    };
+    Some(ObservedFact {
+        kind,
+        scope,
+        short_address,
+        group_id,
+        scene_id: None,
+        setpoint: None,
+        dapc_observed: false,
+        level_transition,
+    })
 }
 
 fn level_setpoint(level: u8) -> LightSetpoint {
@@ -941,7 +963,7 @@ fn publish_observed(
     raw: &ObservedRawFrame,
     fact: ObservedFact,
 ) {
-    publish_event(publisher, bus_id, counters, DaliObservedFrameEvent {
+    publish_required_fact(publisher, bus_id, counters, DaliObservedFrameEvent {
         registry_adapter_id,
         observed_kind: fact.kind,
         scope: fact.scope,
@@ -965,27 +987,4 @@ fn count_unknown(counters: &Arc<SnifferTranslatorCounters>) {
 
 fn count_unaddressed(counters: &Arc<SnifferTranslatorCounters>) {
     counters.unaddressed_ignored.fetch_add(1, Ordering::Relaxed);
-}
-
-fn publish_event(
-    publisher: &BusPublisher,
-    bus_id: BusId,
-    counters: &Arc<SnifferTranslatorCounters>,
-    event: DaliObservedFrameEvent,
-) {
-    if publisher.try_publish(
-        BusChannel::Events,
-        BusFrame::event(event_envelope(
-            SOURCE_ID_UNSPECIFIED,
-            CORRELATION_NONE,
-            bus_id.0,
-            Some(Origin::Sniffer),
-            event,
-        )),
-    ) == PublishResult::Queued
-    {
-        counters.observed_published.fetch_add(1, Ordering::Relaxed);
-    } else {
-        counters.publish_failed.fetch_add(1, Ordering::Relaxed);
-    }
 }

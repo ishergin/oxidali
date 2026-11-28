@@ -17,6 +17,7 @@ use crate::presence::{
 
 use super::composition::EpochSource;
 use super::counters::{bump, ClusterCounters};
+use super::forwarding::ForeignStanding;
 
 #[cfg(test)]
 mod tests;
@@ -235,6 +236,12 @@ impl ClusterPresence {
 
     pub(crate) fn take_hello_heard(&self) -> bool {
         self.hello_heard.swap(false, Relaxed)
+    }
+
+    pub(crate) fn foreign_standing(&self, now_ms: u32) -> ForeignStanding {
+        let state = self.lock();
+        let roster = state.roster(now_ms, self.timing);
+        ForeignStanding { forwards: roster.forwards_foreign(), shared: roster.shares_wire() }
     }
 
     pub(crate) fn member_heard(&self, node: u8, now_ms: u32) -> bool {

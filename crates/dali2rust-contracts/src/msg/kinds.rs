@@ -688,6 +688,8 @@ pub enum ObservedKind {
     LevelTransitionObserved = 3,
     SceneWriteObserved = 4,
     SceneRemovalObserved = 5,
+    DimmingObserved = 6,
+    FadeStopObserved = 7,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

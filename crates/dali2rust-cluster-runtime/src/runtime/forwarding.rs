@@ -1,6 +1,6 @@
 use dali2rust_contracts::msg::{
-    BusEventPayload, ClusterCommandCommand, ClusterForwarding, ClusterRecordKind, DaliTargetScope, LevelTransition,
-    RuntimeSource,
+    BusEventPayload, ClusterCommandCommand, ClusterForwarding, ClusterRecordKind, DaliObservedFrameEvent,
+    DaliTargetScope, LevelTransition, LightSetpoint, ObservedKind, PowerState, RuntimeSource,
 };
 use dali2rust_domain::registry::{ClusterPartReadPort, ClusterSettingsView};
 
@@ -9,11 +9,20 @@ use crate::frame::{Action, LightVerb, RecallScope, RecordRef, SourceClass, Targe
 #[cfg(test)]
 mod tests;
 
+const FOREIGN_HOLDS_HCL: bool = true;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Skip {
     ClusterOrigin,
     SourceOff,
+    Wire,
     NotSent,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ForeignStanding {
+    pub(crate) forwards: bool,
+    pub(crate) shared: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +73,11 @@ impl Fact {
                 let reach = Reach::of(applied.scope, applied.group_id)?;
                 (applied.registry_adapter_id, reach, Deed::Light(LightVerb::StopFade), applied.source, false)
             }
+            BusEventPayload::DaliObservedFrameEvent(observed) => {
+                let deed = Deed::Light(observed_verb(observed)?);
+                let reach = Reach::of(observed.scope, observed.group_id)?;
+                (observed.registry_adapter_id, reach, deed, RuntimeSource::Sniffer, FOREIGN_HOLDS_HCL)
+            }
             BusEventPayload::DaliSceneRecalledEvent(recalled) if recalled.error.is_none() => {
                 let reach = Reach::of(recalled.scope, Some(recalled.group_id))?;
                 (recalled.registry_adapter_id, reach, Deed::Scene(recalled.scene_id), recalled.source, recalled.hold_hcl)
@@ -71,6 +85,10 @@ impl Fact {
             _ => return None,
         };
         Some(Self { adapter, reach, deed, source, hold_hcl })
+    }
+
+    pub(crate) const fn foreign(&self) -> bool {
+        matches!(self.source, RuntimeSource::Sniffer)
     }
 
     fn action(&self, send_all_lamps: bool, parts: &dyn ClusterPartReadPort) -> Option<Action> {
@@ -91,6 +109,29 @@ impl Fact {
                 Some(Action::RecallScene { scene, scope: RecallScope::Channel(channel) })
             }
         }
+    }
+}
+
+fn observed_verb(observed: &DaliObservedFrameEvent) -> Option<LightVerb> {
+    match observed.observed_kind {
+        ObservedKind::TargetStateObserved => observed.setpoint.clone().map(LightVerb::Setpoint),
+        ObservedKind::LevelTransitionObserved | ObservedKind::DimmingObserved => {
+            observed.level_transition.map(foreign_transition)
+        }
+        ObservedKind::FadeStopObserved => Some(LightVerb::StopFade),
+        ObservedKind::SceneRecallObserved
+        | ObservedKind::UnknownObserved
+        | ObservedKind::SceneWriteObserved
+        | ObservedKind::SceneRemovalObserved => None,
+    }
+}
+
+const fn foreign_transition(transition: LevelTransition) -> LightVerb {
+    match transition {
+        LevelTransition::GoToLastActiveLevel => {
+            LightVerb::Setpoint(LightSetpoint { power: PowerState::On, level: None, color: None })
+        }
+        other => LightVerb::Transition(other),
     }
 }
 
@@ -118,9 +159,9 @@ fn source_class(source: RuntimeSource, allowed: &ClusterForwarding) -> Result<So
         RuntimeSource::Api => (SourceClass::Operator, allowed.operator),
         RuntimeSource::Mqtt => (SourceClass::HomeAssistant, allowed.home_assistant),
         RuntimeSource::Hcl => (SourceClass::Hcl, allowed.hcl),
+        RuntimeSource::Sniffer => (SourceClass::ForeignMaster, allowed.foreign_master),
         RuntimeSource::Cluster | RuntimeSource::ClusterHcl => return Err(Skip::ClusterOrigin),
-        RuntimeSource::Sniffer
-        | RuntimeSource::Rules
+        RuntimeSource::Rules
         | RuntimeSource::Poller
         | RuntimeSource::Readback
         | RuntimeSource::AdapterProxy => return Err(Skip::SourceOff),
@@ -136,8 +177,12 @@ pub(crate) fn forwarding(
     fact: &Fact,
     settings: &ClusterSettingsView,
     parts: &dyn ClusterPartReadPort,
+    wire: ForeignStanding,
 ) -> Result<ClusterCommandCommand, Skip> {
     let source = source_class(fact.source, &settings.forwarding)?;
+    if source == SourceClass::ForeignMaster && !wire.forwards {
+        return Err(Skip::Wire);
+    }
     let action = fact.action(settings.send_all_lamps, parts).ok_or(Skip::NotSent)?;
     Ok(ClusterCommandCommand { action, source, hold_hcl: fact.hold_hcl })
 }

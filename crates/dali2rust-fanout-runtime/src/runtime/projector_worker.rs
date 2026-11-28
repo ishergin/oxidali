@@ -761,7 +761,9 @@ fn handle_observed_frame(
         }
         ObservedKind::SceneRecallObserved
         | ObservedKind::SceneWriteObserved
-        | ObservedKind::SceneRemovalObserved => {}
+        | ObservedKind::SceneRemovalObserved
+        | ObservedKind::DimmingObserved
+        | ObservedKind::FadeStopObserved => {}
     }
 }
 

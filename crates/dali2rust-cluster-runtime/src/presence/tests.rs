@@ -25,11 +25,12 @@ struct Board {
     claim: NodeClaim,
     epoch: u32,
     seq: u32,
+    protected: bool,
 }
 
 impl Board {
     fn holding(mac: [u8; 6], node: u8, installation: &'static str) -> Self {
-        Self { mac, node, wire: node, installation, name: NAME, claim: NodeClaim::Holding, epoch: EPOCH, seq: 0 }
+        Self { mac, node, wire: node, installation, name: NAME, claim: NodeClaim::Holding, epoch: EPOCH, seq: 0, protected: true }
     }
 
     fn header(&self) -> Header {
@@ -48,7 +49,7 @@ impl Board {
             installation: self.installation,
             claim: self.claim,
             wire: self.wire,
-            wire_protection: true,
+            wire_protection: self.protected,
         }
     }
 
@@ -67,6 +68,8 @@ fn own(node: u8, running_since_ms: Option<u32>) -> OwnFacts {
         mac: OWN_MAC,
         node_no: node,
         wire: node,
+        wire_protection: true,
+        forwards_foreign: false,
         running_since_ms,
     }
 }
@@ -374,4 +377,71 @@ fn of_two_boards_holding_the_owning_number_the_lower_mac_owns_the_wire() {
     let mut facts = own(3, Some(START_MS));
     facts.wire = 1;
     assert_eq!(roster(&table, &facts, START_MS).wire_owner(), WireOwner::Board { node: 1, mac: LOW_MAC });
+}
+
+fn forwarding_foreign(node: u8) -> OwnFacts {
+    OwnFacts { forwards_foreign: true, ..own(node, Some(START_MS)) }
+}
+
+#[test]
+fn a_live_neighbour_naming_this_wire_shares_it_and_one_on_its_own_wire_does_not() {
+    let mut table = BoardTable::default();
+    let mut follower = Board::holding(HIGH_MAC, 3, BARN);
+    follower.wire = 1;
+    follower.pulse_into(&mut table, START_MS);
+    let facts = forwarding_foreign(1);
+    assert!(roster(&table, &facts, START_MS).shares_wire());
+    assert!(roster(&table, &facts, START_MS).forwards_foreign(), "the lower number owns the wire");
+    let silent = START_MS + TIMING.liveness_ms() + 1;
+    assert!(!roster(&table, &facts, silent).shares_wire(), "a silent neighbour shares nothing");
+    let mut elsewhere = BoardTable::default();
+    Board::holding(HIGH_MAC, 3, BARN).pulse_into(&mut elsewhere, START_MS);
+    assert!(!roster(&elsewhere, &facts, START_MS).shares_wire());
+}
+
+#[test]
+fn a_neighbour_on_this_wire_without_protection_stops_the_foreign_master_here() {
+    let mut table = BoardTable::default();
+    let mut follower = Board::holding(HIGH_MAC, 3, BARN);
+    follower.wire = 1;
+    follower.protected = false;
+    follower.pulse_into(&mut table, START_MS);
+    let facts = forwarding_foreign(1);
+    let view = roster(&table, &facts, START_MS);
+    assert!(view.faults().unprotected_wire);
+    assert!(!view.forwards_foreign());
+    assert!(!roster(&table, &OwnFacts { forwards_foreign: false, ..facts.clone() }, START_MS).faults().unprotected_wire,
+        "with the foreign master home there is nothing to storm");
+    follower.protected = true;
+    follower.pulse_into(&mut table, START_MS + 1);
+    assert!(roster(&table, &facts, START_MS + 1).forwards_foreign(), "the fault clears with the next pulse");
+}
+
+#[test]
+fn this_node_without_protection_on_a_wire_a_pulse_shows_shared_is_a_fault() {
+    let mut table = BoardTable::default();
+    let facts = OwnFacts { wire_protection: false, ..forwarding_foreign(1) };
+    assert!(!roster(&table, &facts, START_MS).faults().unprotected_wire, "alone on its wire it may run unprotected");
+    assert!(roster(&table, &facts, START_MS).forwards_foreign());
+    let mut follower = Board::holding(HIGH_MAC, 3, BARN);
+    follower.wire = 1;
+    follower.pulse_into(&mut table, START_MS);
+    assert!(roster(&table, &facts, START_MS).faults().unprotected_wire);
+    assert!(!roster(&table, &facts, START_MS).forwards_foreign());
+}
+
+#[test]
+fn a_node_that_does_not_own_its_wire_or_sits_in_a_chain_never_forwards_the_foreign_master() {
+    let mut table = BoardTable::default();
+    let mut owner = Board::holding(LOW_MAC, 1, BARN);
+    owner.pulse_into(&mut table, START_MS);
+    let follower = OwnFacts { wire: 1, ..forwarding_foreign(3) };
+    assert!(!roster(&table, &follower, START_MS).forwards_foreign(), "node 1 owns wire 1");
+    let mut chained_table = BoardTable::default();
+    let mut middle = Board::holding(LOW_MAC, 1, BARN);
+    middle.wire = 6;
+    middle.pulse_into(&mut chained_table, START_MS);
+    let view = roster(&chained_table, &follower, START_MS);
+    assert!(view.faults().wire_chain);
+    assert!(!view.forwards_foreign());
 }
