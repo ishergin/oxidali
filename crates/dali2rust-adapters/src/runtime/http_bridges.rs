@@ -386,7 +386,7 @@ declare_counter_mapping! {
         commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total, commands_forwarded_total,
         forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
         forwards_skipped_wire_total, foreign_forwarded_total, foreign_held_total, foreign_cancelled_total,
-        foreign_hold_full_total,
+        foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
     }
     dali_worker_dto(c: dali2rust_dali_runtime::DaliWorkerCounters) -> DaliWorkerDto {
         invalid_command, execution_failed, confirmation_publish_failed,

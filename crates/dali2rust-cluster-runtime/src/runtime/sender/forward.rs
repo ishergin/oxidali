@@ -8,7 +8,7 @@ use crate::frame::{encode, Frame};
 use crate::presence::OwnMode;
 
 use super::super::counters::bump;
-use super::super::forwarding::{forwarding, Fact, ForeignStanding};
+use super::super::forwarding::{forwarding, Fact, ForeignStanding, Skip};
 use super::super::hold::Held;
 use super::super::outgoing::{is_relative, Queued};
 use super::{NodeSender, Reading};
@@ -31,7 +31,9 @@ impl NodeSender<'_> {
             Ok(request) => self.send_forwarded(&reading, request),
             Err(skip) => {
                 bump(self.ports.counters.skipped(skip));
-                self.note_wire(&reading, &fact, wire);
+                if matches!(skip, Skip::SourceOff | Skip::NotSent) {
+                    self.note_wire(&reading, &fact, wire);
+                }
             }
         }
     }
@@ -45,6 +47,7 @@ impl NodeSender<'_> {
         for _ in 0..NOTE_COPIES {
             self.transmit(written);
         }
+        bump(&self.ports.counters.wire_notes_sent_total);
     }
 
     fn send_forwarded(&mut self, reading: &Reading, request: ClusterCommandCommand) {

@@ -241,6 +241,8 @@ pub struct StatsClusterDto {
     pub foreign_held_total: u32,
     pub foreign_cancelled_total: u32,
     pub foreign_hold_full_total: u32,
+    pub wire_notes_sent_total: u32,
+    pub wire_notes_taken_total: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -352,7 +354,7 @@ declare_widest_dtos! {
         commands_dropped_not_wire_owner_total, commands_dropped_executed_on_wire_total, commands_forwarded_total,
         forwards_skipped_cluster_origin_total, forwards_skipped_source_off_total, forwards_skipped_not_sent_total,
         forwards_skipped_wire_total, foreign_forwarded_total, foreign_held_total, foreign_cancelled_total,
-        foreign_hold_full_total,
+        foreign_hold_full_total, wire_notes_sent_total, wire_notes_taken_total,
     }
     StatsReportDto {
         controller = StatsControllerDto::widest(),

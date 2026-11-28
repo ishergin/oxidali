@@ -322,4 +322,19 @@ fn a_command_beside_the_owner_that_the_cluster_does_not_carry_stays_on_the_share
     assert_eq!(carried.from(&BESIDE), Vec::<Command>::new(), "the operator's commands stay home on the node beside");
     assert!(cluster.apart.frames().is_empty(), "the third node's wire stays quiet: {:04X?}", cluster.apart.frames());
     assert_eq!(cluster.owner.stat("foreign_forwarded_total"), 0);
+    assert_eq!((cluster.beside.stat("wire_notes_sent_total"), cluster.owner.stat("wire_notes_taken_total")), (1, 1));
+}
+
+#[test]
+fn a_channel_step_typed_beside_the_owner_is_cancelled_once_and_a_held_foreign_step_still_goes() {
+    let cluster = forwarding_cluster();
+    cluster.shared.foreign(GROUP_5_UP);
+    let held = || cluster.owner.stat("foreign_held_total") == 1;
+    assert!(try_wait_until(held, SETTLE), "{}", cluster.owner.read("/api/v1/stats")["cluster"]);
+    cluster.beside.send("PUT", "/api/v1/cluster/channels/2/target-state", r#"{"dim":"up"}"#);
+    let both = || cluster.third.sent_frames() == [GROUP_5_UP, GROUP_5_UP];
+    assert!(try_wait_until(both, SETTLE), "the third node steps as often as the shared wire: {:04X?} {}", cluster.third.sent_frames(), cluster.owner.read("/api/v1/stats")["cluster"]);
+    assert!(!try_wait_until(|| cluster.third.sent_frames().len() > 2, QUIET), "a step ran three times: {:04X?}", cluster.third.sent_frames());
+    assert_eq!(cluster.shared.frames().len(), 2, "{:04X?}", cluster.shared.frames());
+    assert_eq!(cluster.beside.stat("wire_notes_sent_total"), 0, "the channel command carries its own frame");
 }

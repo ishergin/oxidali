@@ -57,7 +57,7 @@ fn with_a_neighbour_it_waits_the_hold_and_then_leaves() {
 fn a_neighbour_frame_with_the_same_target_and_verb_cancels_the_held_one() {
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, up())), true, START_MS);
-    assert_eq!(line.cancel(&light(3, up()), START_MS + 5), (1, false));
+    assert_eq!(line.cancel(&light(3, up()), Carrier::Command, START_MS + 5), (1, false));
     assert_eq!(drain(&mut line, START_MS + RELATIVE_HOLD_MS), Vec::<Action>::new());
 }
 
@@ -66,9 +66,9 @@ fn another_target_or_another_verb_cancels_nothing() {
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, up())), true, START_MS);
     let down = LightVerb::Transition(LevelTransition::Down);
-    assert_eq!(line.cancel(&light(4, up()), START_MS + 1).0, 0);
-    assert_eq!(line.cancel(&light(3, down), START_MS + 2).0, 0);
-    assert_eq!(line.cancel(&light(3, level(9)), START_MS + 3).0, 0);
+    assert_eq!(line.cancel(&light(4, up()), Carrier::Command, START_MS + 1).0, 0);
+    assert_eq!(line.cancel(&light(3, down), Carrier::Command, START_MS + 2).0, 0);
+    assert_eq!(line.cancel(&light(3, level(9)), Carrier::Command, START_MS + 3).0, 0);
     assert_eq!(drain(&mut line, START_MS + RELATIVE_HOLD_MS), [light(3, up())]);
 }
 
@@ -77,7 +77,7 @@ fn one_neighbour_up_cancels_one_of_two_held_ups_and_the_other_leaves() {
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, up())), true, START_MS);
     line.hold(foreign(light(3, up())), true, START_MS + 30);
-    assert_eq!(line.cancel(&light(3, up()), START_MS + 31), (1, false));
+    assert_eq!(line.cancel(&light(3, up()), Carrier::Command, START_MS + 31), (1, false));
     assert_eq!(drain(&mut line, START_MS + 30 + RELATIVE_HOLD_MS), [light(3, up())]);
 }
 
@@ -87,15 +87,15 @@ fn two_neighbour_ups_cancel_two_held_ups_and_never_a_third() {
     for at in [0, 25, 50] {
         line.hold(foreign(light(3, up())), true, START_MS + at);
     }
-    line.cancel(&light(3, up()), START_MS + 51);
-    line.cancel(&light(3, up()), START_MS + 52);
+    line.cancel(&light(3, up()), Carrier::Command, START_MS + 51);
+    line.cancel(&light(3, up()), Carrier::Command, START_MS + 52);
     assert_eq!(drain(&mut line, START_MS + 50 + RELATIVE_HOLD_MS), [light(3, up())]);
 }
 
 #[test]
 fn a_neighbour_up_heard_before_the_observation_cancels_it_once() {
     let mut line = HoldLine::new();
-    assert_eq!(line.cancel(&light(3, up()), START_MS), (0, false));
+    assert_eq!(line.cancel(&light(3, up()), Carrier::Command, START_MS), (0, false));
     assert_eq!(line.hold(foreign(light(3, up())), true, START_MS + 8), Held::Cancelled);
     assert_eq!(line.hold(foreign(light(3, up())), true, START_MS + 30), Held::Queued { held: true, pushed_out: None });
 }
@@ -103,7 +103,7 @@ fn a_neighbour_up_heard_before_the_observation_cancels_it_once() {
 #[test]
 fn an_early_neighbour_frame_cancels_nothing_after_the_hold() {
     let mut line = HoldLine::new();
-    line.cancel(&light(3, up()), START_MS);
+    line.cancel(&light(3, up()), Carrier::Command, START_MS);
     let late = START_MS + ECHO_MS;
     assert_eq!(line.hold(foreign(light(3, up())), true, late), Held::Queued { held: true, pushed_out: None });
 }
@@ -114,7 +114,7 @@ fn one_neighbour_setpoint_cancels_every_absolute_frame_its_command_became_on_the
     let colour = LightVerb::Setpoint(LightSetpoint { power: PowerState::Unknown, level: None, color: None });
     line.hold(foreign(light(3, colour)), true, START_MS);
     line.hold(foreign(light(3, level(200))), true, START_MS + 20);
-    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 25), (2, false));
+    assert_eq!(line.cancel(&light(3, level(200)), Carrier::Command, START_MS + 25), (2, false));
     assert_eq!(line.hold(foreign(light(3, level(200))), true, START_MS + 30), Held::Cancelled);
     assert_eq!(drain(&mut line, START_MS + 30 + ABSOLUTE_HOLD_MS), Vec::<Action>::new());
 }
@@ -145,9 +145,9 @@ fn a_scene_recall_is_cancelled_only_by_the_same_recall() {
     let mut line = HoldLine::new();
     let recall = |scene| Action::RecallScene { scene: channel(scene), scope: RecallScope::Node };
     line.hold(foreign(recall(5)), true, START_MS);
-    assert_eq!(line.cancel(&recall(6), START_MS + 1).0, 0);
-    assert_eq!(line.cancel(&light(5, level(9)), START_MS + 2).0, 0);
-    assert_eq!(line.cancel(&recall(5), START_MS + 3).0, 1);
+    assert_eq!(line.cancel(&recall(6), Carrier::Command, START_MS + 1).0, 0);
+    assert_eq!(line.cancel(&light(5, level(9)), Carrier::Command, START_MS + 2).0, 0);
+    assert_eq!(line.cancel(&recall(5), Carrier::Command, START_MS + 3).0, 1);
 }
 
 #[test]
@@ -163,14 +163,14 @@ fn the_hold_survives_the_wrap_of_the_clock() {
 fn a_neighbour_setpoint_of_another_value_cancels_nothing_and_the_foreign_value_leaves() {
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, level(200))), true, START_MS);
-    assert_eq!(line.cancel(&light(3, level(100)), START_MS + 5), (0, false));
+    assert_eq!(line.cancel(&light(3, level(100)), Carrier::Command, START_MS + 5), (0, false));
     assert_eq!(drain(&mut line, START_MS + ABSOLUTE_HOLD_MS), [light(3, level(200))]);
 }
 
 #[test]
 fn an_early_neighbour_setpoint_of_another_value_does_not_swallow_the_foreign_one() {
     let mut line = HoldLine::new();
-    line.cancel(&light(3, level(100)), START_MS);
+    line.cancel(&light(3, level(100)), Carrier::Command, START_MS);
     assert_eq!(line.hold(foreign(light(3, level(200))), true, START_MS + 5), Held::Queued { held: true, pushed_out: None });
 }
 
@@ -180,7 +180,7 @@ fn a_neighbour_setpoint_supersedes_every_earlier_setpoint_held_for_its_target() 
     line.hold(foreign(light(3, level(150))), true, START_MS);
     line.hold(foreign(light(4, level(150))), true, START_MS + 10);
     line.hold(foreign(light(3, level(200))), true, START_MS + 20);
-    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 25), (2, false));
+    assert_eq!(line.cancel(&light(3, level(200)), Carrier::Command, START_MS + 25), (2, false));
     assert_eq!(drain(&mut line, START_MS + 20 + ABSOLUTE_HOLD_MS), [light(4, level(150))]);
 }
 
@@ -188,7 +188,7 @@ fn a_neighbour_setpoint_supersedes_every_earlier_setpoint_held_for_its_target() 
 fn an_early_neighbour_setpoint_supersedes_the_earlier_setpoints_when_its_own_frame_is_heard() {
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, level(150))), true, START_MS);
-    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 20), (0, false));
+    assert_eq!(line.cancel(&light(3, level(200)), Carrier::Command, START_MS + 20), (0, false));
     assert_eq!(line.hold(foreign(light(3, level(200))), true, START_MS + 30), Held::Cancelled);
     assert_eq!(drain(&mut line, START_MS + ABSOLUTE_HOLD_MS), Vec::<Action>::new());
 }
@@ -199,8 +199,8 @@ fn a_power_on_without_a_level_is_cancelled_only_by_a_command_that_turns_the_lamp
     let off = LightVerb::Setpoint(LightSetpoint { power: PowerState::Off, level: None, color: None });
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, on)), true, START_MS);
-    assert_eq!(line.cancel(&light(3, off), START_MS + 1).0, 0);
-    assert_eq!(line.cancel(&light(3, level(254)), START_MS + 2).0, 1);
+    assert_eq!(line.cancel(&light(3, off), Carrier::Command, START_MS + 1).0, 0);
+    assert_eq!(line.cancel(&light(3, level(254)), Carrier::Command, START_MS + 2).0, 1);
 }
 
 const WIRE_GAP_MS: u32 = 25;
@@ -226,7 +226,7 @@ fn replay(mut events: Vec<(u32, Event)>) -> Vec<(u32, Action)> {
                 line.hold(foreign(action), true, now);
             }
             Event::Neighbour(action) => {
-                line.cancel(&action, now);
+                line.cancel(&action, Carrier::Command, now);
             }
         }
     }
@@ -265,7 +265,7 @@ fn a_neighbour_colour_without_a_level_leaves_an_earlier_foreign_level_to_leave()
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, level(50))), true, START_MS);
     line.hold(foreign(light(3, warm())), true, START_MS + 20);
-    assert_eq!(line.cancel(&light(3, warm()), START_MS + 25), (1, false));
+    assert_eq!(line.cancel(&light(3, warm()), Carrier::Command, START_MS + 25), (1, false));
     assert_eq!(drain(&mut line, START_MS + 20 + ABSOLUTE_HOLD_MS), [light(3, level(50))]);
 }
 
@@ -276,7 +276,7 @@ fn a_neighbour_level_supersedes_an_earlier_foreign_step_on_its_target_but_not_a_
     line.hold(foreign(recall.clone()), true, START_MS);
     line.hold(foreign(light(3, up())), true, START_MS + 10);
     line.hold(foreign(light(3, level(200))), true, START_MS + 20);
-    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 25), (2, false));
+    assert_eq!(line.cancel(&light(3, level(200)), Carrier::Command, START_MS + 25), (2, false));
     assert_eq!(drain(&mut line, START_MS + 10 + RELATIVE_HOLD_MS), [recall]);
 }
 
@@ -284,7 +284,7 @@ fn a_neighbour_level_supersedes_an_earlier_foreign_step_on_its_target_but_not_a_
 fn an_echo_is_forgotten_once_another_command_on_its_target_is_heard() {
     let mut line = HoldLine::new();
     let recall = Action::RecallScene { scene: channel(9), scope: RecallScope::Channel(channel(3)) };
-    line.cancel(&light(3, level(50)), START_MS);
+    line.cancel(&light(3, level(50)), Carrier::Command, START_MS);
     assert_eq!(line.hold(foreign(light(3, level(50))), true, START_MS + 10), Held::Cancelled);
     line.hold(foreign(recall.clone()), true, START_MS + 20);
     assert_ne!(line.hold(foreign(light(3, level(50))), true, START_MS + 30), Held::Cancelled);
@@ -297,6 +297,18 @@ fn a_neighbour_level_without_a_colour_leaves_an_earlier_foreign_colour_to_leave(
     let mut line = HoldLine::new();
     line.hold(foreign(light(3, warm())), true, START_MS);
     line.hold(foreign(light(3, level(200))), true, START_MS + 20);
-    assert_eq!(line.cancel(&light(3, level(200)), START_MS + 25), (1, false));
+    assert_eq!(line.cancel(&light(3, level(200)), Carrier::Command, START_MS + 25), (1, false));
     assert_eq!(drain(&mut line, START_MS + 20 + ABSOLUTE_HOLD_MS), [light(3, warm())]);
+}
+
+#[test]
+fn a_note_cancels_only_its_own_frame_and_supersedes_nothing() {
+    let mut line = HoldLine::new();
+    line.hold(foreign(light(3, up())), true, START_MS);
+    line.hold(foreign(light(3, level(200))), true, START_MS + 10);
+    assert_eq!(line.cancel(&light(3, level(200)), Carrier::Note, START_MS + 15), (1, false));
+    line.hold(foreign(light(4, level(50))), true, START_MS + 20);
+    assert_eq!(line.cancel(&light(4, level(90)), Carrier::Note, START_MS + 25), (0, false));
+    assert_eq!(line.hold(foreign(light(4, level(90))), true, START_MS + 30), Held::Cancelled);
+    assert_eq!(drain(&mut line, START_MS + 30 + RELATIVE_HOLD_MS), [light(3, up()), light(4, level(50))]);
 }

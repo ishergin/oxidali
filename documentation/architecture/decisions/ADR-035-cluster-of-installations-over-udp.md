@@ -200,8 +200,9 @@ this wire with the same target and verb cancels it:
   setpoint that states a level covers the steps and the setpoints without a colour — the
   colour frames before a `DAPC`, a slider's intermediate values — and covers a setpoint
   with a colour or a scene recall only when it states a colour too. A scene recall held
-  before a neighbour's setpoint that does not cover it still leaves after it, so the two
-  can arrive at the other wires in the opposite order. A setpoint that leaves before its
+  before a neighbour's setpoint that does not cover it — or any foreign command held before
+  a neighbour's setpoint without a level — still leaves after it, so the two can arrive at
+  the other wires in the opposite order. A setpoint that leaves before its
   neighbour's command arrives is a duplicate of the same value or an intermediate one the
   later command overwrites, so a slider on a neighbour leaves every wire at its last
   value.
@@ -224,10 +225,14 @@ rules on two shared wires, a loop. So a node that shares its wire and does not f
 foreign master notes every such group, broadcast or scene frame to the owner in a wire
 note: its wire, adapter, group or broadcast, and the verb or local scene. The note names
 the frame in DALI terms because the neighbour may have no part for that group; the owner
-maps it through its own parts, as it maps its own observation, and cancels by it exactly
-as by a command. A frame the neighbour sends to the cluster is cancelled by that command
-and is never noted, so each frame has one carrier. A note goes twice with one sequence
-number and does not wait in the neighbour's line.
+maps it through its own parts, as it maps its own observation, and cancels by it the way a
+command cancels, except that a note supersedes nothing: the command it stands for never
+reaches the other wires, so the foreign commands held before it must still go. A frame
+the neighbour sends to the cluster — forwarded, or the neighbour's own part of a command
+typed for a channel — is cancelled by that command and never noted, so each frame has one
+carrier; neither is a fact of cluster origin executed for another node, which a protected
+neighbour never runs. A note goes twice with one sequence number and does not wait in the
+neighbour's line; the stats count the notes sent and taken.
 
 While two nodes both think they own the wire — the window this record already allows —
 both hold and forward, and each one's copy arrives after the other has released its own,
@@ -276,7 +281,8 @@ channel is a new entity. When two nodes are set to be the face, the lower number
   `sdkconfig.p4.defaults`, which only a flash proves.
 - The cluster's counters are a block in `/api/v1/stats`, and its worker one more command,
   event and confirmation subscriber in `/api/v1/diagnostics`. The WebSocket snapshot ceilings carry
-  them: `STATS_SNAPSHOT_CEILING_BYTES` 8128 against a measured worst case of 8119,
+  them: `STATS_SNAPSHOT_CEILING_BYTES` 8192 against a measured worst case of 8190 — the smallest
+  7936 + 64·k that holds it, k = 4 —
   `DIAGNOSTICS_SNAPSHOT_CEILING_BYTES` 8832 against 8805. The status resource goes out
   whole in one `ClusterStatus` frame, whose ceiling is 16384 against a measured worst case
   of 15881: eight nodes and 24 ignored boards, every text at its widest. The per-node

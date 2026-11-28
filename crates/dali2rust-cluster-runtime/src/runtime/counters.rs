@@ -51,6 +51,8 @@ pub struct ClusterCounters {
     pub foreign_held_total: AtomicU32,
     pub foreign_cancelled_total: AtomicU32,
     pub foreign_hold_full_total: AtomicU32,
+    pub wire_notes_sent_total: AtomicU32,
+    pub wire_notes_taken_total: AtomicU32,
 }
 
 pub(crate) fn bump(counter: &AtomicU32) {

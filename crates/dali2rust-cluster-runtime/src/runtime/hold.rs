@@ -28,9 +28,16 @@ struct Waiting {
     due_ms: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Carrier {
+    Command,
+    Note,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Echo {
     action: Action,
+    carrier: Carrier,
     until_ms: u32,
 }
 
@@ -63,9 +70,9 @@ impl HoldLine {
         Held::Queued { held: shared, pushed_out: pushed_out.map(|out| out.request) }
     }
 
-    pub(crate) fn cancel(&mut self, neighbour: &Action, now_ms: u32) -> (u32, bool) {
+    pub(crate) fn cancel(&mut self, neighbour: &Action, carrier: Carrier, now_ms: u32) -> (u32, bool) {
         self.expire(now_ms);
-        let cancelled = self.cancel_waiting(neighbour);
+        let cancelled = self.cancel_waiting(neighbour, carrier);
         let relative = is_relative(neighbour);
         if relative && cancelled > 0 {
             return (cancelled, false);
@@ -74,7 +81,7 @@ impl HoldLine {
         if evicted {
             self.echoes.pop_front();
         }
-        self.echoes.push_back(Echo { action: neighbour.clone(), until_ms: now_ms.wrapping_add(ECHO_MS) });
+        self.echoes.push_back(Echo { action: neighbour.clone(), carrier, until_ms: now_ms.wrapping_add(ECHO_MS) });
         (cancelled, evicted)
     }
 
@@ -92,7 +99,7 @@ impl HoldLine {
         self.waiting.drain(..).map(|waiting| waiting.request)
     }
 
-    fn cancel_waiting(&mut self, neighbour: &Action) -> u32 {
+    fn cancel_waiting(&mut self, neighbour: &Action, carrier: Carrier) -> u32 {
         let matches = |waiting: &Waiting| same_command(&waiting.request.action, neighbour);
         let found = if is_relative(neighbour) {
             self.waiting.iter().position(matches)
@@ -102,7 +109,7 @@ impl HoldLine {
         let Some(index) = found else {
             return 0;
         };
-        let superseded = self.supersede(index, neighbour);
+        let superseded = if carrier == Carrier::Command { self.supersede(index, neighbour) } else { 0 };
         let at = index.saturating_sub(usize::try_from(superseded).unwrap_or(index));
         self.waiting.remove(at).map_or(superseded, |_| superseded + 1)
     }
@@ -126,7 +133,7 @@ impl HoldLine {
         };
         if is_relative(observed) {
             self.echoes.remove(index);
-        } else {
+        } else if self.echoes.get(index).is_some_and(|echo| echo.carrier == Carrier::Command) {
             self.supersede(self.waiting.len(), observed);
         }
         true

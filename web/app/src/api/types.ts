@@ -1375,6 +1375,8 @@ export type StatsCluster = {
   foreign_held_total: number
   foreign_cancelled_total: number
   foreign_hold_full_total: number
+  wire_notes_sent_total: number
+  wire_notes_taken_total: number
 }
 
 export type InputDeviceSummary = {

@@ -8,7 +8,7 @@ use dali2rust_platform::liveness::monotonic_ms;
 use super::counters::{bump, ClusterCounters};
 use super::execute::{ClusterExecution, Gate, Stamp};
 use super::forwarding::Fact;
-use super::hold::ForeignHold;
+use super::hold::{Carrier, ForeignHold};
 use super::shared::{CommandAdmission, Heard, HeardCommand};
 use crate::frame::{Action, Command, WireNote};
 
@@ -35,9 +35,10 @@ impl CommandIntake {
         if !standing.running || note.wire != standing.wire {
             return;
         }
+        bump(&counters.wire_notes_taken_total);
         let settings = self.settings.cluster_settings_view();
         if let Some(action) = Fact::noted(note, settings.send_all_lamps, &*self.parts) {
-            self.cancel_held(&action, counters);
+            self.cancel_held(&action, Carrier::Note, counters);
         }
     }
 
@@ -53,7 +54,7 @@ impl CommandIntake {
         }
         if self.settings.cluster_settings_view().wire_protection {
             if command.executed_on_wire == Some(standing.wire) {
-                self.cancel_held(&command.action, counters);
+                self.cancel_held(&command.action, Carrier::Command, counters);
                 return bump(&counters.commands_dropped_executed_on_wire_total);
             }
             if !standing.owns_wire {
@@ -63,8 +64,8 @@ impl CommandIntake {
         self.execution.execute(&command.action, Stamp::of(command), Gate::Accepting).count_drop(counters);
     }
 
-    fn cancel_held(&self, action: &Action, counters: &ClusterCounters) {
-        let (cancelled, evicted) = self.hold.line().cancel(action, monotonic_ms());
+    fn cancel_held(&self, action: &Action, carrier: Carrier, counters: &ClusterCounters) {
+        let (cancelled, evicted) = self.hold.line().cancel(action, carrier, monotonic_ms());
         counters.foreign_cancelled_total.fetch_add(cancelled, Relaxed);
         if evicted {
             bump(&counters.foreign_hold_full_total);
