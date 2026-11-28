@@ -6,6 +6,9 @@ mod execute;
 mod forwarding;
 mod hold;
 mod incoming;
+mod input_announce;
+mod input_intake;
+mod input_line;
 mod lamp_announce;
 mod outgoing;
 mod page_slot;
@@ -20,6 +23,7 @@ pub use composition::{
 };
 pub use counters::ClusterCounters;
 pub use execute::ClusterExecution;
+pub use input_intake::CLUSTER_RX_REQUIRED_EVENTS;
 pub use sender::{
     spawn_cluster_worker, ClusterInboxes, ClusterWorkerPorts, ClusterWorkerThreads, CLUSTER_BUSY,
     CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING, CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED,

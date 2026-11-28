@@ -42,7 +42,7 @@ impl NodeSender<'_> {
         self.mode_refusal(reading).or_else(unsupported)
     }
 
-    fn mode_refusal(&self, reading: &Reading) -> Option<&'static str> {
+    pub(super) fn mode_refusal(&self, reading: &Reading) -> Option<&'static str> {
         if !reading.active {
             return Some(CONTROLLER_PASSIVE);
         }
@@ -80,10 +80,12 @@ impl NodeSender<'_> {
             }
             return;
         }
-        while let Some(due) = self.outgoing.take_due(now_ms) {
+        while let Some(due) = self.outgoing.take_due(now_ms, reading.settings.share_input_events) {
             match due {
                 Due::Repeat(repeat) => self.repeat(&repeat),
                 Due::Waiting(queued) => self.send_command(reading, queued, now_ms),
+                Due::InputRepeat(repeat) => self.repeat_input(repeat),
+                Due::Input(event) => self.send_input(reading, event, now_ms),
             }
         }
         self.outgoing.prune(now_ms);

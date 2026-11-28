@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use dali2rust_bus::{recv_then_drain, BusFrame, BusId, BusPublisher, BusSubscriberRx, WorkerTurn};
 use dali2rust_contracts::msg::BusCommandPayload;
+use dali2rust_platform::liveness::monotonic_ms;
 use dali2rust_platform::slice_store::SliceStore;
 
 use crate::runtime::registry::replaced_slices::AnnouncementPacing;
@@ -48,6 +49,7 @@ use crate::runtime::registry::cluster_settings::CLUSTER_STAGE_MAX_AGE_MS;
 use crate::runtime::registry::home_assistant_settings::HOME_ASSISTANT_STAGE_MAX_AGE_MS;
 const RECV_TIMEOUT: Duration = Duration::from_millis(250);
 pub const HELD_SLICE_REREAD_INTERVAL: Duration = Duration::from_secs(2);
+const STAMP_REACH_INTERVAL: Duration = Duration::from_secs(60);
 pub const ANNOUNCEMENT_INBOX_FLOOR: usize = 64;
 pub const ANNOUNCEMENT_PARK_WINDOW: Duration = Duration::from_secs(1);
 pub const ANNOUNCEMENT_SHARE_OF_INBOX: usize = 2;
@@ -75,6 +77,7 @@ struct FlushClock {
     last_reread: Instant,
     reread_interval: Duration,
     reread_failures: transfer::RereadFailures,
+    last_reach: Instant,
 }
 
 impl FlushClock {
@@ -85,6 +88,7 @@ impl FlushClock {
             last_reread: Instant::now(),
             reread_interval: HELD_SLICE_REREAD_INTERVAL,
             reread_failures: transfer::RereadFailures::default(),
+            last_reach: Instant::now(),
         }
     }
 }
@@ -102,12 +106,21 @@ fn reread_held_when_due(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
     }
 }
 
+fn hold_stamps_in_reach_when_due(store: &RegistryStore, clock: &mut FlushClock) {
+    if clock.last_reach.elapsed() < STAMP_REACH_INTERVAL {
+        return;
+    }
+    clock.last_reach = Instant::now();
+    store.hold_input_stamps_in_reach(monotonic_ms());
+}
+
 fn flush_paced(
     deps: &RegistryWorkerDeps,
     clock: &mut FlushClock,
     min_interval: fn(&RegistryStore) -> Duration,
 ) {
     reread_held_when_due(deps, clock);
+    hold_stamps_in_reach_when_due(&deps.store, clock);
     if deps.store.dirty.hcl_switches_due(clock.switch_interval) {
         deps.store.dirty.mark_hcl_schedules_dirty();
     }
@@ -364,9 +377,10 @@ mod tests {
         announce_queued, apply_frame_and_flush, command_flush_interval, evict_and_flush_on_idle,
         flush_persistence, ANNOUNCEMENT_PACING,
         FlushClock, RegistryStore, RegistryWorkerCounters, RegistryWorkerDeps, SlicePersistence,
-        HCL_SWITCH_WRITE_INTERVAL, HELD_SLICE_REREAD_INTERVAL, PERSISTENCE_DEBOUNCE,
+        HCL_SWITCH_WRITE_INTERVAL, HELD_SLICE_REREAD_INTERVAL, PERSISTENCE_DEBOUNCE, STAMP_REACH_INTERVAL,
     };
     use crate::test_support::{CountingStore, ProbeStore};
+    use dali2rust_platform::liveness::{monotonic_ms, AGE_CAP_MS};
     use dali2rust_bus::{BusConfig, BusFrame, BusHost, BusId, BusPublisher};
     use dali2rust_contracts::bus::command_envelope;
     use dali2rust_contracts::msg::{
@@ -567,6 +581,7 @@ mod tests {
     }
 
     const OBSERVED_EVENTS: usize = 64;
+    const STAMP_HELD_BY_MS: u32 = 60_000;
     const EVENT_WAIT: Duration = Duration::from_secs(2);
 
     fn worker_observed<S: SliceStore + 'static>(
@@ -620,6 +635,29 @@ mod tests {
     fn idle_turn(deps: &RegistryWorkerDeps, clock: &mut FlushClock) {
         clock.last_flush = Instant::now() - PERSISTENCE_DEBOUNCE;
         evict_and_flush_on_idle(deps, clock);
+    }
+
+    fn input_stamp(store: &RegistryStore) -> Option<u32> {
+        let g = store.read_inner();
+        g.input_devices.get(&(0, 5))?.instances.first()?.last_event_mono_ms
+    }
+
+    #[test]
+    fn an_idle_turn_holds_input_event_stamps_in_reach_once_its_interval_passes() {
+        let slices = Arc::new(CountingStore::default());
+        let (deps, _host) = worker_on(&slices);
+        let long_ago_ms = monotonic_ms().wrapping_sub(AGE_CAP_MS).wrapping_sub(STAMP_HELD_BY_MS);
+        let mut record = crate::runtime::registry::input_devices::InputDeviceRecord::empty(0, 5);
+        record.instance_count = 1;
+        record.instance_mut_or_declare(0).expect("declared").last_event_mono_ms = Some(long_ago_ms);
+        deps.store.write_inner().input_devices.insert((0, 5), record);
+        let mut clock = FlushClock::new(HCL_SWITCH_WRITE_INTERVAL);
+        idle_turn(&deps, &mut clock);
+        assert_eq!(input_stamp(&deps.store), Some(long_ago_ms), "the hold waits for its interval");
+        clock.last_reach = Instant::now() - STAMP_REACH_INTERVAL;
+        idle_turn(&deps, &mut clock);
+        let held_ms = input_stamp(&deps.store).expect("a stamp");
+        assert!(held_ms.wrapping_sub(long_ago_ms) >= STAMP_HELD_BY_MS, "the stamp moved into reach");
     }
 
     #[test]

@@ -93,6 +93,13 @@ change checklist → [`contract-stability-checklist.md`](../product-design/contr
   announcer reads its own lamps when it sends, through `ClusterLampReadPort`, which copies
   one lamp's state or info or one group's lit counts under the read lock; the events it
   takes only wake it, so there is no second projector.
+- A node's input info is a set of pages of its own set numbers under the same rules: the
+  owner first, then each input device followed by its instances, at most
+  `CLUSTER_INPUT_DEVICES` devices of `CLUSTER_INPUT_INSTANCES` instances. A value carries
+  its age at sending, and the receiver dates it from reception. An input event is one
+  frame with every field range-checked on both sides; an event without a short address
+  is never framed. A late input event is taken unless the cache already applied a later
+  one of the same board and boot epoch.
 - The duplicate window (`SequenceWindow`) is kept per sender board for the two boot epochs
   it heard last with a new frame, each judged by its own window: sequence numbers compare
   by wrapping arithmetic, and a frame of any other epoch starts a window in place of the

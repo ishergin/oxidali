@@ -13,8 +13,10 @@ use dali2rust_platform::liveness::monotonic_ms;
 
 use super::counters::{bump, ClusterCounters};
 use super::incoming::CommandIntake;
-use super::shared::{Caches, ClusterPresence, Delivery};
+use super::input_intake::InputIntake;
+use super::shared::{Arrived, Caches, ClusterPresence, Delivery};
 use crate::info::ClusterInfo;
+use crate::inputs::ClusterInputs;
 use crate::lamps::ClusterLamps;
 
 pub(crate) const RECEIVE_SLICE: Duration = Duration::from_millis(250);
@@ -47,22 +49,29 @@ enum Next {
     Stop,
 }
 
+pub(crate) struct Shared {
+    pub(crate) presence: Arc<ClusterPresence>,
+    pub(crate) info: Arc<ClusterInfo>,
+    pub(crate) lamps: Arc<ClusterLamps>,
+    pub(crate) inputs: Arc<ClusterInputs>,
+    pub(crate) counters: Arc<ClusterCounters>,
+}
+
+pub(crate) struct Intakes {
+    pub(crate) commands: CommandIntake,
+    pub(crate) inputs: InputIntake,
+}
+
 struct Intake {
-    presence: Arc<ClusterPresence>,
-    info: Arc<ClusterInfo>,
-    lamps: Arc<ClusterLamps>,
-    counters: Arc<ClusterCounters>,
+    shared: Shared,
     commands: CommandIntake,
+    inputs: InputIntake,
     buffer: PsramBox<ClusterReceiveBuffer>,
 }
 
-pub(crate) fn run_receiver(
-    handoff: Receiver<LinkHandoff>,
-    (presence, info, lamps): (Arc<ClusterPresence>, Arc<ClusterInfo>, Arc<ClusterLamps>),
-    counters: Arc<ClusterCounters>,
-    commands: CommandIntake,
-) {
-    let mut intake = Intake { presence, info, lamps, counters, commands, buffer: receive_buffer() };
+pub(crate) fn run_receiver(handoff: Receiver<LinkHandoff>, shared: Shared, intakes: Intakes) {
+    let Intakes { commands, inputs } = intakes;
+    let mut intake = Intake { shared, commands, inputs, buffer: receive_buffer() };
     let mut link: Option<HeldLink> = None;
     RECEIVER_STACK.note("start");
     loop {
@@ -100,15 +109,17 @@ impl Intake {
     }
 
     fn receive_one(&mut self, held: &HeldLink) -> bool {
-        let counters = &*self.counters;
+        let counters = &*self.shared.counters;
         match held.link.receive(&mut self.buffer, RECEIVE_SLICE) {
             Ok(Received::Datagram { len, source }) => {
                 bump(&counters.datagrams_received_total);
                 let delivery = Delivery { source, link: held.generation, now_ms: monotonic_ms() };
                 let bytes = self.buffer.get(..len).unwrap_or_default();
-                let caches = Caches { info: &self.info, lamps: &self.lamps };
-                if let Some(heard) = self.presence.take_datagram(bytes, delivery, counters, caches) {
-                    self.commands.take(heard, counters);
+                let caches = Caches { info: &self.shared.info, lamps: &self.shared.lamps, inputs: &self.shared.inputs };
+                match self.shared.presence.take_datagram(bytes, delivery, counters, caches) {
+                    Some(Arrived::Command(heard)) => self.commands.take(heard, counters),
+                    Some(Arrived::Input(heard)) => self.inputs.take(heard, counters),
+                    None => {}
                 }
                 RECEIVER_STACK.note("datagram");
             }

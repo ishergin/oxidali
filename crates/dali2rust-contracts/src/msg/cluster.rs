@@ -106,6 +106,7 @@ pub enum ClusterSubject {
     Status,
     Info,
     Lamps,
+    Inputs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -47,7 +47,9 @@ flash, XIP and cache discipline → [08](08-dali-phy-and-transport.md); threadin
   and never persisted. The lamp cache holds a slot per node, each with a double-buffered
   state set and info set of 64 lamps: 18,816 B a node and 150,536 B placed, which
   `MAX_LAMP_CACHE_BYTES` bounds in a test. The lamp announcer keeps its last sent and its
-  next state and info sets in PSRAM as well.
+  next state and info sets in PSRAM as well. The input cache holds two sets of 32 devices
+  × 32 instances and the last eight events of the board's run for each node slot, about
+  37 KiB a node and under 300 KiB for all eight, a ceiling its size test holds.
 - Internal only, allocated by name: everything the PHY interrupt touches
   ([ADR-003](decisions/ADR-003-isr-owned-phy.md)) and anything a driver needs in internal
   memory. Rust atomics and mutex data may live in PSRAM on the XIP image — the P4's

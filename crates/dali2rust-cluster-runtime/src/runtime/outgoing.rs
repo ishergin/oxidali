@@ -5,8 +5,10 @@ use dali2rust_bsp::psram::PsramBox;
 
 use dali2rust_contracts::msg::{ClusterCommandCommand, LevelTransition, LightSetpoint};
 
-use crate::frame::{Action, Command, Header, LightVerb, RecallScope, Target};
+use crate::frame::{Action, Command, Header, InputEvent, LightVerb, RecallScope, Target};
 use crate::presence::HALF_CLOCK_MS;
+
+use super::input_line::{InputAdmission, InputLine, InputRepeat};
 
 #[cfg(test)]
 mod tests;
@@ -234,6 +236,8 @@ pub(crate) enum Admission {
 pub(crate) enum Due {
     Repeat(Repeat),
     Waiting(Queued),
+    InputRepeat(InputRepeat),
+    Input(InputEvent),
 }
 
 #[derive(Debug)]
@@ -280,6 +284,7 @@ fn earliest(deadlines: impl Iterator<Item = u32>) -> Option<u32> {
 pub(crate) struct Outgoing {
     slots: [Slot; OUTGOING_TARGETS],
     next_order: u32,
+    inputs: InputLine,
 }
 
 fn waiting_as(pushed: Admission, waiting: Admission) -> Admission {
@@ -363,10 +368,45 @@ impl Outgoing {
         }
     }
 
-    pub(crate) fn take_due(&mut self, now_ms: u32) -> Option<Due> {
+    pub(crate) fn admit_input(&mut self, event: InputEvent) -> InputAdmission {
+        let held = self.copying();
+        self.inputs.admit(event, held)
+    }
+
+    pub(crate) fn input_sent(&mut self, repeat: InputRepeat, now_ms: u32) {
+        self.inputs.sent(repeat, now_ms, COPY_GAP_MS);
+    }
+
+    pub(crate) fn measure_input(&mut self, event: InputEvent, period_ms: u32, now_ms: u32) -> Option<InputEvent> {
+        self.inputs.measure(event, period_ms, now_ms)
+    }
+
+    pub(crate) fn take_trailing_input(&mut self, now_ms: u32) -> Option<InputEvent> {
+        self.inputs.take_trailing(now_ms)
+    }
+
+    pub(crate) fn trailing_deadline(&self) -> Option<u32> {
+        earliest(self.inputs.trailing_due())
+    }
+
+    pub(crate) fn abandon_inputs(&mut self) -> u32 {
+        self.inputs.abandon()
+    }
+
+    pub(crate) fn prune_inputs(&mut self, now_ms: u32) {
+        self.inputs.prune(now_ms);
+    }
+
+    pub(crate) fn take_due(&mut self, now_ms: u32, shares_inputs: bool) -> Option<Due> {
+        if self.inputs.copying() {
+            return self.inputs.take_repeat(now_ms).map(Due::InputRepeat);
+        }
         if self.copying() {
             let slot = self.most_late(now_ms, Slot::repeat_due)?;
             return slot.repeat.take().map(|(_, repeat)| Due::Repeat(repeat));
+        }
+        if let Some(event) = shares_inputs.then(|| self.inputs.pop()).flatten() {
+            return Some(Due::Input(event));
         }
         let next = self.next_waiting(now_ms)?;
         self.slots.get_mut(next)?.line.pop().map(Due::Waiting)
@@ -374,7 +414,7 @@ impl Outgoing {
 
     pub(crate) fn deadline(&self) -> Option<u32> {
         if self.copying() {
-            return earliest(self.held().filter_map(Slot::repeat_due));
+            return earliest(self.held().filter_map(Slot::repeat_due).chain(self.inputs.repeat_due()));
         }
         earliest(self.held().filter(|slot| self.first_in_order(slot)).filter_map(Slot::waiting_due))
     }
@@ -387,7 +427,7 @@ impl Outgoing {
     }
 
     fn copying(&self) -> bool {
-        self.held().any(|slot| slot.repeat.is_some())
+        self.inputs.copying() || self.held().any(|slot| slot.repeat.is_some())
     }
 
     fn held(&self) -> impl Iterator<Item = &Slot> {
@@ -426,10 +466,11 @@ impl Outgoing {
 }
 
 pub(crate) fn placed_outgoing() -> PsramBox<Outgoing> {
-    // SAFETY: every field of `Outgoing`, of each slot and of its line is written once, in place.
+    // SAFETY: every field of `Outgoing`, of its input line, of each slot and of its line is written once, in place.
     unsafe {
         PsramBox::new_with(|place: &mut MaybeUninit<Outgoing>| {
             ptr::addr_of_mut!((*place.as_mut_ptr()).next_order).write(0);
+            InputLine::init(ptr::addr_of_mut!((*place.as_mut_ptr()).inputs));
             let slots = ptr::addr_of_mut!((*place.as_mut_ptr()).slots).cast::<Slot>();
             for index in 0..OUTGOING_TARGETS {
                 write_vacant(slots.add(index));

@@ -238,7 +238,7 @@ async fn board_announces_until(
     assert!(reached, "{path}{pointer} never became {expected:?}: {:?}", pointer_text(port, &path, &pointer));
 }
 
-// CLU-140 CLU-142 CLU-144 CLU-146 CLU-147
+// CLU-140 CLU-142 CLU-144 CLU-146 CLU-147 CLU-247
 #[then(regex = r#"^the JSON pointer "([^"]*)" at "([^"]+)" should stay "([^"]*)" for (\d+) ms$"#)]
 async fn json_pointer_stays(world: &mut DaliWorld, pointer: String, path: String, expected: String, window_ms: u64) {
     let port = world.server_port();

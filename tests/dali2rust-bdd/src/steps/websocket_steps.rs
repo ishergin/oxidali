@@ -85,7 +85,7 @@ async fn when_open_ws(world: &mut DaliWorld) {
     open_client(world);
 }
 
-// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009 POLICY-022 WS-060 WS-061 CLU-022 CLU-073 CLU-210
+// WS-002 WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-010 WS-013 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-059 RULE-067 RULE-091 COMM-112 COMM-113 WS-051 WS-052 WS-053 WS-054 WS-057 PERS-008 PERS-009 POLICY-022 WS-060 WS-061 CLU-022 CLU-073 CLU-210 CLU-246 CLU-251 CLU-252
 #[given("an open WebSocket connection")]
 async fn given_open_ws(world: &mut DaliWorld) {
     open_client(world);
@@ -168,7 +168,7 @@ async fn when_subscribe(world: &mut DaliWorld, channels: String) {
     last_client(world).subscribe(&channels);
 }
 
-// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052 PERS-008 POLICY-022 WS-060 WS-061 CLU-022 CLU-073 CLU-210
+// WS-003 WS-004 WS-005 WS-006 WS-008 WS-009 WS-030 WS-040 WS-041 WS-042 WS-043 WS-044 WS-045 WS-046 WS-010 WS-013 WS-059 COMM-112 COMM-113 WS-051 WS-052 PERS-008 POLICY-022 WS-060 WS-061 CLU-022 CLU-073 CLU-210 CLU-246 CLU-251 CLU-252
 #[given(regex = r#"^the WebSocket client is subscribed to "([^"]+)"$"#)]
 async fn given_subscribed(world: &mut DaliWorld, channels: String) {
     let c = last_client(world);
@@ -237,7 +237,7 @@ async fn then_receive_event(world: &mut DaliWorld, event_type: String, channel: 
     world.remembered_json = Some(frame);
 }
 
-// COMM-112 COMM-113 POLICY-022 INP-104
+// COMM-112 COMM-113 POLICY-022 INP-104 CLU-246 CLU-252
 #[then(regex = r#"^the WebSocket client should receive a "([^"]+)" frame on channel "([^"]+)" whose payload "([a-z_]+)" is (\d+)$"#)]
 async fn then_receive_event_naming(
     world: &mut DaliWorld,
@@ -313,7 +313,7 @@ async fn given_client_stops_reading(world: &mut DaliWorld, index: usize) {
     client(world, index - 1).stop_reading();
 }
 
-// WS-004 WS-046
+// WS-004 WS-046 CLU-246 CLU-252
 #[then(regex = r"^the WebSocket client should receive no frame within (\d+) ms$")]
 async fn then_no_frame(world: &mut DaliWorld, millis: u64) {
     let quiet = last_client(world).expect_silence(Duration::from_millis(millis));

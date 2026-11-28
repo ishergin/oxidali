@@ -346,6 +346,7 @@ export interface ClusterSettings {
   send_all_lamps: boolean
   accept_single_lamps: boolean
   wire_protection: boolean
+  share_input_events: boolean
   read_only: boolean
   block: ClusterBlock
 }
@@ -476,6 +477,72 @@ export interface ClusterNodePart extends ClusterPart {
 
 export interface ClusterInfo {
   nodes: ClusterInfoNode[]
+}
+
+export interface ClusterInputOwner {
+  controller_id: string
+  discovery_prefix: string
+}
+
+export interface ClusterInputsNode {
+  node: number
+  source: ClusterInfoSource
+  set: number | null
+  age_ms: number | null
+  device_count: number
+}
+
+export interface ClusterInputRuntime {
+  last_event_info: number | null
+  input_value: number | null
+  age_ms: number | null
+}
+
+export interface ClusterInputInstance {
+  instance_number: number
+  instance_type: number | null
+  instance_type_name: string | null
+  instance_groups: (number | null)[]
+  runtime: ClusterInputRuntime
+}
+
+export interface ClusterInputDevice {
+  node: number
+  source: ClusterInfoSource
+  adapter_id: number
+  short_address: number
+  name: string | null
+  present: boolean
+  instance_count: number
+  ha_entity: boolean
+}
+
+export interface ClusterInputDeviceInstances extends ClusterInputDevice {
+  instances: ClusterInputInstance[]
+}
+
+export interface ClusterNodeInputs extends ClusterInputsNode {
+  owner: ClusterInputOwner | null
+  devices: ClusterInputDeviceInstances[]
+}
+
+export interface ClusterInputs {
+  nodes: ClusterInputsNode[]
+}
+
+export interface ClusterInputEvent {
+  node: number
+  adapter_id: number
+  scheme: number
+  short_address: number
+  device_group: null
+  instance_group: number | null
+  instance_groups: (number | null)[]
+  instance_number: number | null
+  instance_type: number | null
+  event: string | null
+  event_info: number
+  value: number
 }
 
 export type ClusterRecordKind = 'channel' | 'scene'
@@ -1451,6 +1518,11 @@ export type StatsCluster = {
   wire_notes_taken_total: number
   copies_stored_total: number
   records_taken_back_total: number
+  input_events_sent_total: number
+  input_events_received_total: number
+  input_events_unaddressed_total: number
+  input_events_unsent_total: number
+  input_events_dropped_total: number
 }
 
 export type InputDeviceSummary = {

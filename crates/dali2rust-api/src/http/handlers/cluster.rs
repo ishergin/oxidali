@@ -44,11 +44,12 @@ const WRITABLE_KEYS: &[&str] = &[
     "send_all_lamps",
     "accept_single_lamps",
     "wire_protection",
+    "share_input_events",
 ];
 
 const WIRE_GUARD_FIELDS: [Field; 4] = [Field::Wire, Field::ForwardForeignMaster, Field::WireProtection, Field::NodeNumber];
 
-const FLAGS: [(&str, Field); 9] = [
+const FLAGS: [(&str, Field); 10] = [
     ("enabled", Field::Enabled),
     ("forward_operator", Field::ForwardOperator),
     ("forward_home_assistant", Field::ForwardHomeAssistant),
@@ -58,6 +59,7 @@ const FLAGS: [(&str, Field); 9] = [
     ("send_all_lamps", Field::SendAllLamps),
     ("accept_single_lamps", Field::AcceptSingleLamps),
     ("wire_protection", Field::WireProtection),
+    ("share_input_events", Field::ShareInputEvents),
 ];
 
 declare_handler_shell! {
@@ -202,6 +204,7 @@ const fn empty_settings() -> ClusterSettingsUpdateCommand {
         send_all_lamps: false,
         accept_single_lamps: false,
         wire_protection: false,
+        share_input_events: false,
     }
 }
 
@@ -225,6 +228,7 @@ fn flag_slot(settings: &mut ClusterSettingsUpdateCommand, field: Field) -> Optio
         Field::SendAllLamps => Some(&mut settings.send_all_lamps),
         Field::AcceptSingleLamps => Some(&mut settings.accept_single_lamps),
         Field::WireProtection => Some(&mut settings.wire_protection),
+        Field::ShareInputEvents => Some(&mut settings.share_input_events),
         Field::NodeNumber | Field::Port | Field::Wire => None,
     }
 }
@@ -291,7 +295,7 @@ mod tests {
 
     type Reader = fn(&ClusterSettingsUpdateCommand) -> bool;
 
-    const READERS: [(&str, Field, Reader); 9] = [
+    const READERS: [(&str, Field, Reader); 10] = [
         ("enabled", Field::Enabled, |c| c.enabled),
         ("forward_operator", Field::ForwardOperator, |c| c.forwarding.operator),
         ("forward_home_assistant", Field::ForwardHomeAssistant, |c| c.forwarding.home_assistant),
@@ -301,6 +305,7 @@ mod tests {
         ("send_all_lamps", Field::SendAllLamps, |c| c.send_all_lamps),
         ("accept_single_lamps", Field::AcceptSingleLamps, |c| c.accept_single_lamps),
         ("wire_protection", Field::WireProtection, |c| c.wire_protection),
+        ("share_input_events", Field::ShareInputEvents, |c| c.share_input_events),
     ];
 
     #[test]

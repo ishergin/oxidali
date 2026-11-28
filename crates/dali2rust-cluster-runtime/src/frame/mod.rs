@@ -2,12 +2,15 @@ mod codec;
 mod command;
 mod header;
 mod info;
+mod inputs;
 mod lamps;
 mod limits;
 mod note;
 mod page;
 mod presence;
 
+#[cfg(test)]
+mod input_tests;
 #[cfg(test)]
 mod lamp_tests;
 #[cfg(test)]
@@ -25,6 +28,10 @@ pub use header::{cluster_tag, Header};
 pub use info::{
     ChannelPart, GroupMap, InfoElement, InfoElements, InfoKind, InfoPage, InfoPageWriter, LocalName, PartFlags,
     Record, ScenePart,
+};
+pub use inputs::{
+    InputAddress, InputDevice, InputEvent, InputInfoElement, InputInfoElements, InputInfoKind, InputInfoPage,
+    InputInfoWriter, InputInstance, InputOwner, InputValue, INPUT_FIELD_MASK, MAX_INPUT_PREFIX_BYTES, MAX_INPUT_SCHEME,
 };
 pub use lamps::{
     AdapterScope, HaIdentity, KelvinRange, LampCapabilities, LampColour, LampInfo, LampInfoElement,

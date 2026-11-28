@@ -1,5 +1,6 @@
 pub mod frame;
 pub mod info;
+pub mod inputs;
 pub mod lamps;
 pub mod presence;
 pub mod runtime;
@@ -10,6 +11,6 @@ pub use runtime::{
     ClusterInboxes, ClusterPresence, ClusterPresenceReadPort, ClusterSeams, ClusterWorkerPorts, ClusterWorkerThreads,
     EpochSource, HomeReads, IgnoredView, NodeView, OwnStatus, RecordStanding, own_standing, CLUSTER_BUSY, CLUSTER_COMMAND_UNSUPPORTED, CLUSTER_NOT_RUNNING,
     CLUSTER_NO_ADDRESS, CLUSTER_OFF, CLUSTER_SEND_FAILED, CLUSTER_WORKER_HANDLED_COMMANDS,
-    CLUSTER_WORKER_HANDLED_EVENTS, CONTROLLER_PASSIVE, NODE_HEARD,
+    CLUSTER_RX_REQUIRED_EVENTS, CLUSTER_WORKER_HANDLED_EVENTS, CONTROLLER_PASSIVE, NODE_HEARD,
 };
 pub use sequence::{Arrival, SequenceWindow};

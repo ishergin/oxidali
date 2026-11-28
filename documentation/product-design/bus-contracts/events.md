@@ -33,13 +33,14 @@
 | Сигналы исполнителей | `OperationWorkerSignalEvent` | `DaliWorker`, реестр, оркестратор, MQTT, правила, OTA, HTTP | operation tracker | **required** |
 | Результаты DALI | [ниже](#результаты-dali) | `DaliWorker`; recall сцены — и sniffer translator; синтетический исход ячейки применения с ошибкой — оркестратор | по виду | по виду |
 | Наблюдения | `DaliObservedFrameEvent` | sniffer translator | проектор, реестр, дисплей, кластер | **required** |
-| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `DaliInputManualConfigEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent`, `BusUnitIdentificationObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей (по виду) | **required** |
+| Вход Part 103 | `DaliInputEventObservedEvent`, `DaliInputDeviceLifecycleEvent`, `DaliInputManualConfigEvent`, `BusUnitNvmObservedEvent`, `BusUnitQuiescenceObservedEvent`, `BusUnitIdentificationObservedEvent` | sniffer translator | реестр; правила, MQTT, WS, дисплей, кластер (по виду) | **required** |
 | Результаты Part 103 | `Dali103ScanStartedEvent`, `Dali103ScanProgressEvent`, `Dali103InstanceConfiguredEvent` | `DaliWorker` | реестр | **required** |
 | Отказоустойчивость | [ниже](#отказоустойчивость) | `DaliWorker`, арбитраж, реестр, хранилище слайсов, HTTP | по виду | по виду |
 | Правила | `RulesChangedEvent`, `RulesActivationEvent` | rules worker | WS | best-effort |
 | Home Assistant | `HomeAssistantDiscoveryPublishedEvent` | MQTT bridge | operation tracker | **required** |
 | Сообщения брокера | `MqttRuleMessageEvent` | MQTT bridge | правила (`when mqtt`) | **required** |
 | Кластер | `ClusterStateChangedEvent` | воркер кластера | WS | best-effort |
+| Входы кластера | `ClusterInputEventObservedEvent` | приёмник кластера | WS | **required** |
 | Загрузка и сервис | `IpAddressAssignedEvent`, `PersistenceLoadResultEvent`, `StatsReportedEvent`, `DaliEventPayload` | композиция; `DaliWorker` | дисплей и кластер; остальные observed-only | best-effort |
 
 ## Изменения реестра
@@ -243,10 +244,17 @@
   таймеру не обновляется; настройки воркер берёт из снимка реестра.
 - `ClusterSettingsChangedEvent` несёт только `enabled` и только будит воркер кластера:
   настройки узла он читает из read-port.
-- `ClusterStateChangedEvent` несёт только предмет (`Status`) и только будит: воркер
-  WebSocket строит кадр `ClusterStatus` из порта присутствия. Воркер кластера публикует
-  его, когда меняется отпечаток статуса, не чаще раза за такт, и повторяет на следующем
-  такте, если вход шины кадр не принял.
+- `ClusterStateChangedEvent` несёт только предмет (`Status`, `Info`, `Inputs`) и только
+  будит: воркер WebSocket строит кадр предмета (`ClusterStatus`, `ClusterInfo`,
+  `ClusterInputs`) из портов кластера. Воркер кластера публикует его, когда меняется
+  отпечаток предмета, не чаще раза за такт, и повторяет на следующем такте, если вход
+  шины кадр не принял.
+- `ClusterInputEventObservedEvent` — событие входного устройства соседа, которое приёмник
+  кластера взял: номер узла, адаптер, короткий адрес, экземпляр, тип, три группы
+  экземпляра, схема, сырые 10 бит, вид и значение, монотонное время приёма. Перечитать его
+  неоткуда, поэтому оно идёт через `publish_required`. Его несёт WebSocket; правила и
+  Home Assistant его пока не читают, и в `OBSERVED_ONLY_EVENTS` его нет, потому что у него
+  есть потребитель.
 
 ## Загрузка и сервис
 

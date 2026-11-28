@@ -2,6 +2,29 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 pub const CLOCK_READ_SKEW_MS: u32 = 100;
 
+pub const HALF_CLOCK_MS: u32 = 1 << 31;
+
+pub const AGE_CAP_MS: u32 = 1 << 30;
+
+#[must_use]
+pub const fn elapsed_ms(now_ms: u32, since_ms: u32) -> u32 {
+    let elapsed = now_ms.wrapping_sub(since_ms);
+    if elapsed < HALF_CLOCK_MS {
+        elapsed
+    } else {
+        0
+    }
+}
+
+#[must_use]
+pub const fn in_reach(now_ms: u32, since_ms: u32) -> u32 {
+    if elapsed_ms(now_ms, since_ms) > AGE_CAP_MS {
+        now_ms.wrapping_sub(AGE_CAP_MS)
+    } else {
+        since_ms
+    }
+}
+
 #[must_use]
 pub fn monotonic_ms() -> u32 {
     static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();

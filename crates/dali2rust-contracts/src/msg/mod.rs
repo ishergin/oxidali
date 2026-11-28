@@ -125,7 +125,9 @@ pub use commands::{
     ClusterRecordTakeBackCommand, ClusterRecordUpdateCommand, ClusterSettingsCommitCommand, ClusterSettingsField,
     ClusterSettingsUpdateCommand, ClusterTextUpdateCommand,
 };
-pub use events::{ClusterSettingsChangedEvent, ClusterStateChangedEvent, DaliStopFadeAppliedEvent};
+pub use events::{
+    ClusterInputEventObservedEvent, ClusterSettingsChangedEvent, ClusterStateChangedEvent, DaliStopFadeAppliedEvent,
+};
 pub use events::DaliSettingsChangedEvent;
 pub use events::{
     Dali103ArbitrationProbedEvent, PoliciesChangedEvent, Dali103HandoverSentEvent, RegistrySliceReloadedEvent, APPLICATION_ACTIVE_UNMOVED, APPLICATION_ACTIVE_MOVED_BY_COMMAND, APPLICATION_ACTIVE_MOVED_BY_WIRE, RedundancySettingsChangedEvent,

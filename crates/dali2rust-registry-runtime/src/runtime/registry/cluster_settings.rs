@@ -15,7 +15,8 @@ use super::cluster_records::{
     persistable_records, plan_record_edit, stored_block, ClusterRecords, RecordEdit, RecordRequest,
 };
 use super::persistence_slices::{
-    decode_versioned_slice, PersistableClusterSettingsSlice, CLUSTER_SETTINGS_SLICE_VERSION,
+    decode_versioned_slice, ClusterSettingsBeforeInputsSlice, PersistableClusterSettingsSlice, SliceDecodeError,
+    CLUSTER_SETTINGS_SLICE_VERSION,
 };
 use super::store::{registry_unix_ms, Inner, RegistryStore, STAGE_MAX_AGE_MS};
 
@@ -96,6 +97,7 @@ fn apply_settings(view: &mut ClusterSettingsView, body: &ClusterSettingsUpdateCo
     set(&mut view.send_all_lamps, body.send_all_lamps, on(Field::SendAllLamps));
     set(&mut view.accept_single_lamps, body.accept_single_lamps, on(Field::AcceptSingleLamps));
     set(&mut view.wire_protection, body.wire_protection, on(Field::WireProtection));
+    set(&mut view.share_input_events, body.share_input_events, on(Field::ShareInputEvents));
 }
 
 fn apply_forwarding(forwarding: &mut ClusterForwarding, body: &ClusterSettingsUpdateCommand) {
@@ -288,6 +290,7 @@ pub(crate) fn persistable_snapshot(inner: &Inner) -> PersistableClusterSettingsS
         channel_generations: inner.cluster_records.channels.generations,
         scenes: persistable_records(&inner.cluster_records.scenes),
         scene_generations: inner.cluster_records.scenes.generations,
+        share_input_events: row.share_input_events,
     }
 }
 
@@ -308,6 +311,7 @@ fn stored_view(slice: &PersistableClusterSettingsSlice) -> ClusterSettingsView {
         send_all_lamps: slice.send_all_lamps,
         accept_single_lamps: slice.accept_single_lamps,
         wire_protection: slice.wire_protection,
+        share_input_events: slice.share_input_events,
     }
 }
 
@@ -318,9 +322,37 @@ fn stored_records(slice: &PersistableClusterSettingsSlice) -> Option<ClusterReco
     })
 }
 
+fn decode_whole_or_before_inputs(bytes: &[u8]) -> Result<PersistableClusterSettingsSlice, SliceDecodeError> {
+    decode_versioned_slice(bytes, CLUSTER_SETTINGS_SLICE_VERSION).or_else(|whole| {
+        decode_versioned_slice(bytes, CLUSTER_SETTINGS_SLICE_VERSION).map(with_factory_inputs).map_err(|_| whole)
+    })
+}
+
+fn with_factory_inputs(before: ClusterSettingsBeforeInputsSlice) -> PersistableClusterSettingsSlice {
+    PersistableClusterSettingsSlice {
+        enabled: before.enabled,
+        cluster_name: before.cluster_name,
+        node_number: before.node_number,
+        port: before.port,
+        wire_same_as: before.wire_same_as,
+        forward_operator: before.forward_operator,
+        forward_home_assistant: before.forward_home_assistant,
+        forward_hcl: before.forward_hcl,
+        forward_foreign_master: before.forward_foreign_master,
+        accept_all_lamps: before.accept_all_lamps,
+        send_all_lamps: before.send_all_lamps,
+        accept_single_lamps: before.accept_single_lamps,
+        wire_protection: before.wire_protection,
+        channels: before.channels,
+        channel_generations: before.channel_generations,
+        scenes: before.scenes,
+        scene_generations: before.scene_generations,
+        share_input_events: ClusterSettingsView::default().share_input_events,
+    }
+}
+
 pub(crate) fn decode_cluster_settings(bytes: &[u8]) -> Result<PersistableClusterSettingsSlice, StoreError> {
-    let slice = decode_versioned_slice::<PersistableClusterSettingsSlice>(bytes, CLUSTER_SETTINGS_SLICE_VERSION)
-        .map_err(|e| StoreError::Backend(e.to_string()))?;
+    let slice = decode_whole_or_before_inputs(bytes).map_err(|e| StoreError::Backend(e.to_string()))?;
     let refused = |reason: &str| StoreError::Backend(format!("cluster settings refused: {reason}"));
     checked(stored_view(&slice)).map_err(|refusal| refused(refusal.message()))?;
     stored_records(&slice).ok_or_else(|| refused("cluster_records_inconsistent"))?;
@@ -361,6 +393,7 @@ mod tests {
             send_all_lamps: true,
             accept_single_lamps: true,
             wire_protection: true,
+            share_input_events: false,
         };
         for field in fields {
             body.patch(*field);
@@ -408,6 +441,7 @@ mod tests {
             (Field::SendAllLamps, before.send_all_lamps != after.send_all_lamps),
             (Field::AcceptSingleLamps, before.accept_single_lamps != after.accept_single_lamps),
             (Field::WireProtection, before.wire_protection != after.wire_protection),
+            (Field::ShareInputEvents, before.share_input_events != after.share_input_events),
         ]
         .into_iter()
         .filter_map(|(field, changed)| changed.then_some(field))
@@ -416,7 +450,7 @@ mod tests {
 
     type Flip = fn(&mut ClusterSettingsUpdateCommand);
 
-    const FLIPS: [(Field, Flip); 12] = [
+    const FLIPS: [(Field, Flip); 13] = [
         (Field::Enabled, |b| b.enabled = true),
         (Field::NodeNumber, |b| b.node_number = 3),
         (Field::Port, |b| b.port = 47_900),
@@ -429,6 +463,7 @@ mod tests {
         (Field::SendAllLamps, |b| b.send_all_lamps = true),
         (Field::AcceptSingleLamps, |b| b.accept_single_lamps = true),
         (Field::WireProtection, |b| b.wire_protection = false),
+        (Field::ShareInputEvents, |b| b.share_input_events = false),
     ];
 
     fn factory_body() -> ClusterSettingsUpdateCommand {
@@ -445,6 +480,7 @@ mod tests {
             send_all_lamps: factory.send_all_lamps,
             accept_single_lamps: factory.accept_single_lamps,
             wire_protection: factory.wire_protection,
+            share_input_events: factory.share_input_events,
         }
     }
 
@@ -595,6 +631,64 @@ mod tests {
         let envelope = PersistenceEnvelope { version: CLUSTER_SETTINGS_SLICE_VERSION, data: slice.clone() };
         let bytes = encode_persistence_blob(&envelope).expect("encode");
         assert_eq!(decode_cluster_settings(&bytes).expect("decodes"), slice);
+    }
+
+    fn before_inputs(slice: PersistableClusterSettingsSlice) -> ClusterSettingsBeforeInputsSlice {
+        ClusterSettingsBeforeInputsSlice {
+            enabled: slice.enabled,
+            cluster_name: slice.cluster_name,
+            node_number: slice.node_number,
+            port: slice.port,
+            wire_same_as: slice.wire_same_as,
+            forward_operator: slice.forward_operator,
+            forward_home_assistant: slice.forward_home_assistant,
+            forward_hcl: slice.forward_hcl,
+            forward_foreign_master: slice.forward_foreign_master,
+            accept_all_lamps: slice.accept_all_lamps,
+            send_all_lamps: slice.send_all_lamps,
+            accept_single_lamps: slice.accept_single_lamps,
+            wire_protection: slice.wire_protection,
+            channels: slice.channels,
+            channel_generations: slice.channel_generations,
+            scenes: slice.scenes,
+            scene_generations: slice.scene_generations,
+        }
+    }
+
+    #[test]
+    fn a_slice_written_before_the_input_setting_keeps_its_records_and_shares_inputs() {
+        let store = RegistryStore::with_adapter_count(1);
+        let mut inner = Inner::default();
+        inner.cluster_settings.0.cluster_name = "dali-cluster".to_string();
+        inner.cluster_settings.0.share_input_events = false;
+        inner.cluster_records.channels.generations[3] = 9;
+        let mut older = persistable_snapshot(&inner);
+        older.channels = vec![PersistableClusterRecord {
+            index: 3,
+            generation: 9,
+            nonce: 5,
+            name: "hall".to_string(),
+            revision: 1,
+        }];
+        let envelope = PersistenceEnvelope { version: CLUSTER_SETTINGS_SLICE_VERSION, data: before_inputs(older.clone()) };
+        let bytes = encode_persistence_blob(&envelope).expect("encode");
+        let slice = decode_cluster_settings(&bytes).expect("the older layout decodes");
+        assert_eq!(slice, PersistableClusterSettingsSlice { share_input_events: true, ..older });
+        hydrate_cluster_settings_inner(&mut store.write_inner(), &slice);
+        assert!(store.cluster_settings_view().share_input_events);
+        assert_eq!(persistable_snapshot(&store.read_inner()).channels, slice.channels);
+    }
+
+    #[test]
+    fn an_older_image_reads_the_slice_this_one_writes() {
+        let mut inner = Inner::default();
+        inner.cluster_settings.0.cluster_name = "dali-cluster".to_string();
+        let written = persistable_snapshot(&inner);
+        let envelope = PersistenceEnvelope { version: CLUSTER_SETTINGS_SLICE_VERSION, data: written.clone() };
+        let bytes = encode_persistence_blob(&envelope).expect("encode");
+        let older: ClusterSettingsBeforeInputsSlice =
+            decode_versioned_slice(&bytes, CLUSTER_SETTINGS_SLICE_VERSION).expect("the prefix decodes");
+        assert_eq!(older, before_inputs(written));
     }
 
     #[test]
