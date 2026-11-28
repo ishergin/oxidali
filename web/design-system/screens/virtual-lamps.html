@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Virtual lamps" subtitle="VL table: binding, HA entity toggle, state, level, row actions, staged state hint" -->
+<!-- @dsCard group="Screens" name="Virtual lamps" subtitle="VL table: the cluster address while the cluster is on, binding, HA entity toggle, state, level, row actions, staged state hint" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -164,7 +164,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
   <div class="table-wrap">
     <table>
       <colgroup>
-        <col style="width:64px"><col><col style="width:88px"><col style="width:96px">
+        <col style="width:64px"><col style="width:86px"><col><col style="width:88px"><col style="width:96px">
         <col style="width:150px"><col style="width:210px"><col style="width:236px">
       </colgroup>
       <!-- No type column: a device type belongs on the bound device's card,
@@ -172,7 +172,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
            (components/lamp-state); Level is the control that drives it. -->
       <thead>
         <tr>
-          <th>VL</th><th>Name</th><th>Binding</th><th>HA entity</th>
+          <th>VL</th><th>Cluster</th><th>Name</th><th>Binding</th><th>HA entity</th>
           <th>State</th><th>Level</th><th class="acts-col"></th>
         </tr>
       </thead>
@@ -189,6 +189,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
       <tbody>
         <tr>
           <td><span class="vlid">VL 00</span></td>
+          <td><span class="vlid">N1·VL0</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit" value="Kitchen main" readonly></span></td>
           <td><span class="chip bind">SA 05</span></td>
           <td><span class="switch on"><span class="knob"></span></span></td>
@@ -198,6 +199,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
         </tr>
         <tr>
           <td><span class="vlid">VL 02</span></td>
+          <td><span class="vlid">N1·VL2</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit" value="Hall spot 1" readonly></span></td>
           <td><span class="chip bind">SA 00</span></td>
           <td><span class="switch on"><span class="knob"></span></span></td>
@@ -207,6 +209,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
         </tr>
         <tr>
           <td><span class="vlid">VL 03</span></td>
+          <td><span class="vlid">N1·VL3</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit" value="Hall spot 2" readonly></span></td>
           <td><span class="chip bind">SA 01</span></td>
           <td><span class="switch"><span class="knob"></span></span></td>
@@ -216,6 +219,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
         </tr>
         <tr>
           <td><span class="vlid">VL 07</span></td>
+          <td><span class="vlid">N1·VL7</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit" value="Stairs" readonly></span></td>
           <td><span class="chip bind">SA 12</span></td>
           <td><span class="switch on"><span class="knob"></span></span></td>
@@ -225,6 +229,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
         </tr>
         <tr>
           <td><span class="vlid">VL 12</span></td>
+          <td><span class="vlid">N1·VL12</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit" value="Kitchen" readonly></span></td>
           <td><span class="chip bind">SA 04</span></td>
           <td><span class="switch on"><span class="knob"></span></span></td>
@@ -233,10 +238,11 @@ tbody tr:hover .acts-col { background: var(--raised); }
           <td class="acts-col"><span class="acts"><button class="btn sm ghost">Rebind…</button><button class="btn sm ghost">Unbind</button><button class="btn sm ghost danger">Delete</button></span></td>
         </tr>
         <tr class="group-row">
-          <td colspan="7"><span class="tri">▾</span> Unbound virtual lamps (2)</td>
+          <td colspan="8"><span class="tri">▾</span> Unbound virtual lamps (2)</td>
         </tr>
         <tr>
           <td><span class="vlid">VL 20</span></td>
+          <td><span class="vlid">N1·VL20</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit" value="Pantry" readonly></span></td>
           <td><span class="chip unbound">unbound</span></td>
           <td><span class="switch"><span class="knob"></span></span></td>
@@ -246,6 +252,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
         </tr>
         <tr>
           <td><span class="vlid">VL 21</span></td>
+          <td><span class="vlid">N1·VL21</span></td>
           <td><span class="name-edit-wrap"><input class="name-edit name-faint" placeholder="— unnamed" readonly></span></td>
           <td><span class="chip unbound">unbound</span></td>
           <td><span class="switch"><span class="knob"></span></span></td>
@@ -256,6 +263,7 @@ tbody tr:hover .acts-col { background: var(--raised); }
       </tbody>
     </table>
   </div>
+  <p class="hint"><b>Cluster</b> is the lamp's address in the cluster, <span class="vlid">N1·VL6</span>: node 1, lamp 6 — the name other nodes, their rules and the cluster's lamp list give it. The column is there only while the cluster is on; with the cluster off the table has no Cluster column at all, since the lamp has no address beyond this controller.</p>
 </div>
 </body>
 </html>

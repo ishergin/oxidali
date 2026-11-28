@@ -1,4 +1,5 @@
 import type {
+  ClusterBlockState,
   ClusterIgnored,
   ClusterInfo,
   ClusterNode,
@@ -29,6 +30,7 @@ const FIELD_LABELS: [ClusterField, string][] = [
   ['send_all_lamps', 'Send “all lamps”'],
   ['accept_all_lamps', 'Accept “all lamps”'],
   ['accept_single_lamps', 'Accept single lamps'],
+  ['share_input_events', 'Share input events'],
   ['wire_same_as', 'DALI bus'],
   ['wire_protection', 'Loop protection'],
 ]
@@ -99,6 +101,14 @@ const CONFLICTS: Record<string, Refusal> = {
     text: 'This node does not hold its number yet — its port is not bound, or it is still listening or waiting.',
   },
   cluster_busy: { field: null, text: 'Too many commands are waiting to go out; try again in a moment.' },
+  cluster_block_unsettled: {
+    field: null,
+    text: 'This node is still listening to its neighbours after its start; creating, renaming and deleting wait until that round ends.',
+  },
+  cluster_node_contested: {
+    field: null,
+    text: "Another board holds this node's number as well; nothing of this node's block can be created, renamed or deleted until one of them gives the number up.",
+  },
 }
 
 const STANDBY: Record<RefusalScope, string> = {
@@ -319,6 +329,7 @@ export function nodeLine(status: ClusterStatus | null): NodeLine | null {
   const line = (text: string, tone: Tone, href = CLUSTER_HREF): NodeLine => ({ board, text, tone, href })
   if (own.state === 'off') return null
   if (own.split_pair) return line('Pair split · see Redundancy', 'err', REDUNDANCY_HREF)
+  if (own.state !== 'waiting' && own.block === 'contested') return line(`Node ${n} · another board holds it too`, 'err')
   switch (own.state) {
     case 'waiting':
       return line(`Node ${n} is taken by ${own.number_held_by ?? 'another board'}`, 'err')
@@ -372,4 +383,47 @@ export function settingsShown(draft: Draft, data: ClusterSettings): ClusterSetti
 export function nodesEmptyText(status: ClusterStatus | null): string {
   if (!status) return 'Reading the cluster status…'
   return status.own.state === 'off' ? 'Nothing is heard while the cluster is off.' : 'No other node heard yet.'
+}
+
+const BLOCK_VERDICT: Record<ClusterBlockState, Verdict | null> = {
+  settled: null,
+  listening: { tone: 'plain', text: 'listening to the neighbours' },
+  contested: { tone: 'err', text: 'another board holds this number' },
+  passive: { tone: 'plain', text: 'standby · edited on the active board' },
+  off: { tone: 'plain', text: 'cluster off · edited as stored' },
+}
+
+export const BLOCK_HINT =
+  'For a moment after it starts, the node listens to its neighbours and takes back any record of its block they keep a copy of. Until then channels and scenes of this node cannot be created, renamed or deleted.'
+
+export function inListeningRound(own: Pick<ClusterOwn, 'state'>): boolean {
+  return own.state === 'running' || own.state === 'listening'
+}
+
+export function blockVerdict(own: Pick<ClusterOwn, 'state' | 'block'>): Verdict | null {
+  if (own.block === 'listening' && !inListeningRound(own)) return { tone: 'plain', text: 'waiting for this node to run' }
+  return BLOCK_VERDICT[own.block]
+}
+
+export const FOREIGN_HOLD =
+  "This node shares its DALI bus. The node that executes on it holds a foreign master's command about 70 ms, and dimming about 220 ms, before forwarding it: a neighbour's own frame for the same lamps cancels it in that time, so the light is not changed twice."
+
+function busNeighbours(own: ClusterOwn, nodes: ClusterNode[]): ClusterNode[] {
+  return nodes.filter((n) => n.node !== own.node_number && n.wire === own.wire)
+}
+
+export function sharesWire(own: ClusterOwn | undefined, nodes: ClusterNode[], wireSameAs: number | null): boolean {
+  if (wireSameAs !== null) return true
+  return own !== undefined && busNeighbours(own, nodes).length > 0
+}
+
+export const UNPROTECTED_VERDICT: Verdict = { tone: 'err', text: 'not forwarded · bus unprotected' }
+
+export function unprotectedText(own: ClusterOwn, nodes: ClusterNode[], protectedHere: boolean): string | null {
+  if (!own.unprotected_wire) return null
+  const off = busNeighbours(own, nodes).filter((n) => n.heard && !n.wire_protection)
+  const where = [...(protectedHere ? [] : ['here']), ...off.map((n) => `at node ${n.node} (${n.board})`)]
+  const at = where.length === 0 ? 'at a node of this bus' : where.join(' and ')
+  const there = where.length === 1 && where[0] === 'here' ? 'here' : 'there'
+  return `Loop protection is off on this shared bus ${at}. Turn it on ${there}, or stop forwarding the foreign master.`
 }

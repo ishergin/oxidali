@@ -4,8 +4,10 @@ import test from 'node:test'
 import type { ClusterNode, ClusterOwn, ClusterSettings, ClusterStatus } from '../src/api/types.js'
 import { nextTap } from '../src/components/confirm-tap.js'
 import {
+  FOREIGN_HOLD,
   NO_DRAFT,
   ageText,
+  blockVerdict,
   draftOnRead,
   editDraft,
   executorVerdict,
@@ -26,6 +28,8 @@ import {
   refusalOf,
   clipName,
   settingsShown,
+  sharesWire,
+  unprotectedText,
   unsavedLine,
   wireOptions,
 } from '../src/screens/cluster-view.js'
@@ -342,4 +346,51 @@ test('a name is clipped by whole characters, never inside one', () => {
   const name = `${'a'.repeat(61)}😀`
   assert.equal(clipName(name), 'a'.repeat(61))
   assert.equal(clipName(`${'a'.repeat(60)}😀`), name.slice(1))
+})
+
+test('a contested block reads as a fault on the node line, after a split pair and a taken number', () => {
+  assert.deepEqual(
+    [nodeLine(status(own({ block: 'contested' }), [node(2)]))?.text, nodeLine(status(own({ block: 'contested' })))?.tone],
+    ['Node 1 · another board holds it too', 'err'],
+  )
+  assert.equal(nodeLine(status(own({ block: 'contested', split_pair: true })))?.text, 'Pair split · see Redundancy')
+  assert.match(nodeLine(status(own({ block: 'contested', state: 'waiting' })))?.text ?? '', /is taken by/)
+  assert.equal(nodeLine(status(own({ block: 'listening' }), [node(2)]))?.text, 'Node 1 · 1 of 1 heard')
+})
+
+test('the two block refusals are said in words, and the share switch is named in the Apply bar', () => {
+  assert.match(refusalOf(409, 'conflict', 'cluster_block_unsettled', 'records').text, /still listening to its neighbours/)
+  assert.match(refusalOf(409, 'conflict', 'cluster_node_contested', 'records').text, /Another board holds this node's number/)
+  const edits = withFieldEdit({}, { share_input_events: false }, stored)
+  assert.equal(unsavedLine(fieldPatch(edits ?? {}, stored)), '1 unsaved change · Share input events')
+})
+
+test('the block row appears for every state but settled, a contested number in err', () => {
+  assert.equal(blockVerdict(own()), null)
+  assert.deepEqual(blockVerdict(own({ block: 'listening' })), { tone: 'plain', text: 'listening to the neighbours' })
+  assert.deepEqual(blockVerdict(own({ block: 'listening', state: 'no_address' })), { tone: 'plain', text: 'waiting for this node to run' })
+  assert.deepEqual(blockVerdict(own({ block: 'contested' })), { tone: 'err', text: 'another board holds this number' })
+  assert.match(blockVerdict(own({ block: 'passive', state: 'standby' }))?.text ?? '', /active board/)
+  assert.match(blockVerdict(own({ block: 'off', state: 'off' }))?.text ?? '', /as stored/)
+})
+
+test('an unprotected shared bus names where loop protection is off, and nothing while the status is clear', () => {
+  const neighbours = [node(2, { wire: 1, wire_protection: false }), node(3, { wire: 3, wire_protection: false })]
+  assert.equal(unprotectedText(own(), neighbours, true), null)
+  assert.equal(
+    unprotectedText(own({ unprotected_wire: true }), neighbours, true),
+    'Loop protection is off on this shared bus at node 2 (dali-000002). Turn it on there, or stop forwarding the foreign master.',
+  )
+  assert.equal(
+    unprotectedText(own({ unprotected_wire: true }), [node(2, { wire: 1 })], false),
+    'Loop protection is off on this shared bus here. Turn it on here, or stop forwarding the foreign master.',
+  )
+})
+
+test('the hold of the foreign master is said only while this node shares its bus', () => {
+  assert.equal(sharesWire(own(), [node(2)], null), false)
+  assert.equal(sharesWire(own(), [node(2, { wire: 1 })], null), true)
+  assert.equal(sharesWire(undefined, [], 2), true)
+  assert.equal(sharesWire(undefined, [], null), false)
+  assert.match(FOREIGN_HOLD, /about 70 ms, and dimming about 220 ms/)
 })

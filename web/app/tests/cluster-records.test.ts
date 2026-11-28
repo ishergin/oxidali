@@ -489,6 +489,7 @@ test('a part whose home node is not heard is listed apart, holds its group, and 
   const far = rec(40, { home_node: 2 })
   const own = [part(far, 8, { link: 'unknown' }), part(CH2, 3)]
   assert.deepEqual(orphansOf(own).map((p) => p.record.number), [40])
+  assert.deepEqual(orphansOf(own, [CH2, far]), [], 'a record listed from the copy keeps its own row')
   assert.equal(orphanName('channel', own[0], [CH2, CH5]), 'channel not heard yet')
   assert.deepEqual(strayFace(own[0]), { chip: 'home node 2 not heard', act: 'Unlink' })
   assert.deepEqual(strayFace(part(CH2, 7, { link: 'orphan' })), { chip: 'left over', act: 'Finish delete' })

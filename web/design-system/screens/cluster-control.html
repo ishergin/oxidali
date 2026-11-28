@@ -1,4 +1,4 @@
-<!-- @dsCard group="Screens" name="Control — Cluster" subtitle="Channels and scenes of the cluster: the list with On, Off, the level and Recall, the opened row with the record and this node's part, the Apply bar, refusals in words, left-over parts, the presets, cluster off and the read-only standby" -->
+<!-- @dsCard group="Screens" name="Control — Cluster" subtitle="Channels, scenes and input devices of the cluster: each channel's state as N of M known lit, On, Off, steps, the level and Recall, the opened row with each node's part and its state, wire faults, records known from a copy, an unsettled block, the Apply bar, refusals in words, left-over parts, the presets, the Inputs list of every node, cluster off and the read-only standby" -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -152,9 +152,10 @@ td .nm { font-size: 13px; font-weight: 550; }
 .nodes .silent { color: var(--text-faint); text-decoration: underline dotted; }
 
 /* A channel has no level of its own (nodes report how many members are lit,
-   from stage I6-C on), so its slider holds no position: the track is dashed
-   and the thumb shows only while it is being moved. Releasing it sends that
-   level once; from the keyboard, Enter does. */
+   not a level), so its slider holds no position: the track is dashed and the
+   thumb shows only while it is being moved. Releasing it sends that level
+   once; from the keyboard, Enter does. The − and + beside it send one DALI
+   step down or up on every node that accepts. */
 .slider { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--overlay); vertical-align: middle; }
 .slider.mini { width: 96px; }
 .slider.blind { background: repeating-linear-gradient(90deg, var(--overlay) 0 6px, transparent 6px 10px); }
@@ -162,6 +163,40 @@ td .nm { font-size: 13px; font-weight: 550; }
 .slider.blind:active::-webkit-slider-thumb, .slider.blind:focus-visible::-webkit-slider-thumb { opacity: 1; }
 .slider.blind::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; border: none; background: var(--accent-strong); opacity: 0; }
 .slider.blind:active::-moz-range-thumb, .slider.blind:focus-visible::-moz-range-thumb { opacity: 1; }
+
+/* A channel's state is the shared lamp-state cell (components/lamp-state),
+   with counts in place of a level: a channel has no level of its own, so the
+   cell says how many members are lit of those known, and the dot is filled,
+   empty or dashed for on, off and unknown. Unknown is never drawn as off. */
+.lampstate { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); white-space: nowrap; }
+.lampdot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+  background: var(--lamp, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--lamp, var(--accent)) 70%, transparent);
+  box-shadow: var(--lamp-glow, none); }
+.lamplv { font-family: var(--mono); font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.lampcq { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.lampstate.off .lampdot { background: transparent; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.off .lamplv { color: var(--text-muted); }
+.lampstate.unknown .lampdot { background: transparent; border-style: dashed; border-color: var(--text-faint); box-shadow: none; }
+.lampstate.unknown .lamplv { color: var(--text-faint); font-style: italic; font-family: var(--font); }
+.ctable td.state-col { white-space: normal; min-width: 150px; }
+.state-col .lampstate { white-space: normal; flex-wrap: wrap; }
+
+/* A fault the cluster reports but does not act on, in words in the row of
+   the node it concerns, with a way to that node. */
+.wirefault { font-size: 11.5px; color: var(--err); }
+.wirefault a { color: var(--info); text-decoration: none; }
+
+/* The Inputs list: every node's devices, grouped by node under a group row.
+   A node heard no more keeps its devices, faded, as last heard. */
+.search { padding: 6px 10px; background: var(--raised); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--text); font-size: 12px; width: 260px; font-family: var(--font); }
+.search::placeholder { color: var(--text-faint); }
+.toolbar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
+tr.group-row td { background: var(--raised); color: var(--text-muted); font-size: 12px; font-weight: 550; padding: 7px 12px; }
+tr.group-row .unit { margin-left: 8px; font-weight: 400; }
+tr.lastheard td { color: var(--text-faint); }
+tr.lastheard td .nm { color: var(--text-faint); font-weight: 400; }
 
 /* The opened row: one line per node, this node first and editable, the
    others read from the cluster and opened on their own web UI. */
@@ -224,7 +259,7 @@ td .nm { font-size: 13px; font-weight: 550; }
 <div class="page">
   <div class="state-label"><span>Channels — running, nothing created yet</span><span class="ln"></span></div>
   <div class="head"><h1>Cluster</h1><span class="sub">dali-cluster · Node 0 · 1 of 2 heard</span></div>
-  <div class="ptabs"><a class="ptab active" href="#">Channels<span class="hint">0</span></a><a class="ptab" href="#">Scenes<span class="hint">0</span></a></div>
+  <div class="ptabs"><a class="ptab active" href="#">Channels<span class="hint">0</span></a><a class="ptab" href="#">Scenes<span class="hint">0</span></a><a class="ptab" href="#">Inputs</a></div>
   <div class="ptabline"></div>
   <div class="card">
     <header><h3>Channels</h3><span class="btns"><button class="btn sm">New channel</button><button class="btn sm">From this node's groups…</button></span></header>
@@ -233,28 +268,33 @@ td .nm { font-size: 13px; font-weight: 550; }
 </div>
 
 <div class="page">
-  <div class="state-label"><span>Channels — the list: own, cached and stale records, a left-over part, a refused command</span><span class="ln"></span></div>
+  <div class="state-label"><span>Channels — the list: each channel's state, own, cached, stale and copied records, a left-over part, a refused step</span><span class="ln"></span></div>
   <div class="head"><h1>Cluster</h1><span class="sub">dali-cluster · Node 0 · 1 of 2 heard</span></div>
-  <div class="ptabs"><a class="ptab active" href="#">Channels<span class="hint">4</span></a><a class="ptab" href="#">Scenes<span class="hint">2</span></a></div>
+  <div class="ptabs"><a class="ptab active" href="#">Channels<span class="hint">6</span></a><a class="ptab" href="#">Scenes<span class="hint">2</span></a><a class="ptab" href="#">Inputs</a></div>
   <div class="ptabline"></div>
   <div class="card">
     <header><h3>Channels</h3><span class="btns"><button class="btn sm">New channel</button><button class="btn sm">From this node's groups…</button></span></header>
     <div class="table-wrap">
       <table class="ctable">
-        <thead><tr><th>Channel</th><th>Name</th><th>Home</th><th>Nodes</th><th class="acts-col">Control</th></tr></thead>
+        <thead><tr><th>Channel</th><th>Name</th><th>Home</th><th>Nodes</th><th>State</th><th class="acts-col">Control</th></tr></thead>
         <tbody>
-          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH2"></button>CH2</td><td class="nm-col"><span class="nm">Corridor</span></td><td class="unit">this node</td><td class="nodes">0 · 1</td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH2"></span></td></tr>
-          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH5"></button>CH5</td><td class="nm-col"><span class="nm">Hall</span><span class="chip muted"><span class="dot"></span>node 1 ignores</span></td><td class="unit">this node</td><td class="nodes">0 · 1</td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH5"></span></td></tr>
-          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH19"></button>CH19</td><td class="nm-col"><span class="nm">Storage</span></td><td class="unit">node 1</td><td class="nodes">1</td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH19"></span></td></tr>
-          <tr class="rowerr"><td></td><td colspan="4">Not sent: This node does not hold its number yet — its port is not bound, or it is still listening or waiting. <a href="#">Cluster settings</a></td></tr>
-          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH37"></button>CH37</td><td class="nm-col"><span class="nm">Dock</span><span class="chip muted"><span class="dot"></span>home node 2 silent</span></td><td class="unit">node 2</td><td class="nodes"><span class="silent" title="silent">2</span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH37"></span></td></tr>
-          <tr><td class="num">CH0</td><td class="nm-col"><span class="nm name-faint">deleted channel</span><span class="chip muted"><span class="dot"></span>left over</span></td><td class="unit">this node</td><td class="nodes">G7 of this node</td><td class="acts-col"><button class="btn sm">Finish delete</button></td></tr>
-          <tr><td class="num">CH40</td><td class="nm-col"><span class="nm name-faint">channel not heard yet</span><span class="chip muted"><span class="dot"></span>home node 2 not heard</span></td><td class="unit">this node</td><td class="nodes">G8 of this node</td><td class="acts-col"><button class="btn sm">Unlink</button></td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH2"></button>CH2</td><td class="nm-col"><span class="nm">Corridor</span></td><td class="unit">this node</td><td class="nodes">0 · 1</td><td class="state-col"><span class="lampstate on"><span class="lampdot"></span><span class="lamplv">7 of 9 lit</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH2 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH2 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH2"></span></td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH3"></button>CH3</td><td class="nm-col"><span class="nm">Lobby</span></td><td class="unit">this node</td><td class="nodes">0 · <span class="silent" title="silent">2</span></td><td class="state-col"><span class="lampstate on"><span class="lampdot"></span><span class="lamplv">3 of 5 known lit</span><span class="lampcq">4 of 9 not known · node 2 not heard</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH3 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH3 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH3"></span></td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH5"></button>CH5</td><td class="nm-col"><span class="nm">Hall</span><span class="chip muted"><span class="dot"></span>node 1 ignores</span></td><td class="unit">this node</td><td class="nodes">0 · 1</td><td class="state-col"><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">0 of 6 lit</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH5 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH5 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH5"></span></td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH19"></button>CH19</td><td class="nm-col"><span class="nm">Storage</span></td><td class="unit">node 1</td><td class="nodes">1</td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">4 of 4 lit</span><span class="lampcq">not known to be on: no node knows of a command to switch it on</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH19 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH19 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH19"></span></td></tr>
+          <tr class="rowerr"><td></td><td colspan="5">Not sent: Too many commands are waiting to go out; try again in a moment.</td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH24"></button>CH24</td><td class="nm-col"><span class="nm">Terrace</span><span class="chip muted"><span class="dot"></span>home node 1 not heard</span></td><td class="unit">node 1</td><td class="nodes">0</td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">not known</span><span class="lampcq">1 part not known</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH24 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH24 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH24"></span></td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH37"></button>CH37</td><td class="nm-col"><span class="nm">Dock</span><span class="chip muted"><span class="dot"></span>home node 2 silent</span></td><td class="unit">node 2</td><td class="nodes"><span class="silent" title="silent">2</span></td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">not known</span><span class="lampcq">4 not known · node 2 not heard</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH37 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH37 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH37"></span></td></tr>
+          <tr class="exprow"><td class="num"><button class="chev" aria-expanded="false" aria-label="Open CH6"></button>CH6</td><td class="nm-col"><span class="nm">Spare</span></td><td class="unit">this node</td><td class="nodes"></td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">no lamps</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH6 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH6 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH6"></span></td></tr>
+          <tr><td class="num">CH0</td><td class="nm-col"><span class="nm name-faint">deleted channel</span><span class="chip muted"><span class="dot"></span>left over</span></td><td class="unit">this node</td><td class="nodes">G7 of this node</td><td></td><td class="acts-col"><button class="btn sm">Finish delete</button></td></tr>
+          <tr><td class="num">CH40</td><td class="nm-col"><span class="nm name-faint">channel not heard yet</span><span class="chip muted"><span class="dot"></span>home node 2 not heard</span></td><td class="unit">this node</td><td class="nodes">G8 of this node</td><td></td><td class="acts-col"><button class="btn sm">Unlink</button></td></tr>
         </tbody>
       </table>
     </div>
   </div>
-  <p class="note"><b>Home</b> is the node that issued the record: this node, or node k for a record read from that node's announcements (<b>cached</b>). A record whose home node went silent (<b>stale</b>) keeps its last announced name under <b>home node k silent</b>; its number fades in Nodes. <b>On</b>, <b>Off</b> and the level act at once on every node that accepts; the slider holds no position, because a channel has no level of its own until nodes report their lamps (stage I6-C): releasing it sends that level once, and from the keyboard the arrows move it and Enter sends. <b>node k ignores</b>: a node takes part with Accept off. A refusal stays under its row, in words, until the next command to that channel. The row <b>CH0 · deleted channel</b> is this node's part that still names a record deleted on its home node: it gets no commands, and <b>Finish delete</b> removes it in two presses. The row <b>CH40 · channel not heard yet</b> is this node's part naming a record whose home node has not been heard, so whether the record lives is unknown: <b>Unlink</b> frees its group in two presses. A node whose parts cannot be read is named after the nodes of every row, <b>node 3 not read</b>, rather than drawn as taking no part.</p>
+  <p class="note"><b>Home</b> is the node that issued the record: this node, or node k for a record read from that node's announcements (<b>cached</b>). A record whose home node went silent (<b>stale</b>) keeps its last announced name under <b>home node k silent</b>; its number fades in Nodes. A record whose home node is not heard at all is shown from the copy this node keeps for its own part, under <b>home node k not heard</b>.</p>
+  <p class="note"><b>State</b> says how many members of the channel are lit, of those whose state is known, and never a level: a channel has no level of its own. The dot is filled when some node reports its part on, empty when every member is known to be dark, and dashed otherwise. Members not known are said in words after the count, with the nodes that are not heard: <b>3 of 5 known lit · 4 of 9 not known · node 2 not heard</b>. Lit members that no node knows to have been switched on through the channel leave the state unknown, as on <b>CH19</b>: after a restart a node does not remember being commanded. A stale or copied record keeps its row with the state not known, and a channel with no member reads <b>no lamps</b>, never off.</p>
+  <p class="note"><b>On</b>, <b>Off</b>, the steps and the level act at once on every node that accepts. <b>−</b> and <b>+</b> send one DALI step down or up; there is no hold-to-dim, as on the product's group controls. The slider holds no position: releasing it sends that level once, and from the keyboard the arrows move it and Enter sends. <b>node k ignores</b>: a node takes part with Accept off. A refusal stays under its row, in words, until the next command to that channel: <b>cluster_busy</b> when four steps already wait for the channel, and the causes of a cluster that is off or not running. The row <b>CH0 · deleted channel</b> is this node's part that still names a record deleted on its home node: it gets no commands, and <b>Finish delete</b> removes it in two presses. The row <b>CH40 · channel not heard yet</b> is this node's part naming a record whose home node has not been heard, so whether the record lives is unknown: <b>Unlink</b> frees its group in two presses. A node whose parts cannot be read is named after the nodes of every row, <b>node 3 not read</b>, rather than drawn as taking no part.</p>
 </div>
 
 <div class="page">
@@ -263,14 +303,14 @@ td .nm { font-size: 13px; font-weight: 550; }
     <header><h3>Channels</h3><span class="btns"><button class="btn sm">New channel</button><button class="btn sm">From this node's groups…</button></span></header>
     <div class="table-wrap">
       <table class="ctable">
-        <thead><tr><th>Channel</th><th>Name</th><th>Home</th><th>Nodes</th><th class="acts-col">Control</th></tr></thead>
+        <thead><tr><th>Channel</th><th>Name</th><th>Home</th><th>Nodes</th><th>State</th><th class="acts-col">Control</th></tr></thead>
         <tbody>
-          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH2"></button>CH2</td><td class="nm-col"><span class="nm">Corridor</span><span class="chip warn"><span class="dot"></span>2 edits</span></td><td class="unit">this node</td><td class="nodes">0 · 1 · <span class="silent" title="silent">2</span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH2"></span></td></tr>
-          <tr class="expdetail"><td></td><td colspan="4"><div class="members">
+          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH2"></button>CH2</td><td class="nm-col"><span class="nm">Corridor</span><span class="chip warn"><span class="dot"></span>2 edits</span></td><td class="unit">this node</td><td class="nodes">0 · 1 · <span class="silent" title="silent">2</span></td><td class="state-col"><span class="lampstate on"><span class="lampdot"></span><span class="lamplv">7 of 9 lit</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH2 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH2 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH2"></span></td></tr>
+          <tr class="expdetail"><td></td><td colspan="5"><div class="members">
             <div class="mrow"><span class="mnode">Name</span><input class="txt dirty" value="Corridor east" aria-label="Name of CH2"><span class="unit">kept on this node, the home of CH2</span><span class="mgrow"></span><button class="btn sm">Delete</button></div>
-            <div class="mrow"><span class="mnode">Node 0 · this node<em>dali-3fa2c1</em></span><select class="sel dirty" aria-label="This node's group in CH2"><option>Not linked</option><option>G3 · Desk · 2 lamps</option><option selected>G5 · Hall spots · 4 lamps</option><option>G7 · part of CH0 · left over</option></select><span class="flag">Send <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></span><span class="flag">Accept <span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></span></div>
+            <div class="mrow"><span class="mnode">Node 0 · this node<em>dali-3fa2c1</em></span><select class="sel dirty" aria-label="This node's group in CH2"><option>Not linked</option><option>G3 · Desk · 2 lamps</option><option selected>G5 · Hall spots · 4 lamps</option><option>G7 · part of CH0 · left over</option></select><span class="flag">Send <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></span><span class="flag">Accept <span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></span><span class="lampstate on"><span class="lampdot"></span><span class="lamplv">4 of 5 lit</span></span></div>
             <div class="mrow"><span class="mnote">Accept is off: this node will ignore commands for CH2 from other nodes. On, Off and the level given on this page still reach G5. G5 is linked as it is and keeps its name and lamps; they cannot be changed from this UI until the channel editor exists.</span></div>
-            <div class="mrow"><span class="mnode">Node 1 · dali-9b07e4<em>heard 3 s ago</em></span><span class="mono">G3</span><span class="flag">sends</span><span class="flag">accepts</span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
+            <div class="mrow"><span class="mnode">Node 1 · dali-9b07e4<em>heard 3 s ago</em></span><span class="mono">G3</span><span class="flag">sends</span><span class="flag">accepts</span><span class="lampstate on"><span class="lampdot"></span><span class="lamplv">3 of 4 lit</span></span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
             <div class="mrow"><span class="mnode">Node 2 · dali-51c0aa<em>silent 4 min</em></span><span class="mnote">Not in this channel. A node links one of its groups on its own page.</span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
           </div></td></tr>
         </tbody>
@@ -278,7 +318,7 @@ td .nm { font-size: 13px; font-weight: 550; }
     </div>
   </div>
   <div class="footer-bar"><span class="n"><b>3</b> unsaved changes · CH2 name, CH2 part, CS0 part</span><span class="spacer"></span><button class="btn ghost">Discard</button><button class="btn primary">Apply</button></div>
-  <p class="note">The opened row edits the record — its name, only on its home node — and this node's part: which of this node's groups is linked (<b>Not linked</b> removes the part), Send and Accept. A group that is already the part of another record says so in the list. Edits of both tabs gather in one draft; the bar appears with the first edit, counts and names them, and <b>Discard</b> drops them all. A draft beats a poll: an edit the controller catches up with drops out. A new link starts with Send on and Accept off, so other nodes cannot change this node's light until Accept is turned on. The other nodes' parts are read from the cluster: their group, Send, Accept, and <b>Open</b> to that node's own web UI, where they are edited.</p>
+  <p class="note">The opened row edits the record — its name, only on its home node — and this node's part: which of this node's groups is linked (<b>Not linked</b> removes the part), Send and Accept. A group that is already the part of another record says so in the list. Edits of both tabs gather in one draft; the bar appears with the first edit, counts and names them, and <b>Discard</b> drops them all. A draft beats a poll: an edit the controller catches up with drops out. A new link starts with Send on and Accept off, so other nodes cannot change this node's light until Accept is turned on. The other nodes' parts are read from the cluster: their group, Send, Accept, their state, and <b>Open</b> to that node's own web UI, where they are edited. Each node's part says its own state in the same words as the row: on with its lit members, off when all are known dark, and not known for a node not heard or a part whose link cannot be checked.</p>
 </div>
 
 <div class="page">
@@ -295,8 +335,8 @@ td .nm { font-size: 13px; font-weight: 550; }
     <div class="table-wrap">
       <table class="ctable">
         <tbody>
-          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH5"></button>CH5</td><td class="nm-col"><span class="nm">Hall</span></td><td class="unit">this node</td><td class="nodes">0 · 1</td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH5"></span></td></tr>
-          <tr class="expdetail"><td></td><td colspan="4"><div class="members">
+          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH5"></button>CH5</td><td class="nm-col"><span class="nm">Hall</span></td><td class="unit">this node</td><td class="nodes">0 · 1</td><td class="state-col"><span class="lampstate off"><span class="lampdot"></span><span class="lamplv">0 of 6 lit</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH5 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH5 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH5"></span></td></tr>
+          <tr class="expdetail"><td></td><td colspan="5"><div class="members">
             <div class="mrow"><span class="mnode">Name</span><input class="txt err" value="Hall" aria-label="Name of CH5"><span class="unit">kept on this node, the home of CH5</span><span class="mgrow"></span><button class="btn sm">Delete</button><span class="fielderr">CH5 was renamed elsewhere since this page read it; the current name is shown.</span></div>
             <div class="mrow"><span class="mnode">Node 0 · this node<em>dali-3fa2c1</em></span><select class="sel err" aria-label="This node's group in CH5"><option>Not linked</option><option selected>G3 · Desk · part of CH2</option></select><span class="flag">Send <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></span><span class="flag">Accept <span class="switch" role="switch" aria-checked="false"><span class="knob"></span></span></span><span class="fielderr">G3 is the part of CH2. Unlink it there first; the draft does not move it.</span></div>
             <div class="mrow"><span class="mnode">Node 1 · dali-9b07e4<em>heard 3 s ago</em></span><span class="mono">G6</span><span class="flag">sends</span><span class="flag">does not accept</span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
@@ -316,16 +356,16 @@ td .nm { font-size: 13px; font-weight: 550; }
     <div class="table-wrap">
       <table class="ctable">
         <tbody>
-          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH19"></button>CH19</td><td class="nm-col"><span class="nm">Storage</span></td><td class="unit">node 1</td><td class="nodes">1</td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH19"></span></td></tr>
-          <tr class="expdetail"><td></td><td colspan="4"><div class="members">
+          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH19"></button>CH19</td><td class="nm-col"><span class="nm">Storage</span></td><td class="unit">node 1</td><td class="nodes">1</td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">4 of 4 lit</span><span class="lampcq">not known to be on</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH19 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH19 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH19"></span></td></tr>
+          <tr class="expdetail"><td></td><td colspan="5"><div class="members">
             <div class="mrow"><span class="mnode">Name</span><span class="nm">Storage</span><span class="unit">kept on node 1, the home of CH19: renamed and deleted there</span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open node 1</a></div>
             <div class="mrow"><span class="mnode">Node 0 · this node<em>dali-3fa2c1</em></span><select class="sel" aria-label="This node's group in CH19"><option selected>Not linked</option><option>G3 · Desk · 2 lamps</option><option>G9 · Terrace · 5 lamps</option></select></div>
-            <div class="mrow"><span class="mnode">Node 1 · dali-9b07e4<em>heard 3 s ago</em></span><span class="mono">G4</span><span class="flag">sends</span><span class="flag">accepts</span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
+            <div class="mrow"><span class="mnode">Node 1 · dali-9b07e4<em>heard 3 s ago</em></span><span class="mono">G4</span><span class="flag">sends</span><span class="flag">accepts</span><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">4 of 4 lit</span><span class="lampcq">not commanded on</span></span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
           </div></td></tr>
-          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH37"></button>CH37</td><td class="nm-col"><span class="nm">Dock</span><span class="chip muted"><span class="dot"></span>home node 2 silent</span></td><td class="unit">node 2</td><td class="nodes"><span class="silent" title="silent">2</span><span class="silent" title="these nodes' parts could not be read"> · node 3 not read</span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH37"></span></td></tr>
-          <tr class="expdetail"><td></td><td colspan="4"><div class="members">
+          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH37"></button>CH37</td><td class="nm-col"><span class="nm">Dock</span><span class="chip muted"><span class="dot"></span>home node 2 silent</span></td><td class="unit">node 2</td><td class="nodes"><span class="silent" title="silent">2</span><span class="silent" title="these nodes' parts could not be read"> · node 3 not read</span></td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">not known</span><span class="lampcq">4 not known · node 2 not heard</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH37 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH37 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH37"></span></td></tr>
+          <tr class="expdetail"><td></td><td colspan="5"><div class="members">
             <div class="mrow"><span class="mnode">Name</span><span class="nm">Dock</span><span class="unit">kept on node 2 · cannot be renamed or deleted until node 2 answers</span></div>
-            <div class="mrow"><span class="mnode">Node 2 · dali-51c0aa<em>silent 4 min</em></span><span class="mono">G1</span><span class="flag">sends</span><span class="flag">accepts</span><span class="chip muted"><span class="dot"></span>as last heard</span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
+            <div class="mrow"><span class="mnode">Node 2 · dali-51c0aa<em>silent 4 min</em></span><span class="mono">G1</span><span class="flag">sends</span><span class="flag">accepts</span><span class="chip muted"><span class="dot"></span>as last heard</span><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">not known</span><span class="lampcq">not heard</span></span><span class="mgrow"></span><a class="btn sm ghost" href="#">Open</a></div>
           </div></td></tr>
         </tbody>
       </table>
@@ -335,12 +375,82 @@ td .nm { font-size: 13px; font-weight: 550; }
 </div>
 
 <div class="page">
+  <div class="state-label"><span>Channels — a record known from this node's copy, and a wire fault</span><span class="ln"></span></div>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="ctable">
+        <tbody>
+          <tr class="exprow open"><td class="num"><button class="chev" aria-expanded="true" aria-label="Close CH24"></button>CH24</td><td class="nm-col"><span class="nm">Terrace</span><span class="chip muted"><span class="dot"></span>home node 1 not heard</span></td><td class="unit">node 1</td><td class="nodes">0</td><td class="state-col"><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">not known</span><span class="lampcq">1 part not known</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm">On</button><button class="btn sm">Off</button><button class="btn sm" aria-label="Step CH24 down" title="One step down">−</button><button class="btn sm" aria-label="Step CH24 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" aria-label="Level of CH24"></span></td></tr>
+          <tr class="expdetail"><td></td><td colspan="5"><div class="members">
+            <div class="mrow"><span class="mnode">Name</span><span class="nm">Terrace</span><span class="unit">home node 1 not heard · the name is this node's copy</span></div>
+            <div class="mrow"><span class="mnode">Node 0 · this node<em>dali-3fa2c1</em></span><select class="sel" aria-label="This node's group in CH24"><option>Not linked</option><option selected>G9 · Terrace · 5 lamps</option></select><span class="flag">Send <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></span><span class="flag">Accept <span class="switch on" role="switch" aria-checked="true"><span class="knob"></span></span></span><span class="lampstate unknown"><span class="lampdot"></span><span class="lamplv">not known</span><span class="lampcq">link not checked</span></span></div>
+            <div class="mrow"><span class="wirefault">Node 2 shares this DALI bus and links G9 to another channel. The node that executes on the bus decides what G9 does. <a href="#">Open node 2</a></span></div>
+          </div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="note">A record whose home node is not heard and of which this node has no announcement is shown from the copy this node keeps for its own part: its number, its birth mark and its last name. It cannot be renamed or deleted from here, and the row offers neither; its state is not known, because whether the record still lives on its home node cannot be checked. A command is still sent, and the home node acts on it if it hears it.</p>
+  <p class="note">A <b>wire fault</b> is read in the row of the node whose part it concerns: a neighbour on the same DALI bus links the same group to <b>another channel</b>, or to <b>no channel</b>. The cluster reports it and changes nothing — the node that executes on the bus carries out its own parts — so the row names the neighbour and links to its web UI, where the other part is fixed.</p>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Channels — the node still listening after a start: creating, renaming and deleting wait</span><span class="ln"></span></div>
+  <div class="card">
+    <header><h3>Channels</h3><span class="btns"><button class="btn sm" disabled>New channel</button><button class="btn sm" disabled>From this node's groups…</button></span></header>
+    <p class="req">This node is still listening to its neighbours after its start and takes back the records of its block they keep a copy of. Channels and scenes of this node can be created, renamed and deleted once that round ends.</p>
+    <div class="table-wrap">
+      <table class="ctable">
+        <tbody>
+          <tr class="expdetail"><td class="num">CH2</td><td colspan="5"><div class="members">
+            <div class="mrow"><span class="mnode">Name</span><input class="txt err" value="Corridor east" aria-label="Name of CH2"><span class="unit">kept on this node, the home of CH2</span><span class="mgrow"></span><button class="btn sm">Delete</button><span class="fielderr">This node is still listening to its neighbours after its start; creating, renaming and deleting wait until that round ends.</span></div>
+          </div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="note">While the block of this node's numbers is <b>listening</b>, the create controls are off and say why before they are pressed; a rename or delete sent anyway is refused with <b>cluster_block_unsettled</b>, put in words at its field. While another board holds the same node number (<b>contested</b>) the note reads <i>another board holds node 0 as well: nothing of this node's block can be created, renamed or deleted until one of them gives the number up</i>, and the refusal <b>cluster_node_contested</b> lands the same way. A node that does not run yet (no network address, port not bound, number taken) is listening too, and the note says that instead, pointing to Cluster settings. On, Off, the steps and Recall do not wait.</p>
+</div>
+
+<div class="page">
+  <div class="state-label"><span>Inputs — every input device of every node, live</span><span class="ln"></span></div>
+  <div class="head"><h1>Cluster</h1><span class="sub">dali-cluster · Node 0 · 1 of 2 heard</span></div>
+  <div class="ptabs"><a class="ptab" href="#">Channels<span class="hint">6</span></a><a class="ptab" href="#">Scenes<span class="hint">2</span></a><a class="ptab active" href="#">Inputs</a></div>
+  <div class="ptabline"></div>
+  <div class="toolbar"><input class="search" placeholder="Search all nodes by name or address" aria-label="Search the input devices of all nodes" value=""><span class="unit">9 instances on 3 nodes</span></div>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="ctable">
+        <thead><tr><th>Input</th><th>Name</th><th>Type</th><th>Last event</th><th>When</th></tr></thead>
+        <tbody>
+          <tr class="group-row"><td colspan="5">Node 0 · this node<span class="unit">2 devices · 3 instances</span></td></tr>
+          <tr><td class="num">N0·IN3/0</td><td class="nm-col"><span class="nm">Hall panel</span></td><td class="unit">button</td><td>short press</td><td class="unit">12 s ago</td></tr>
+          <tr><td class="num">N0·IN3/1</td><td class="nm-col"><span class="nm">Hall panel</span></td><td class="unit">button</td><td><span class="unit">nothing since boot</span></td><td class="unit">—</td></tr>
+          <tr><td class="num">N0·IN8/0</td><td class="nm-col"><span class="nm">Lobby sensor</span><span class="unit"> hidden from Home Assistant</span></td><td class="unit">occupancy</td><td><span class="mono">code 0x00A</span><span class="unit"> not named</span></td><td class="unit">9 min ago</td></tr>
+          <tr class="group-row"><td colspan="5">Node 1 · dali-9b07e4<span class="unit">2 devices · 3 instances</span></td></tr>
+          <tr><td class="num">N1·IN5/0</td><td class="nm-col"><span class="nm">Storage sensor</span></td><td class="unit">occupancy</td><td>becomes occupied</td><td class="unit">0 s ago</td></tr>
+          <tr><td class="num">N1·IN6/0</td><td class="nm-col"><span class="nm">Dock light sensor</span></td><td class="unit">light</td><td>412</td><td class="unit">40 s ago</td></tr>
+          <tr><td class="num">N1·IN6/1</td><td class="nm-col"><span class="nm name-faint">— unnamed</span></td><td class="unit">not read</td><td><span class="unit">nothing since boot</span></td><td class="unit">—</td></tr>
+          <tr class="group-row"><td colspan="5">Node 2 · dali-51c0aa<span class="unit">silent 4 min · devices as last heard</span></td></tr>
+          <tr class="lastheard"><td class="num">N2·IN1/0</td><td class="nm-col"><span class="nm">Gate panel</span></td><td class="unit">button</td><td>long press stop</td><td class="unit">6 min ago</td></tr>
+          <tr class="lastheard"><td class="num">N2·IN1/1</td><td class="nm-col"><span class="nm">Gate panel</span></td><td class="unit">button</td><td><span class="unit">nothing since boot</span></td><td class="unit">—</td></tr>
+          <tr class="group-row"><td colspan="5">Node 3 · dali-77aa10<span class="unit">no input device announced: the node shares no input events, or has none</span></td></tr>
+          <tr class="group-row"><td colspan="5">Node 4 · dali-c41d02<span class="unit">not read · the list could not be read from this node</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="note">One list of every input device of every node: this node's from its registry, the others' from the last whole set each node announced. An instance's address is <b>N0·IN3/0</b> — node 0, device 3, instance 0. A press on any node updates its row at once from the WebSocket channel <b>input</b>, and the event is named as the rules name it (<b>short press</b>, <b>becomes occupied</b>; a sensor shows its value). A row read only from the REST list shows the raw event code with <b>not named</b>, since the list carries the code and not its name; the age starts from the node's own report and counts on while the page is open. A node heard no more keeps its devices, faded, as last heard. A node that announced nothing is named with what that may mean, and a node whose list could not be read is named as not read: neither is drawn as a node without devices. <b>hidden from Home Assistant</b> marks a device the node does not expose. Search matches a name or an address on every node.</p>
+  <p class="note">When this node's own <b>Share input events</b> is off, its group row adds <i>not shared: other nodes do not see these devices</i>. A neighbour's switch is not announced, so a neighbour that shares nothing reads as Node 3 above.</p>
+</div>
+
+<div class="page">
   <div class="state-label"><span>Delete and Finish delete — the second press</span><span class="ln"></span></div>
   <div class="card">
     <div class="table-wrap">
       <table class="ctable">
         <tbody>
-          <tr class="expdetail"><td class="num">CH2</td><td colspan="4"><div class="members">
+          <tr class="expdetail"><td class="num">CH2</td><td colspan="5"><div class="members">
             <div class="mrow"><span class="mnode">Name</span><input class="txt" value="Corridor" aria-label="Name of CH2"><span class="unit">kept on this node, the home of CH2</span><span class="mgrow"></span><button class="btn sm sure">Sure?</button></div>
           </div></td></tr>
           <tr><td class="num">CH0</td><td class="nm-col"><span class="nm name-faint">deleted channel</span><span class="chip muted"><span class="dot"></span>left over</span></td><td class="unit">this node</td><td class="nodes">G7 of this node</td><td class="acts-col"><button class="btn sm sure">Sure?</button></td></tr>
@@ -386,7 +496,7 @@ td .nm { font-size: 13px; font-weight: 550; }
 <div class="page">
   <div class="state-label"><span>Scenes</span><span class="ln"></span></div>
   <div class="head"><h1>Cluster</h1><span class="sub">dali-cluster · Node 0 · 1 of 2 heard</span></div>
-  <div class="ptabs"><a class="ptab" href="#">Channels<span class="hint">4</span></a><a class="ptab active" href="#">Scenes<span class="hint">2</span></a></div>
+  <div class="ptabs"><a class="ptab" href="#">Channels<span class="hint">4</span></a><a class="ptab active" href="#">Scenes<span class="hint">2</span></a><a class="ptab" href="#">Inputs</a></div>
   <div class="ptabline"></div>
   <p class="hint">A cluster scene recalls, on each node, the scene chosen for it there. What a scene sets is edited in that node's scene editor.</p>
   <div class="card">
@@ -421,15 +531,15 @@ td .nm { font-size: 13px; font-weight: 550; }
   <div class="state-label"><span>Standby board — read-only</span><span class="ln"></span></div>
   <div class="head"><h1>Cluster</h1><span class="sub">dali-cluster · Node 1 · listening</span></div>
   <div class="req">This board is the standby of its pair: channels and scenes are shown here, not switched or edited. <a href="#">Open the active board</a> to change them.</div>
-  <div class="ptabs"><a class="ptab active" href="#">Channels<span class="hint">4</span></a><a class="ptab" href="#">Scenes<span class="hint">2</span></a></div>
+  <div class="ptabs"><a class="ptab active" href="#">Channels<span class="hint">4</span></a><a class="ptab" href="#">Scenes<span class="hint">2</span></a><a class="ptab" href="#">Inputs</a></div>
   <div class="ptabline"></div>
   <div class="card">
       <header><h3>Channels</h3><span class="btns"><button class="btn sm" disabled>New channel</button><button class="btn sm" disabled>From this node's groups…</button></span></header>
       <div class="table-wrap">
         <table class="ctable">
-          <thead><tr><th>Channel</th><th>Name</th><th>Home</th><th>Nodes</th><th class="acts-col">Control</th></tr></thead>
+          <thead><tr><th>Channel</th><th>Name</th><th>Home</th><th>Nodes</th><th>State</th><th class="acts-col">Control</th></tr></thead>
           <tbody>
-            <tr><td class="num">CH2</td><td class="nm-col"><span class="nm">Corridor</span></td><td class="unit">node 0</td><td class="nodes">0 · 1</td><td class="acts-col"><span class="btns"><button class="btn sm" disabled>On</button><button class="btn sm" disabled>Off</button><input class="slider mini blind" type="range" min="0" max="254" disabled aria-label="Level of CH2"></span></td></tr>
+            <tr><td class="num">CH2</td><td class="nm-col"><span class="nm">Corridor</span></td><td class="unit">node 0</td><td class="nodes">0 · 1</td><td class="state-col"><span class="lampstate on"><span class="lampdot"></span><span class="lamplv">7 of 9 lit</span></span></td><td class="acts-col"><span class="btns"><button class="btn sm" disabled>On</button><button class="btn sm" disabled>Off</button><button class="btn sm" disabled aria-label="Step CH2 down" title="One step down">−</button><button class="btn sm" disabled aria-label="Step CH2 up" title="One step up">+</button><input class="slider mini blind" type="range" min="0" max="254" disabled aria-label="Level of CH2"></span></td></tr>
           </tbody>
         </table>
       </div>

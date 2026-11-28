@@ -67,6 +67,7 @@ import type {
   ClusterInfo,
   ClusterLamp,
   ClusterLamps,
+  ClusterNodeInputs,
   ClusterNodeLamps,
   ClusterNodePart,
   ClusterPart,
@@ -362,6 +363,7 @@ export const api = {
   clusterLamps: () => get<ClusterLamps>('/cluster/lamps'),
   clusterNodeLamps: (node: number) => get<ClusterNodeLamps>(`/cluster/nodes/${node}/lamps`),
   clusterNodeLamp: (node: number, lamp: number) => get<ClusterLamp>(`/cluster/nodes/${node}/lamps/${lamp}`),
+  clusterNodeInputs: (node: number) => get<ClusterNodeInputs>(`/cluster/nodes/${node}/inputs`),
   forgetClusterNode: (node: number) => del<null>(`/cluster/nodes/${node}`),
   clusterRecords: async (kind: ClusterRecordKind) =>
     (await get<Record<string, ClusterRecordItem[]>>(`/cluster/${RECORDS[kind]}`))[RECORDS[kind]],
