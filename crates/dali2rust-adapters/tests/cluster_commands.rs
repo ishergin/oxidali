@@ -57,7 +57,7 @@ fn node_on(hub: &Arc<ClusterHub>, board: &Board) -> Node {
     let wire = Arc::new(Mutex::new(MockDaliTransport::new()));
     let (router, _hub, runtime) = build_http_test_stack(
         "0.1.0-test",
-        Arc::clone(&wire) as _,
+        Arc::clone(&wire),
         BusConfig::default(),
         DaliRuntimeConfig::default(),
         None,
