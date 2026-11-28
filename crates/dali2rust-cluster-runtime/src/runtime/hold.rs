@@ -1,19 +1,24 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use dali2rust_contracts::msg::ClusterCommandCommand;
+use dali2rust_contracts::msg::{ClusterCommandCommand, LightSetpoint};
 
-use crate::frame::{Action, LightVerb};
+use crate::frame::{Action, LightVerb, Target};
 
 use super::announce::reached;
-use super::outgoing::{is_relative, RELATIVE_SPACING_MS};
+use super::outgoing::{is_relative, RELATIVE_LINE, RELATIVE_SPACING_MS};
 
 #[cfg(test)]
 mod tests;
 
 const NEIGHBOUR_LATENCY_MS: u32 = 20;
 
-pub(crate) const FOREIGN_HOLD_MS: u32 = RELATIVE_SPACING_MS + NEIGHBOUR_LATENCY_MS;
+pub(crate) const ABSOLUTE_HOLD_MS: u32 = RELATIVE_SPACING_MS + NEIGHBOUR_LATENCY_MS;
+
+#[expect(clippy::cast_possible_truncation, reason = "RELATIVE_LINE is 4")]
+pub(crate) const RELATIVE_HOLD_MS: u32 = RELATIVE_LINE as u32 * RELATIVE_SPACING_MS + NEIGHBOUR_LATENCY_MS;
+
+pub(crate) const ECHO_MS: u32 = ABSOLUTE_HOLD_MS;
 
 pub(crate) const HOLD_DEPTH: usize = 8;
 
@@ -52,7 +57,7 @@ impl HoldLine {
             return Held::Cancelled;
         }
         let pushed_out = (self.waiting.len() >= HOLD_DEPTH).then(|| self.waiting.pop_front()).flatten();
-        let due_ms = if shared { now_ms.wrapping_add(FOREIGN_HOLD_MS) } else { now_ms };
+        let due_ms = if shared { now_ms.wrapping_add(hold_ms(&request.action)) } else { now_ms };
         self.waiting.push_back(Waiting { request, due_ms });
         Held::Queued { held: shared, pushed_out: pushed_out.map(|out| out.request) }
     }
@@ -68,7 +73,7 @@ impl HoldLine {
         if evicted {
             self.echoes.pop_front();
         }
-        self.echoes.push_back(Echo { action: neighbour.clone(), until_ms: now_ms.wrapping_add(FOREIGN_HOLD_MS) });
+        self.echoes.push_back(Echo { action: neighbour.clone(), until_ms: now_ms.wrapping_add(ECHO_MS) });
         (cancelled, evicted)
     }
 
@@ -87,13 +92,34 @@ impl HoldLine {
     }
 
     fn cancel_waiting(&mut self, neighbour: &Action) -> u32 {
-        if is_relative(neighbour) {
-            let first = self.waiting.iter().position(|waiting| same_command(&waiting.request.action, neighbour));
-            return first.and_then(|index| self.waiting.remove(index)).map_or(0, |_| 1);
-        }
-        let before = self.waiting.len();
-        self.waiting.retain(|waiting| !same_command(&waiting.request.action, neighbour));
-        u32::try_from(before - self.waiting.len()).unwrap_or(u32::MAX)
+        let matches = |waiting: &Waiting| same_command(&waiting.request.action, neighbour);
+        let found = if is_relative(neighbour) {
+            self.waiting.iter().position(matches)
+        } else {
+            self.waiting.iter().rposition(matches)
+        };
+        let Some(index) = found else {
+            return 0;
+        };
+        let superseded = self.supersede(index, neighbour);
+        let at = index.saturating_sub(usize::try_from(superseded).unwrap_or(index));
+        self.waiting.remove(at).map_or(superseded, |_| superseded + 1)
+    }
+
+    fn supersede(&mut self, before: usize, by: &Action) -> u32 {
+        let Some(target) = setpoint_target(by) else {
+            return 0;
+        };
+        let mut index = 0;
+        let mut removed = 0;
+        self.waiting.retain(|waiting| {
+            let earlier = index < before;
+            index += 1;
+            let gone = earlier && setpoint_target(&waiting.request.action) == Some(target);
+            removed += u32::from(gone);
+            !gone
+        });
+        removed
     }
 
     fn take_echo(&mut self, observed: &Action) -> bool {
@@ -102,6 +128,8 @@ impl HoldLine {
         };
         if is_relative(observed) {
             self.echoes.remove(index);
+        } else {
+            self.supersede(self.waiting.len(), observed);
         }
         true
     }
@@ -123,8 +151,30 @@ fn same_command(observed: &Action, neighbour: &Action) -> bool {
 
 fn same_verb(observed: &LightVerb, neighbour: &LightVerb) -> bool {
     match (observed, neighbour) {
-        (LightVerb::Setpoint(_), LightVerb::Setpoint(_)) => true,
+        (LightVerb::Setpoint(observed), LightVerb::Setpoint(command)) => agrees(observed, command),
         _ => observed == neighbour,
+    }
+}
+
+fn agrees(observed: &LightSetpoint, command: &LightSetpoint) -> bool {
+    let level = observed.dapc_level().is_none_or(|level| command.dapc_level() == Some(level));
+    let power = observed.commanded_power().is_none_or(|power| command.commanded_power() == Some(power));
+    let colour = !observed.states_color() || observed.color == command.color;
+    level && power && colour
+}
+
+const fn setpoint_target(action: &Action) -> Option<Target> {
+    match action {
+        Action::Light { target, verb: LightVerb::Setpoint(_) } => Some(*target),
+        Action::Light { .. } | Action::RecallScene { .. } => None,
+    }
+}
+
+const fn hold_ms(action: &Action) -> u32 {
+    if is_relative(action) {
+        RELATIVE_HOLD_MS
+    } else {
+        ABSOLUTE_HOLD_MS
     }
 }
 
