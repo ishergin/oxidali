@@ -24,6 +24,8 @@ const CREATED: u16 = 201;
 const NO_CONTENT: u16 = 204;
 const CONFLICT: u16 = 409;
 const MOVED_PORT: u16 = 47_811;
+const QUICK_PULSE_MS: u32 = 125;
+const ROUND: Duration = Duration::from_secs(30);
 
 struct Node {
     router: Router,
@@ -36,6 +38,7 @@ struct Board {
     epoch: u32,
 }
 
+const REPLACEMENT: Board = Board { mac: [0x02, 0, 0, 0x0a, 0x0b, 0x03], address: [10, 0, 0, 3], epoch: 33 };
 const FIRST: Board = Board { mac: [0x02, 0, 0, 0x0a, 0x0b, 0x01], address: [10, 0, 0, 1], epoch: 11 };
 const SECOND: Board = Board { mac: [0x02, 0, 0, 0x0a, 0x0b, 0x02], address: [10, 0, 0, 2], epoch: 22 };
 
@@ -44,11 +47,12 @@ fn node_on(hub: &Arc<ClusterHub>, board: &Board) -> Node {
 }
 
 fn node_drawing(hub: &Arc<ClusterHub>, board: &Board, boot_epoch: EpochSource) -> Node {
-    let cluster = ClusterComposition {
-        binder: Arc::new(ClusterHubBinder::new(Arc::clone(hub), board.address)),
-        timing: PresenceTiming::every_ms(PULSE_PERIOD_MS),
-        boot_epoch,
-    };
+    node_timed(hub, board, boot_epoch, PresenceTiming::every_ms(PULSE_PERIOD_MS))
+}
+
+fn node_timed(hub: &Arc<ClusterHub>, board: &Board, boot_epoch: EpochSource, timing: PresenceTiming) -> Node {
+    let binder = Arc::new(ClusterHubBinder::new(Arc::clone(hub), board.address));
+    let cluster = ClusterComposition { binder, timing, boot_epoch };
     composed(MockNetworkLink::new(board.mac, Some(board.address), "cluster-node"), Some(cluster))
 }
 
@@ -92,6 +96,14 @@ impl Node {
         let status = self.status();
         let nodes = status["nodes"].as_array()?;
         nodes.iter().find(|row| row["node"] == node).and_then(|row| row["heard"].as_bool())
+    }
+
+    fn block(&self) -> String {
+        self.status()["own"]["block"].as_str().unwrap_or_default().to_owned()
+    }
+
+    fn settled(&self) {
+        assert!(try_wait_until(|| self.block() == "settled", SETTLE), "block {}", self.block());
     }
 
     fn state(&self) -> String {
@@ -222,6 +234,8 @@ fn two_nodes_learn_each_other_s_records_and_parts_and_a_rename_crosses_over() {
     let (first, second) = (node_on(&hub, &FIRST), node_on(&hub, &SECOND));
     first.join(0);
     second.join(1);
+    first.settled();
+    second.settled();
     let corridor = first.send("POST", "/api/v1/cluster/channels", r#"{"number":2,"name":"Corridor"}"#);
     second.send("POST", "/api/v1/cluster/scenes", r#"{"number":17,"name":"Evening"}"#);
     let named = serde_json::json!({ "number": 2, "birth_mark": corridor["birth_mark"] });
@@ -238,4 +252,58 @@ fn two_nodes_learn_each_other_s_records_and_parts_and_a_rename_crosses_over() {
     first.send("PATCH", "/api/v1/cluster/channels/2", r#"{"name":"Hall","revision":1}"#);
     let renamed = || second.read("/api/v1/cluster/channels/2")["name"] == "Hall";
     assert!(try_wait_until(renamed, SETTLE), "{:?}", second.read("/api/v1/cluster/channels/2"));
+}
+
+fn quick(hub: &Arc<ClusterHub>, board: &Board) -> Node {
+    node_timed(hub, board, fixed_boot_epoch(board.epoch), PresenceTiming::every_ms(QUICK_PULSE_MS))
+}
+
+fn part_body(record: &Value) -> String {
+    let named = serde_json::json!({ "number": record["number"], "birth_mark": record["birth_mark"] });
+    serde_json::json!({ "record": named, "send": true, "accept": true }).to_string()
+}
+
+impl Node {
+    fn part_link(&self, node: u8, group: u64) -> Value {
+        let parts = self.read(&format!("/api/v1/cluster/nodes/{node}/channel-parts"));
+        let rows = parts["channel_parts"].as_array().cloned().unwrap_or_default();
+        rows.into_iter().find(|row| row["group"] == group).map_or(Value::Null, |row| row["link"].clone())
+    }
+
+    fn stat(&self, name: &str) -> u64 {
+        self.read("/api/v1/stats")["cluster"][name].as_u64().unwrap_or_default()
+    }
+}
+
+#[test]
+fn a_replaced_home_node_takes_its_block_back_from_a_neighbour_s_copies() {
+    let hub = Arc::new(ClusterHub::new());
+    let (home, keeper) = (quick(&hub, &FIRST), quick(&hub, &SECOND));
+    home.join(0);
+    keeper.join(1);
+    home.settled();
+    keeper.settled();
+    let corridor = home.send("POST", "/api/v1/cluster/channels", r#"{"name":"Corridor"}"#);
+    let porch = home.send("POST", "/api/v1/cluster/channels", r#"{"name":"Porch"}"#);
+    assert_eq!((corridor["number"].as_u64(), porch["number"].as_u64()), (Some(0), Some(1)));
+    keeper.send("PUT", "/api/v1/cluster/channel-parts/0/3", &part_body(&corridor));
+    keeper.send("PUT", "/api/v1/cluster/channel-parts/0/4", &part_body(&porch));
+    assert!(try_wait_until(|| keeper.stat("copies_stored_total") == 2, ROUND), "{:?}", keeper.read("/api/v1/stats"));
+    let deleted = home.router.dispatch("DELETE", "/api/v1/cluster/channels/1", br#"{"revision":1}"#).status;
+    assert_eq!(deleted, NO_CONTENT);
+    let judged = || keeper.part_link(1, 4) == "orphan";
+    assert!(try_wait_until(judged, ROUND), "{:?}", keeper.read("/api/v1/cluster/nodes/1/channel-parts"));
+    drop(home);
+    let replaced = quick(&hub, &REPLACEMENT);
+    replaced.join(0);
+    assert!(try_wait_until(|| replaced.block() == "settled", ROUND), "{:?}", replaced.status());
+    let taken = replaced.read("/api/v1/cluster/channels/0");
+    assert_eq!((taken["name"].as_str(), taken["source"].as_str()), (Some("Corridor"), Some("own")), "{taken:?}");
+    assert_eq!(taken["birth_mark"], corridor["birth_mark"]);
+    assert_eq!(replaced.router.dispatch("GET", "/api/v1/cluster/channels/1", &[]).status, 404, "deleted on purpose");
+    let next = replaced.send("POST", "/api/v1/cluster/channels", r#"{"name":"Stairs"}"#);
+    assert_eq!(next["number"].as_u64(), Some(2), "a number in use or deleted is not issued again: {next:?}");
+    assert_eq!(replaced.stat("records_taken_back_total"), 1);
+    let live = || keeper.part_link(1, 3) == "live";
+    assert!(try_wait_until(live, ROUND), "{:?}", keeper.read("/api/v1/cluster/nodes/1/channel-parts"));
 }
